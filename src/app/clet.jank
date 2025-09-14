@@ -1,0 +1,41 @@
+(ns app.clet)
+
+(defmacro clet
+  "Let bindings with C-style error checking.
+   Each binding can be:
+     [name expr]
+     [name expr :when pred]  
+     [name expr :when pred :error error-handler]
+   If :when is omitted, no check is performed.
+   When predicate returns true, an error occurred and :error handler is executed.
+   If :error is omitted but :when returns true, returns nil."
+  [bindings & body]
+  (let [process-binding
+        (fn [bindings]
+          (when (seq bindings)
+            (let [bind-name (first bindings)
+                  expr (second bindings)
+                  rest-start (nnext bindings)
+                  ;; Check if next item is :when
+                  [when-pred error-handler rest-bindings]
+                  (if (and rest-start (= :when (first rest-start)))
+                    (let [pred (second rest-start)
+                          after-when (nnext rest-start)]
+                      (if (and after-when (= :error (first after-when)))
+                        [pred (second after-when) (nnext after-when)]
+                        [pred nil after-when]))
+                    [nil nil rest-start])]
+              {:name bind-name
+               :expr expr
+               :when when-pred
+               :error error-handler
+               :rest rest-bindings})))]
+    (if-let [{:keys [name expr when error rest]} (process-binding bindings)]
+      (if when
+        `(let [~name ~expr]
+           (if (not ~when)
+             (clet ~rest ~@body)
+             ~error))
+        `(let [~name ~expr]
+           (clet ~rest ~@body)))
+      `(do ~@body))))

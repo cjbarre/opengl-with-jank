@@ -1,0 +1,55 @@
+# Build artifacts
+*.o
+*.so
+*.dylib
+*.a
+*.lib
+*.exe
+build/
+target/
+out/
+
+# Clojure/Java
+*.class
+.lein-deps-sum
+.lein-repl-history
+.lein-plugins/
+.lein-failures
+.nrepl-port
+.cpcache/
+pom.xml*
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.orig
+
+# LSP/Language servers
+.lsp/
+.clj-kondo/.cache/
+
+# C/C++ temporary files
+*.tmp
+*.temp
+core
+a.out
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local development
+.env
+.env.local
+
+# REPL/development
+.portal/
+.rebel_readline_history

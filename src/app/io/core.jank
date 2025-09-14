@@ -1,0 +1,86 @@
+(ns app.io.core
+    (:refer-clojure :exclude [slurp])
+  (:require [app.clet :refer [clet]]))
+
+(cpp/raw
+ "#include <stdio.h>
+  #include <stdlib.h>")
+
+(cpp/raw
+ "void set_char_at(void* buffer, size_t index, char value) {
+    static_cast<char*>(buffer)[index] = value;
+  }")
+
+(defn- read-file
+  [file size]
+  (clet [file* (cpp/unbox cpp/FILE* file)
+
+         buffer (cpp/malloc size)
+         :when (cpp/! buffer)
+         :error (cpp/perror "malloc")
+
+         bytes-read (cpp/fread buffer 1 size file*)
+         :when (not= bytes-read size)
+         :error (do (cpp/perror "fread")
+                    (cpp/free buffer))
+
+         _ (cpp/set_char_at buffer (cpp/int bytes-read) (cpp/char 0))]
+     (cpp/box buffer)))
+
+(defn- file-size
+  [file]
+  (clet [file* (cpp/unbox cpp/FILE* file)
+
+         fseek-result (cpp/fseek file* 0 (cpp/value "SEEK_END"))
+         :when (not= 0 fseek-result)
+         :error (cpp/perror "fseek")
+
+         size (cpp/ftell file*)
+         :when (< size 0)
+         :error (cpp/perror "ftell")
+
+         _ (cpp/rewind file*)]
+      size))
+
+(defn- open-file
+  [path mode]
+  (clet [file* (cpp/fopen path mode)
+         :when (cpp/! file*)
+         :error (cpp/perror "fopen")]
+      (cpp/box file*)))
+
+(defn- close-file
+  [file]
+  (cpp/fclose (cpp/unbox cpp/FILE* file)))
+
+(defn slurp
+  [{:keys [path] :as args}]
+  (clet [file (open-file path "rb")
+         :when (not file)
+         :error (throw (ex-info
+                        "Could not open file"
+                        args))
+
+         size (file-size file)
+         :when (not size)
+         :error (throw (ex-info
+                        "Could not get file size"
+                        args))
+
+         buffer (read-file file size)
+         :when (not buffer)
+         :error (throw (ex-info 
+                        "Could not read file"
+                        args))
+
+         _ (close-file file)]
+
+        buffer))
+
+(comment
+
+ (slurp {:path "shaders/basic_vertex.glsl"})
+
+ (def file (open-file "shaders/basic_vertex.glsl" "rb"))
+
+ "")

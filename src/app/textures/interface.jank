@@ -1,0 +1,6 @@
+(ns app.textures.interface
+  (:require [app.textures.core :as core]))
+
+(defn load-texture
+  [{:keys [_path] :as args}]
+  (core/load-texture args))

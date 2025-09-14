@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+jank \
+  -Ilibs/glfw/include -Iinclude \
+  -Llibs/glfw/lib -llibglfw.3.dylib \
+  --module-path $(clojure -Spath) run-main app.core "$@"
+       
+     

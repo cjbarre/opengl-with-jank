@@ -1,0 +1,15 @@
+(ns app.shaders.interface
+  (:require [app.shaders.core :as core]))
+
+(defn load-shader-program
+  [{:keys [_vertex-shader-path _fragment-shader-path]
+    :as args}]
+  (core/load-shader-program args))
+
+(defn create-vertex-array-object
+  []
+  (core/create-vertex-array-object))
+
+(defn bind-vertex-array-object
+  [{:keys [_vertex-array-object-id] :as args}]
+  (core/bind-vertex-array-object args))

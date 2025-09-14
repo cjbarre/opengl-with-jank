@@ -1,0 +1,98 @@
+(ns app.shaders.core
+  (:require [app.clet :refer [clet]]
+            [app.io.interface :as io]))
+
+(cpp/raw
+ "#include <GLFW/glfw3.h>
+  #include <stdlib.h>")
+
+(cpp/raw
+ "extern \"C\" {
+  void glGenVertexArrays(GLsizei n, GLuint *arrays);
+  void glBindVertexArray(GLuint array);
+}")
+
+(cpp/raw
+ "char **sources(void* source) {
+    char **arr = (char **) malloc(sizeof(char *));
+    arr[0] = (char*) source;
+    return arr;
+  }")
+
+(cpp/raw
+ "void log_compilation_error (unsigned int shader_id) {
+    char info_log[512];
+    glGetShaderInfoLog(shader_id, 512, NULL, info_log);
+    printf(\"%s\", info_log);
+  }")
+
+(cpp/raw
+ "void log_link_error (unsigned int program_id) {
+    char info_log[512];
+    glGetProgramInfoLog(program_id, 512, NULL, info_log);
+    printf(\"%s\", info_log);
+  }")
+
+(defn compile-shader
+  [{:keys [path type] :as args}]
+  (clet [shader-type (case type
+                       :fragment (cpp/value "GL_FRAGMENT_SHADER")
+                       :vertex (cpp/value "GL_VERTEX_SHADER")
+                       nil)
+         :when (not shader-type)
+         :error (throw (ex-info
+                        "Invalid shader type"
+                        (assoc args :valid-types [:fragment :vertex])))
+         source (cpp/unbox (cpp/type "void*") (io/slurp {:path path}))
+         sources (cpp/sources source)
+         shader (cpp/glCreateShader shader-type)
+         _ (cpp/glShaderSource shader 1 sources cpp/nullptr)
+         _ (cpp/glCompileShader shader)
+         success? (cpp/int)
+         _ (cpp/glGetShaderiv shader (cpp/value "GL_COMPILE_STATUS") (cpp/& success?))
+         :when (cpp/! success?)
+         :error (do (cpp/log_compilation_error shader)
+                    (throw (ex-info "Shader compilation failed"
+                                    args)))
+         _ (cpp/free source)
+         _ (cpp/free (cpp/cast (cpp/type "void*") sources))]
+        
+        shader))
+
+(defn load-shader-program
+  [{:keys [vertex-shader-path
+           fragment-shader-path]
+    :as args}]
+  (clet [vertex-shader (compile-shader
+                        {:path vertex-shader-path
+                         :type :vertex})
+         fragment-shader (compile-shader
+                          {:path fragment-shader-path
+                           :type :fragment})
+         program (cpp/glCreateProgram)
+         _ (cpp/glAttachShader program vertex-shader)
+         _ (cpp/glAttachShader program fragment-shader)
+         _ (cpp/glLinkProgram program)
+         success? (cpp/int)
+         _ (cpp/glGetProgramiv program (cpp/value "GL_LINK_STATUS") (cpp/& success?))
+         :when (cpp/! success?)
+         :error (do
+                  (cpp/log_link_error program)
+                  (throw (ex-info "Shader program linking failed"
+                                  args)))
+         _ (cpp/glDeleteShader vertex-shader)
+         _ (cpp/glDeleteShader fragment-shader)]
+        
+        program))
+
+(defn create-vertex-array-object
+  []
+  (clet [vao ((cpp/type "unsigned int"))
+         _ (cpp/glGenVertexArrays 1 (cpp/& vao))
+         _ (cpp/glBindVertexArray vao)]
+        
+        vao))
+
+(defn bind-vertex-array-object
+  [{:keys [vertex-array-object-id]}]
+  (cpp/glBindVertexArray vertex-array-object-id))

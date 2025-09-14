@@ -1,0 +1,94 @@
+(ns app.core
+  (:require [app.io.interface :as io]
+            [app.shaders.interface :as shaders]
+            [app.geometry.interface :as geometry]
+            [app.textures.interface :as textures]
+            [app.clet :refer [clet]]))
+
+(cpp/raw "#include <GLFW/glfw3.h>")
+
+(defonce _
+  (cpp/raw
+   "void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    (void) window;
+    glViewport(0, 0, width, height);
+  }"))
+
+
+(defn process-input
+  [window]
+  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+    (when (= (cpp/glfwGetKey window (cpp/value "GLFW_KEY_ESCAPE"))
+             (cpp/value "GLFW_PRESS"))
+      (cpp/glfwSetWindowShouldClose window 1))))
+
+(defn setup-window
+  []
+  (let [width 800
+        height 600
+        window-name "LearnOpenGL"]
+
+    (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
+    (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
+    (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
+                        (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
+    (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
+                        (cpp/value "GL_TRUE"))
+
+    (let [window (cpp/box (cpp/glfwCreateWindow width height window-name cpp/nullptr cpp/nullptr))]
+      (if (cpp/! (cpp/unbox cpp/GLFWwindow* window))
+        (do (println "Window creation failed")
+            (cpp/exit 0))
+        (do
+          (cpp/glfwMakeContextCurrent (cpp/unbox cpp/GLFWwindow* window))
+          (cpp/glfwSetFramebufferSizeCallback (cpp/unbox cpp/GLFWwindow* window) cpp/framebuffer_size_callback)
+
+          window)))))
+
+(defn run-loop
+  [{:keys [window shader model]}]
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
+
+    (process-input window)
+
+    (cpp/glClearColor 0.2 0.3 0.3 1.0)
+    (cpp/glClear (cpp/value "GL_COLOR_BUFFER_BIT"))
+
+    (cpp/glUseProgram shader)
+
+    (cpp/glDrawElements (cpp/value "GL_TRIANGLES") 
+                        (:index-count model)
+                        (cpp/value "GL_UNSIGNED_INT")
+                        (cpp/voidify_int (cpp/int 0)))
+
+    (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
+    (cpp/glfwPollEvents)))
+
+(defn setup-textures
+  [shader]
+  (clet [texture1 (textures/load-texture {:path "textures/textures/container.jpg"})
+         texture2 (textures/load-texture {:path "textures/textures/awesomeface.png"
+                                          :alpha-channel? true})
+         _ (cpp/glUseProgram shader)
+         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "texture1") 0)
+         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "texture2") 1)
+         _ (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
+         _ (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture1)
+         _ (cpp/glActiveTexture (cpp/value "GL_TEXTURE1"))
+         _ (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture2)]))
+
+(defn -main [x]
+  (clet [_ (cpp/glfwInit)
+         window (setup-window)
+         shader (shaders/load-shader-program
+                 {:vertex-shader-path
+                  "shaders/basic_vertex.glsl"
+                  :fragment-shader-path
+                  "shaders/basic_fragment.glsl"})
+         model (geometry/textured-rectangle-2D)
+         _ (shaders/bind-vertex-array-object
+            {:vertex-array-object-id (:vao model)})
+         _ (setup-textures shader)]
+        (run-loop {:window window
+                   :shader shader
+                   :model model})))
