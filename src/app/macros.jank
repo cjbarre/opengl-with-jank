@@ -1,5 +1,4 @@
-(ns app.macros
-  (:refer-clojure :exclude [aset]))
+(ns app.macros)
 
 (defmacro clet
   "Let bindings with C-style error checking.
@@ -40,10 +39,3 @@
         `(let [~name ~expr]
            (clet ~rest ~@body)))
       `(do ~@body))))
-
-(defmacro aset
-  "Array set macro that simplifies array assignment in C++.
-   Usage: (aset array-expr index-expr value-expr)
-   Expands to: (cpp/= (cpp/aget array-expr index-expr) value-expr)"
-  [array index value]
-  `(cpp/= (cpp/aget ~array ~index) ~value))

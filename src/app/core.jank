@@ -7,13 +7,11 @@
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
-(defonce _
   (cpp/raw
    "void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
-    (void) window;
-    glViewport(0, 0, width, height);
-  }"))
-
+      (void) window;
+      glViewport(0, 0, width, height);
+    }")
 
 (defn process-input
   [window]

@@ -1,6 +1,6 @@
 (ns app.io.core
   (:refer-clojure :exclude [slurp])
-  (:require [app.macros :refer [clet aset]]))
+  (:require [app.macros :refer [clet]]))
 
 (cpp/raw
  "#include <stdio.h>
