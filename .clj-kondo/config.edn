@@ -1,2 +1,2 @@
 {:linters {:unresolved-namespace {:exclude [cpp]}}
- :lint-as {app.clet/clet clojure.core/let}}
+ :lint-as {app.macros/clet clojure.core/let}}

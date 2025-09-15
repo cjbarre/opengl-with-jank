@@ -1,14 +1,14 @@
 (ns app.io.core
-    (:refer-clojure :exclude [slurp])
-  (:require [app.clet :refer [clet]]))
+  (:refer-clojure :exclude [slurp])
+  (:require [app.macros :refer [clet aset]]))
 
 (cpp/raw
  "#include <stdio.h>
   #include <stdlib.h>")
 
 (cpp/raw
- "void set_char_at(void* buffer, size_t index, char value) {
-    static_cast<char*>(buffer)[index] = value;
+ "char* charify_void (void* buffer) {
+    return static_cast<char*>(buffer);
   }")
 
 (defn- read-file
@@ -24,7 +24,7 @@
          :error (do (cpp/perror "fread")
                     (cpp/free buffer))
 
-         _ (cpp/set_char_at buffer (cpp/int bytes-read) (cpp/char 0))]
+         _ (aset (cpp/charify_void buffer) (cpp/int bytes-read) (cpp/char 0))]
      (cpp/box buffer)))
 
 (defn- file-size

@@ -1,6 +1,6 @@
 (ns app.geometry.core
   (:require [app.shaders.interface :as shaders]
-            [app.clet :refer [clet]]))
+            [app.macros :refer [clet]]))
 
 (cpp/raw
  "float textured_rectangle_2D_vertices[] = { // positions // colors // texture coords 

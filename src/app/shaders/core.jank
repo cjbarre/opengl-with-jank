@@ -1,5 +1,5 @@
 (ns app.shaders.core
-  (:require [app.clet :refer [clet]]
+  (:require [app.macros :refer [clet]]
             [app.io.interface :as io]))
 
 (cpp/raw

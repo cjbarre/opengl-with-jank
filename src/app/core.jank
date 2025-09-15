@@ -3,7 +3,7 @@
             [app.shaders.interface :as shaders]
             [app.geometry.interface :as geometry]
             [app.textures.interface :as textures]
-            [app.clet :refer [clet]]))
+            [app.macros :refer [clet]]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 

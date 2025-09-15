@@ -12,7 +12,7 @@ You may notice that the high level functionality around shaders, textures, io, g
 
 ## Points of Interest
 
-### [clet](src/app/clet.jank) macro.
+### [clet](src/app/macros.jank#L4-L42) macro.
 
 One of the first things I noticed working with C in Jank is that you end up with a lot of nested conditionals doing error checking, so I decided to experiment with a macro called `clet` which enables more linear C programming, error checking, and error handling.
 

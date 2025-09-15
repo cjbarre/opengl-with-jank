@@ -1,6 +1,6 @@
 (ns app.textures.core
   (:require [app.io.interface :as io]
-            [app.clet :refer [clet]]))
+            [app.macros :refer [clet]]))
 
 (cpp/raw
  "#define STBI_NO_THREAD_LOCALS 1
