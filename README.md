@@ -10,6 +10,12 @@ Even if you can't run the code, hopefully you can still learn how Jank interops 
 
 You may notice that the high level functionality around shaders, textures, io, geometry are structured as components with an interface.jank and core.jank file. This is because I'm simulating a [Polylith](https://polylith.gitbook.io/polylith/) architecture.
 
+## Cloning
+
+This repo has submodules.
+
+`git clone --recursive ...`
+
 ## Points of Interest
 
 ### [clet](src/app/macros.jank#L4-L42) macro.

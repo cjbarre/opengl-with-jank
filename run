@@ -2,7 +2,7 @@
 set -xeuo pipefail
 
 jank \
-  -Ilibs/glfw/include -Iinclude \
+  -Ilibs/glfw/include -Ilibs/glm -Iinclude \
   -Llibs/glfw/lib -llibglfw.3.dylib \
   --module-path $(clojure -Spath) run-main app.core "$@"
        
