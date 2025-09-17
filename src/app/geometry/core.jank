@@ -24,13 +24,58 @@
     return (void*) i;
   }
   
-  ")
+
+  float textured_cube_3D_vertices[] = 
+                   { -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 
+                      0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+                     -0.5f,  0.5f, -0.5f, 0.0f, 1.0f,
+                     -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,  
+        
+                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f, 
+                      0.5f, -0.5f, 0.5f,  1.0f, 0.0f, 
+                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f, 
+                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f, 
+                     -0.5f,  0.5f, 0.5f,  0.0f, 1.0f, 
+                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,  
+  
+                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
+                     -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
+                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
+                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f,  
+
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
+                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
+                      0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,  
+                     
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
+                      0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 
+                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 
+                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 
+                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,  
+                     
+                     -0.5f,  0.5f, -0.5f, 0.0f, 1.0f, 
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
+                     -0.5f,  0.5f,  0.5f, 0.0f, 0.0f, 
+                     -0.5f,  0.5f, -0.5f, 0.0f, 1.0f };
+
+  size_t textured_cube_3D_vertices_size = sizeof(textured_cube_3D_vertices);")
 
 (def GL_ARRAY_BUFFER (cpp/value "GL_ARRAY_BUFFER"))
 (def GL_ELEMENT_ARRAY_BUFFER (cpp/value "GL_ELEMENT_ARRAY_BUFFER"))
 (def GL_STATIC_DRAW (cpp/value "GL_STATIC_DRAW"))
 (def GL_FLOAT (cpp/value "GL_FLOAT"))
 (def GL_FALSE (cpp/value "GL_FALSE"))
+(def GL_TRIANGLES (cpp/value "GL_TRIANGLES"))
 
 (defn textured-rectangle-2D
   []
@@ -87,4 +132,47 @@
         {:vao vao
          :vbo vbo
          :ebo ebo
-         :index-count cpp/textured_rectangle_2D_indices_size}))
+         :draw #(cpp/glDrawElements
+                 (cpp/value "GL_TRIANGLES")
+                 cpp/textured_rectangle_2D_indices_size
+                 (cpp/value "GL_UNSIGNED_INT")
+                 (cpp/voidify_int (cpp/int 0)))}))
+
+(defn textured-cube-3D
+  []
+  (clet [vao (shaders/create-vertex-array-object)
+         _ (shaders/bind-vertex-array-object
+            {:vertex-array-object-id vao})
+         ;;
+         ;; VBO
+         ;;
+         vbo ((cpp/type "unsigned int"))
+         _ (cpp/glGenBuffers (cpp/int 1) (cpp/& vbo))
+         _ (cpp/glBindBuffer GL_ARRAY_BUFFER vbo)
+         _ (cpp/glBufferData GL_ARRAY_BUFFER
+                             cpp/textured_cube_3D_vertices_size
+                             (cpp/cast (cpp/type "void*")
+                                       cpp/textured_cube_3D_vertices)
+                             GL_STATIC_DRAW)
+
+         ;;
+         ;; Vertex Attributes 
+         ;;
+         _ (cpp/glVertexAttribPointer 0
+                                      3
+                                      GL_FLOAT
+                                      GL_FALSE
+                                      (cpp/* (cpp/int 5) cpp/float_size)
+                                      (cpp/voidify_int 0))
+         _ (cpp/glEnableVertexAttribArray 0)
+         _ (cpp/glVertexAttribPointer 1
+                                      2
+                                      GL_FLOAT
+                                      GL_FALSE
+                                      (cpp/* (cpp/int 5) cpp/float_size)
+                                      (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
+         _ (cpp/glEnableVertexAttribArray 1)]
+  
+        {:vao vao
+         :vbo vbo
+         :draw #(cpp/glDrawArrays GL_TRIANGLES 0 36)}))

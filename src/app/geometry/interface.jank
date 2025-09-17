@@ -4,3 +4,7 @@
 (defn textured-rectangle-2D
   []
   (core/textured-rectangle-2D))
+
+(defn textured-cube-3D
+  []
+  (core/textured-cube-3D))

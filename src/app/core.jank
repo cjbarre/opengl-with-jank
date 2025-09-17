@@ -7,6 +7,10 @@
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
+(cpp/raw "#include <glm/glm.hpp> 
+          #include <glm/gtc/matrix_transform.hpp> 
+          #include <glm/gtc/type_ptr.hpp>")
+
   (cpp/raw
    "void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
@@ -40,25 +44,125 @@
         (do
           (cpp/glfwMakeContextCurrent (cpp/unbox cpp/GLFWwindow* window))
           (cpp/glfwSetFramebufferSizeCallback (cpp/unbox cpp/GLFWwindow* window) cpp/framebuffer_size_callback)
+          (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
 
           window)))))
 
+(cpp/raw
+ "glm::mat4 identity_matrix () {
+    return glm::mat4(1.0f);
+  }")
+
+(defn draw-rotating-rect
+  [{:keys [window model shader transform]}]
+  (clet [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
+         _ (cpp/glClear (cpp/value "GL_COLOR_BUFFER_BIT"))
+         _ (cpp/glUseProgram shader)
+
+         tm (cpp/identity_matrix)
+         tm (cpp/glm.translate tm (cpp/glm.vec3
+                                       (cpp/float 0.5)
+                                       (cpp/float -0.5)
+                                       (cpp/float 0.0)))
+         tm (cpp/glm.rotate tm
+                            (cpp/float (cpp/glfwGetTime))
+                            (cpp/glm.vec3
+                             (cpp/float 0.0)
+                             (cpp/float 0.0)
+                             (cpp/float 1.0)))
+         tm (cpp/glm.scale tm (cpp/glm.vec3
+                                   (cpp/float 0.5)
+                                   (cpp/float 0.5)
+                                   (cpp/float 0.5)))
+
+         transform-loc (cpp/glGetUniformLocation shader "transform")
+         _ (cpp/glUniformMatrix4fv transform-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr tm))
+
+         _ (cpp/glDrawElements (cpp/value "GL_TRIANGLES")
+                               (:index-count model)
+                               (cpp/value "GL_UNSIGNED_INT")
+                               (cpp/voidify_int (cpp/int 0)))]))
+
+(cpp/raw
+ "glm::vec3 cube_positions[] = 
+   { glm::vec3( 0.0f, 0.0f, 0.0f), 
+     glm::vec3( 2.0f, 5.0f, -15.0f), 
+     glm::vec3(-1.5f, -2.2f, -2.5f), 
+     glm::vec3(-3.8f, -2.0f, -12.3f), 
+     glm::vec3( 2.4f, -0.4f, -3.5f), 
+     glm::vec3(-1.7f, 3.0f, -7.5f), 
+     glm::vec3( 1.3f, -2.0f, -2.5f), 
+     glm::vec3( 1.5f, 2.0f, -2.5f), 
+     glm::vec3( 1.5f, 0.2f, -1.5f), 
+     glm::vec3(-1.3f, 1.0f, -1.5f) };
+  ")
+
+(defn draw-3D
+  [{:keys [window model shader]}]
+  (clet [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
+         _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
+         _ (cpp/glUseProgram shader)
+
+         #_#_#_#_#_#_#_#_model-m (cpp/identity_matrix)
+                     model-m (cpp/glm.rotate model-m
+                                             (cpp/float (cpp/* (cpp/glfwGetTime) (cpp/glm.radians (cpp/float 50.0))))
+                                             (cpp/glm.vec3 (cpp/float 0.5)
+                                                           (cpp/float 1.0)
+                                                           (cpp/float 0.0)))
+
+                 model-m-loc (cpp/glGetUniformLocation shader "model")
+             _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
+
+
+         view-m (cpp/identity_matrix)
+         view-m (cpp/glm.translate view-m
+                                   (cpp/glm.vec3
+                                    (cpp/float 0.0)
+                                    (cpp/float 0.0)
+                                    (cpp/float -3.0)))
+
+         view-m-loc (cpp/glGetUniformLocation shader "view")
+         _ (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m))
+
+         projection-m-loc (cpp/glGetUniformLocation shader "projection")
+         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
+                                           (cpp// (cpp/float 800.0) (cpp/float 600.0))
+                                           (cpp/float 0.1)
+                                           (cpp/float 100.0))
+
+         _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))
+
+         positions [[0.0 0.0 0.0]
+                    [2.0 5.0 -15.0]
+                    [-1.5 -2.2 -2.5]
+                    [-3.8 -2.0 -12.3]
+                    [2.4 -0.4 -3.5]
+                    [-1.7 3.0 -7.5]
+                    [1.3 -2.0 -2.5]
+                    [1.5  2.0 -2.5]
+                    [1.5  0.2 -1.5]
+                    [-1.3 1.0 -1.5]]
+
+         _ (doseq [i (range 10)]
+             (clet [[x y z] (get positions i)
+                    model-m (cpp/identity_matrix)
+                    model-m (cpp/glm.translate model-m (cpp/glm.vec3 (cpp/float x) (cpp/float y) (cpp/float z)))
+                    angle (cpp/* (cpp/float 20.0) (cpp/int (inc i)))
+                    model-m (cpp/glm.rotate model-m
+                                            (cpp/float (cpp/* (cpp/glfwGetTime) (cpp/glm.radians angle)))
+                                            (cpp/glm.vec3 (cpp/float 1.0) (cpp/float 0.3) (cpp/float 0.5)))
+                    model-m-loc (cpp/glGetUniformLocation shader "model")
+                    _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
+                   ((:draw model))))]))
+
 (defn run-loop
-  [{:keys [window shader model]}]
+  [{:keys [window _shader _model _transform] :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
 
     (process-input window)
 
-    (cpp/glClearColor 0.2 0.3 0.3 1.0)
-    (cpp/glClear (cpp/value "GL_COLOR_BUFFER_BIT"))
-
-    (cpp/glUseProgram shader)
-
-    (cpp/glDrawElements (cpp/value "GL_TRIANGLES") 
-                        (:index-count model)
-                        (cpp/value "GL_UNSIGNED_INT")
-                        (cpp/voidify_int (cpp/int 0)))
-
+    (draw-3D context)
+    
     (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
     (cpp/glfwPollEvents)))
 
@@ -76,17 +180,18 @@
          _ (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture2)]))
 
 (defn -main [x]
-  (clet [_ (cpp/glfwInit)
+  (clet [_ (cpp/glfwInit) 
          window (setup-window)
          shader (shaders/load-shader-program
                  {:vertex-shader-path
                   "shaders/basic_vertex.glsl"
                   :fragment-shader-path
                   "shaders/basic_fragment.glsl"})
-         model (geometry/textured-rectangle-2D)
+         model (geometry/textured-cube-3D)
          _ (shaders/bind-vertex-array-object
             {:vertex-array-object-id (:vao model)})
          _ (setup-textures shader)]
+
         (run-loop {:window window
                    :shader shader
                    :model model})))
