@@ -1,0 +1,50 @@
+(ns app.math.core)
+
+(defmacro *->
+  "Unboxes a boxed pointer based on type keyword.
+   Currently supports:
+   - (*-> :vec3 ptr) -> (cpp/unbox glm::vec3* ptr) for boxed pointers
+   - (*-> :mat4 ptr) -> (cpp/unbox glm::mat4* ptr) for boxed pointers"
+  [type ptr]
+  (case type
+    :vec3 `(cpp/unbox cpp/glm.vec3* ~ptr)
+    :mat4 `(cpp/unbox cpp/glm.mat4* ~ptr)
+    (throw (ex-info "Unsupported type for *->" {:type type}))))
+
+(defmacro gimmie
+  "Experimental macro for creating math objects.
+   Currently supports:
+   - (gimmie :vec3 [x y z]) -> single glm::vec3
+   - (gimmie :vec3 [[x y z] ...]) -> boxed glm::vec3* pointer to array data
+   - (gimmie :mat4 :identity) -> boxed glm::mat4* pointer to identity matrix"
+  [type data]
+  (case type
+    :vec3 (if (and (vector? data)
+                   (vector? (first data)))
+            ;; Multiple vectors - create array and return boxed pointer
+            (let [vec-count (count data)
+                  arr-sym (gensym "arr_")
+                  array-creation `((cpp/type ~(str "std::array<glm::vec3, " vec-count ">")))
+                  assignments (map-indexed
+                               (fn [idx [x y z]]
+                                 `(aset ~arr-sym
+                                        (cpp/int ~idx)
+                                        (cpp/glm.vec3
+                                         (cpp/float ~(float x))
+                                         (cpp/float ~(float y))
+                                         (cpp/float ~(float z)))))
+                               data)]
+              `(let [~arr-sym ~array-creation
+                     ~@(interleave (repeatedly (count assignments) (fn [] '_))
+                                   assignments)]
+                 (cpp/box (cpp/.data ~arr-sym))))
+            ;; Single vector
+            (let [[x y z] data]
+              `(cpp/glm.vec3
+                (cpp/float ~(float x))
+                (cpp/float ~(float y))
+                (cpp/float ~(float z)))))
+    :mat4 (if (= data :identity)
+            `(cpp/box (cpp/new cpp/glm.mat4 (cpp/float 1.0)))
+            (throw (ex-info "Only :identity supported for :mat4" {:data data})))
+    (throw (ex-info "Unsupported type" {:type type}))))

@@ -1,0 +1,10 @@
+(ns app.math.interface
+  (:require [app.math.core :as core]))
+
+(defmacro gimmie
+  [& args]
+  `(core/gimmie ~@args))
+
+(defmacro *->
+  [& args]
+  `(core/*-> ~@args))
