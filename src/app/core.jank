@@ -38,7 +38,7 @@
         window (cpp/unbox cpp/GLFWwindow* window)
         camera-position (math/*-> :vec3 position)
         camera-front (math/*-> :vec3 front)
-        camera-up (math/*-> :vec3 up)] 
+        camera-up (math/*-> :vec3 up)]
 
     (when (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE)
              GLFW_PRESS)
@@ -79,37 +79,51 @@
       nil)))
 
 (defn setup-window
-  []
-  (let [width 800
-        height 600
-        window-name "LearnOpenGL"]
+  [{:keys [width height name]}]
 
-    (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
-    (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
-    (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
-                        (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
-    (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
-                        (cpp/value "GL_TRUE"))
+  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
+  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
+  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
+                      (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
+  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
+                      (cpp/value "GL_TRUE"))
 
-    (let [window (cpp/box (cpp/glfwCreateWindow width height window-name cpp/nullptr cpp/nullptr))]
-      (if (cpp/! (cpp/unbox cpp/GLFWwindow* window))
-        (do (println "Window creation failed")
-            (cpp/exit 0))
-        (do
-          (cpp/glfwMakeContextCurrent (cpp/unbox cpp/GLFWwindow* window))
-          (cpp/glfwSetFramebufferSizeCallback (cpp/unbox cpp/GLFWwindow* window) cpp/framebuffer_size_callback)
-          (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+  (let [window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
+    (if (cpp/! window)
+      (do (println "Window creation failed")
+          (cpp/exit 0))
+      (do
+        (cpp/glfwMakeContextCurrent window)
+        (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
+        (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
 
-          window)))))
+        (cpp/box window)))))
+
+(defn update-camera
+  [{{:keys [front]} :camera
+    :cursor/keys [pitch yaw]}]
+  (let [direction (math/gimmie :vec3 [0.0 0.0 0.0])
+        pitch (math/*-> :float pitch)
+        yaw (math/*-> :float yaw)
+        _ (cpp/= (cpp/aget direction (cpp/int 0))
+                 (cpp/* (cpp/cos (cpp/glm.radians yaw))
+                        (cpp/cos (cpp/glm.radians pitch))))
+        _ (cpp/= (cpp/aget direction (cpp/int 1))
+                 (cpp/sin (cpp/glm.radians pitch)))
+        _ (cpp/= (cpp/aget direction (cpp/int 2))
+                 (cpp/* (cpp/sin (cpp/glm.radians yaw))
+                        (cpp/cos (cpp/glm.radians pitch))))
+        _ (cpp/= (math/*-> :vec3 front) direction)]))
 
 (defn draw-3D
   [{{:keys [position direction right front]} :camera
-    :keys [_window model shader]}]
+    :keys [_window model shader] :as context}]
   (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
         _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
         _ (cpp/glUseProgram shader)
+        _ (update-camera context)
         camera-position (math/*-> :vec3 position)
-        camera-direction (math/*-> :vec3 direction) 
+        camera-direction (math/*-> :vec3 direction)
         camera-right (math/*-> :vec3 right)
         camera-up (cpp/glm.cross camera-direction camera-right)
         camera-front (math/*-> :vec3 front)
@@ -149,25 +163,67 @@
                                           (cpp/glm.vec3 (cpp/float 1.0) (cpp/float 0.3) (cpp/float 0.5)))
                   model-m-loc (cpp/glGetUniformLocation shader "model")
                   _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
-              ((:draw model))))]))
+              ((:draw model))))]
+    (cpp/delete (math/*-> :vec3s positions))))
+
+(defn update-cursor
+  [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
+    :keys [window]}]
+  (let [cursor-x (cpp/double)
+        cursor-y (cpp/double)
+
+        _ (cpp/glfwGetCursorPos (cpp/unbox cpp/GLFWwindow* window)
+                                (cpp/& cursor-x)
+                                (cpp/& cursor-y)) 
+
+        cursor-last-x (math/*-> :float last-x)
+        cursor-last-y (math/*-> :float last-y)
+
+        _ (when-not @initialized?
+            (cpp/= cursor-last-x cursor-x)
+            (cpp/= cursor-last-y cursor-y)
+            (reset! initialized? true))
+
+        cursor-sensitivity (math/*-> :float sensitivity)
+
+        x-offset (cpp/* (cpp/- cursor-x cursor-last-x) cursor-sensitivity)
+        y-offset (cpp/* (cpp/- cursor-last-y cursor-y) cursor-sensitivity)
+
+        cursor-yaw (math/*-> :float yaw)
+        cursor-pitch (math/*-> :float pitch)]
+
+    (cpp/= cursor-yaw (cpp/+ cursor-yaw x-offset))
+    (cpp/= cursor-pitch (cpp/+ cursor-pitch y-offset))
+
+    (cpp/= cursor-last-x cursor-x)
+    (cpp/= cursor-last-y cursor-y)
+
+    (when (cpp/> cursor-pitch (cpp/float 89.0))
+      (cpp/= cursor-pitch (cpp/float 89.0)))
+
+    (when (cpp/< cursor-pitch (cpp/float -89.0))
+      (cpp/= cursor-pitch (cpp/float -89.0)))))
+
+(defn update-time
+  [{:keys [delta-time last-frame]}]
+  (let [current-frame (cpp/glfwGetTime)
+        delta-time (math/*-> :float delta-time)
+        last-frame (math/*-> :float last-frame)]
+    (cpp/= delta-time (cpp/- current-frame last-frame))
+    (cpp/= last-frame current-frame)))
 
 (defn run-loop
   [{:keys [window]
     :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
-    (let [current-frame (cpp/glfwGetTime)
-          delta-time (math/*-> :float (:delta-time context))
-          last-frame (math/*-> :float (:last-frame context))]
-      
-      (cpp/= delta-time (cpp/- current-frame last-frame))
-      (cpp/= last-frame current-frame)
+    (update-time context)
+    (update-cursor context)
+    (process-input context)
 
-      (process-input context)
+    (draw-3D context)
 
-      (draw-3D context)
-
-      (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
-      (cpp/glfwPollEvents))))
+    (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
+    (cpp/glfwPollEvents)))
 
 (defn setup-textures
   [shader]
@@ -217,7 +273,11 @@
 
 (defn -main [x]
   (let [_ (cpp/glfwInit)
-        window (setup-window)
+        window (setup-window {:width 800 :height 600 :name "Learn OpenGL"})
+        _ (cpp/glfwSetInputMode
+           (cpp/unbox cpp/GLFWwindow* window)
+           (cpp/value "GLFW_CURSOR")
+           (cpp/value "GLFW_CURSOR_DISABLED"))
         shader (shaders/load-shader-program
                 {:vertex-shader-path
                  "shaders/basic_vertex.glsl"
@@ -228,10 +288,16 @@
            {:vertex-array-object-id (:vao model)})
         _ (setup-textures shader)
         camera (setup-camera)]
-    
+
     (run-loop {:window window
                :shader shader
                :model model
                :camera camera
-               :delta-time (math/gimmie :boxed :float 0.0)
-               :last-frame (math/gimmie :boxed :float 0.0)})))
+               :delta-time          (math/gimmie :boxed :float 0.0)
+               :last-frame          (math/gimmie :boxed :float 0.0)
+               :cursor/initialized? (atom false)
+               :cursor/last-x       (math/gimmie :boxed :float 400.0)
+               :cursor/last-y       (math/gimmie :boxed :float 300.0)
+               :cursor/sensitivity  (math/gimmie :boxed :float 0.1)
+               :cursor/pitch        (math/gimmie :boxed :float 0.0)
+               :cursor/yaw          (math/gimmie :boxed :float -90.0)})))

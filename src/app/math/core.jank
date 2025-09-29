@@ -45,10 +45,11 @@
       :vec3s ;; Array of vectors
       (let [vec-count (count data)
             arr-sym (gensym "arr_")
-            array-creation `((cpp/type ~(str "std::array<glm::vec3, " vec-count ">")))
+            ptr-sym (gensym "ptr_")
+            array-creation `(cpp/new (cpp/type ~(str "std::array<glm::vec3, " vec-count ">")))
             assignments (map-indexed
                          (fn [idx [x y z]]
-                           `(aset ~arr-sym
+                           `(aset (cpp/* ~arr-sym)
                                   (cpp/int ~idx)
                                   (cpp/glm.vec3
                                    (cpp/float ~x)
@@ -57,9 +58,10 @@
                          data)]
         `(let [~arr-sym ~array-creation
                ~@(interleave (repeatedly (count assignments) (fn [] '_))
-                             assignments)]
+                             assignments)
+               ~ptr-sym (cpp/.data (cpp/* ~arr-sym))]
            ~(if boxed?
-              `(cpp/box (cpp/.data ~arr-sym))
-              arr-sym)))
+              `(cpp/box ~ptr-sym)
+              ptr-sym)))
 
       (throw (ex-info "Unsupported type" {:type type})))))
