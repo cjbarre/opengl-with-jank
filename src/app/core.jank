@@ -3,7 +3,8 @@
             [app.shaders.interface :as shaders]
             [app.geometry.interface :as geometry]
             [app.textures.interface :as textures]
-            [app.math.interface :as math]))
+            [app.math.interface :as math]
+            [app.gltf.interface :as gltf]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -287,7 +288,7 @@
         _ (shaders/bind-vertex-array-object
            {:vertex-array-object-id (:vao model)})
         _ (setup-textures shader)
-        camera (setup-camera)]
+        camera (setup-camera)] 
 
     (run-loop {:window window
                :shader shader

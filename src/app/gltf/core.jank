@@ -1,0 +1,123 @@
+(ns app.gltf.core
+  (:refer-clojure :exclude [load])
+  (:require [app.macros :refer [clet]]))
+
+(cpp/raw
+ "#define CGLTF_IMPLEMENTATION
+  #include \"cgltf.h\"")
+
+(defmulti parse-attribute (fn [attribute] (cpp/.-type (cpp/unbox cpp/cgltf_attribute* attribute))))
+
+(defmethod parse-attribute cpp/cgltf_attribute_type_position
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+        accessor (cpp/* (cpp/.-data attribute))
+        count (cpp/.-count accessor)
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:positions
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
+                    size (cpp/cgltf_num_components (cpp/.-type accessor))
+                    v ((cpp/type "std::array<float, 3>"))
+                    result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
+                    :when (cpp/! result)
+                    :error (throw (ex-info "Could not parse position attribute" {}))]
+                   [(cpp/aget v (cpp/int 0)) (cpp/aget v (cpp/int 1)) (cpp/aget v (cpp/int 2))]))
+           (range count))}))
+
+(defmethod parse-attribute cpp/cgltf_attribute_type_normal
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+        accessor (cpp/* (cpp/.-data attribute))
+        count (cpp/.-count accessor)
+        size (cpp/cgltf_num_components (cpp/.-type accessor))
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:normals
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box) 
+                    v ((cpp/type "std::array<float, 3>"))
+                    result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
+                    :when (cpp/! result)
+                    :error (throw (ex-info "Could not parse normal attribute" {}))]
+                   [(cpp/aget v (cpp/int 0)) (cpp/aget v (cpp/int 1)) (cpp/aget v (cpp/int 2))]))
+           (range count))}))
+
+(defmethod parse-attribute cpp/cgltf_attribute_type_texcoord
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+        accessor (cpp/* (cpp/.-data attribute))
+        count (cpp/.-count accessor)
+        size (cpp/cgltf_num_components (cpp/.-type accessor))
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:uvs
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
+                    v ((cpp/type "std::array<float, 2>"))
+                    result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
+                    :when (cpp/! result)
+                    :error (throw (ex-info "Could not parse uv attribute" {}))]
+                   [(cpp/aget v (cpp/int 0)) (cpp/aget v (cpp/int 1))]))
+           (range count))}))
+
+(defmethod parse-attribute :default
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)]
+    {(cpp/.-type attribute) :not-implemented}))
+
+(defn parse-indices
+  [primitive]
+  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)
+        accessor (cpp/* (cpp/.-indices primitive))
+        count (cpp/.-count accessor)
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:indices
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)]
+                   (cpp/cgltf_accessor_read_index accessor (cpp/cgltf_size i))))
+           (range count))}))
+
+(defn parse [{:keys [path] :as args}]
+  (clet [options (cpp/cgltf_options)
+         data (cpp/cgltf_data* cpp/nullptr)
+         result (cpp/cgltf_parse_file (cpp/& options) path (cpp/& data))
+         :when (cpp/!= result cpp/cgltf_result_success)
+         :error (throw (ex-info "Could not parse GLTF file" (assoc args :error result)))
+         result (cpp/cgltf_load_buffers (cpp/& options) data path)
+         :when (cpp/!= result cpp/cgltf_result_success)
+         :error (throw (ex-info "Cloud not load GLTF buffers" (assoc args :error result)))
+         meshes (cpp/box (cpp/.-meshes data))
+         model-data (vec
+                     (for [i (range (cpp/.-meshes_count data))
+                           :let [meshes        (cpp/unbox cpp/cgltf_mesh* meshes)
+                                 mesh          (cpp/aget meshes (cpp/int i))
+                                 mesh-name     (str (cpp/.-name mesh))
+                                 primitives-box (cpp/box (cpp/.-primitives mesh))]]
+
+                       {:name mesh-name
+                        :primitives
+                        (vec (for [j (range (cpp/.-primitives_count mesh))
+                                   :let [primitives     (cpp/unbox cpp/cgltf_primitive* primitives-box)
+                                         primitive      (cpp/aget primitives (cpp/int j))
+                                         attributes-box (cpp/box (cpp/.-attributes primitive))]]
+
+                               (reduce
+                                (fn [acc k]
+                                  (let [attributes (cpp/unbox cpp/cgltf_attribute* attributes-box)
+                                        attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                                    (if-let [result (parse-attribute attribute)]
+                                      (merge acc result)
+                                      acc)))
+                                (parse-indices (cpp/box (cpp/& primitive)))
+                                (range (cpp/.-attributes_count primitive)))))}))]
+        {:path path
+         :data model-data}))
+
+(cpp/raw 
+ "struct Vertex {
+    float pos[3];
+    float norm[3];
+    float uv[2];
+  };")
+
+(defn load 
+  [{:keys [model]}])

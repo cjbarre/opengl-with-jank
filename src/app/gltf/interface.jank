@@ -1,0 +1,9 @@
+(ns app.gltf.interface
+  (:refer-clojure :exclude [load])
+  (:require [app.gltf.core :as core]))
+
+(defn parse [{:keys [_path] :as args}]
+  (core/parse args))
+
+(defn load [{:keys [_model] :as args}]
+  (core/load args))
