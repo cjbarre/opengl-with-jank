@@ -126,8 +126,13 @@
         camera-position (math/*-> :vec3 position)
         camera-direction (math/*-> :vec3 direction)
         camera-right (math/*-> :vec3 right)
-        camera-up (cpp/glm.cross camera-direction camera-right)
+        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
         camera-front (math/*-> :vec3 front)
+
+        model-m (cpp/identity_matrix)
+        model-m (cpp/glm.scale model-m (cpp/glm.vec3 (cpp/float 50.0) (cpp/float 1.0) (cpp/float 50.0)))
+        model-m-loc (cpp/glGetUniformLocation shader "model")
+        _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
 
         view-m (cpp/glm.lookAt camera-position (cpp/+ camera-position camera-front) camera-up)
 
@@ -142,30 +147,31 @@
 
         _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))
 
-        positions (math/gimmie :boxed :vec3s
-                               [[0.0 0.0 0.0]
-                                [2.0 5.0 -15.0]
-                                [-1.5 -2.2 -2.5]
-                                [-3.8 -2.0 -12.3]
-                                [2.4 -0.4 -3.5]
-                                [-1.7 3.0 -7.5]
-                                [1.3 -2.0 -2.5]
-                                [1.5  2.0 -2.5]
-                                [1.5  0.2 -1.5]
-                                [-1.3 1.0 -1.5]])
+        #_#_#_#_positions (math/gimmie :boxed :vec3s
+                                       [[0.0 0.0 0.0]
+                                        [2.0 5.0 -15.0]
+                                        [-1.5 -2.2 -2.5]
+                                        [-3.8 -2.0 -12.3]
+                                        [2.4 -0.4 -3.5]
+                                        [-1.7 3.0 -7.5]
+                                        [1.3 -2.0 -2.5]
+                                        [1.5  2.0 -2.5]
+                                        [1.5  0.2 -1.5]
+                                        [-1.3 1.0 -1.5]])
 
-        _ (doseq [i (range 10)]
-            (let [p (cpp/aget (math/*-> :vec3s positions) (cpp/int i))
-                  model-m (cpp/identity_matrix)
-                  model-m (cpp/glm.translate model-m p)
-                  angle (cpp/* (cpp/float 20.0) (cpp/int (inc i)))
-                  model-m (cpp/glm.rotate model-m
-                                          (cpp/float (cpp/* (cpp/glfwGetTime) (cpp/glm.radians angle)))
-                                          (cpp/glm.vec3 (cpp/float 1.0) (cpp/float 0.3) (cpp/float 0.5)))
-                  model-m-loc (cpp/glGetUniformLocation shader "model")
-                  _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
-              ((:draw model))))]
-    (cpp/delete (math/*-> :vec3s positions))))
+            _ (doseq [i (range 10)]
+                (let [p (cpp/aget (math/*-> :vec3s positions) (cpp/int i))
+                      model-m (cpp/identity_matrix)
+                      model-m (cpp/glm.translate model-m p)
+                      angle (cpp/* (cpp/float 20.0) (cpp/int (inc i)))
+                      model-m (cpp/glm.rotate model-m
+                                              (cpp/float (cpp/* (cpp/glfwGetTime) (cpp/glm.radians angle)))
+                                              (cpp/glm.vec3 (cpp/float 1.0) (cpp/float 0.3) (cpp/float 0.5)))
+                      model-m-loc (cpp/glGetUniformLocation shader "model")
+                      _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
+                  ((:draw model))))]
+    (model)
+    #_(cpp/delete (math/*-> :vec3s positions))))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
@@ -241,7 +247,7 @@
 
 (defn setup-camera []
   (let [camera-target (math/gimmie :boxed :vec3 [0.0 0.0 0.0])
-        camera-position (math/gimmie :boxed :vec3 [0.0 0.0 3.0])
+        camera-position (math/gimmie :boxed :vec3 [0.0 1.0 3.0])
         up (math/gimmie :boxed :vec3 [0.0 1.0 0.0])
         camera-direction
         (cpp/box
@@ -284,11 +290,11 @@
                  "shaders/basic_vertex.glsl"
                  :fragment-shader-path
                  "shaders/basic_fragment.glsl"})
-        model (geometry/textured-cube-3D)
-        _ (shaders/bind-vertex-array-object
-           {:vertex-array-object-id (:vao model)})
-        _ (setup-textures shader)
-        camera (setup-camera)] 
+        model (gltf/load {:model (gltf/parse {:path "models/grid.gltf"})})
+        #_#__ (shaders/bind-vertex-array-object
+               {:vertex-array-object-id (:vao model)})
+        #_#__ (setup-textures shader)
+        camera (setup-camera)]
 
     (run-loop {:window window
                :shader shader
