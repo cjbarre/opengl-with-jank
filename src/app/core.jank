@@ -146,7 +146,7 @@
                                           (cpp/float 100.0))
 
         _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))
-
+        
         #_#_#_#_positions (math/gimmie :boxed :vec3s
                                        [[0.0 0.0 0.0]
                                         [2.0 5.0 -15.0]
@@ -170,7 +170,7 @@
                       model-m-loc (cpp/glGetUniformLocation shader "model")
                       _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
                   ((:draw model))))]
-    (model)
+    ((:draw model) {:shader shader})
     #_(cpp/delete (math/*-> :vec3s positions))))
 
 (defn update-cursor
@@ -289,8 +289,10 @@
                 {:vertex-shader-path
                  "shaders/basic_vertex.glsl"
                  :fragment-shader-path
-                 "shaders/basic_fragment.glsl"})
-        model (gltf/load {:model (gltf/parse {:path "models/grid.gltf"})})
+                 "shaders/basic_fragment.glsl"}) 
+        _ (cpp/glUseProgram shader)
+        _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
+        model (gltf/load {:model (gltf/parse {:path "models/grid-sand.gltf"})})
         #_#__ (shaders/bind-vertex-array-object
                {:vertex-array-object-id (:vao model)})
         #_#__ (setup-textures shader)

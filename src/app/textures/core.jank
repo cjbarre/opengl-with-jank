@@ -30,7 +30,13 @@
 
 
 (defn load-texture
-  [{:keys [path alpha-channel?] :as args}]
+  [{:keys [path alpha-channel?
+           wrap-s wrap-t min-filter mag-filter] 
+    :or {wrap-s GL_REPEAT
+         wrap-t GL_REPEAT
+         min-filter GL_LINEAR
+         mag-filter GL_LINEAR}
+    :as args}]
   (clet [width (cpp/int)
          height (cpp/int)
          channel-count (cpp/int)
@@ -46,10 +52,10 @@
          texture ((cpp/type "unsigned int"))
          _ (cpp/glGenTextures 1 (cpp/& texture))
          _ (cpp/glBindTexture GL_TEXTURE_2D texture)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S GL_REPEAT)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T GL_REPEAT)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER GL_LINEAR)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER GL_LINEAR)
+         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S wrap-s)
+         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T wrap-t)
+         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER min-filter)
+         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER mag-filter)
          _ (cpp/glTexImage2D
             GL_TEXTURE_2D
             0
