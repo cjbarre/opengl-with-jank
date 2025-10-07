@@ -44,6 +44,17 @@
 				"metallicFactor":0,
 				"roughnessFactor":0.5
 			}
+		},
+		{
+			"doubleSided":true,
+			"name":"Material",
+			"pbrMetallicRoughness":{
+				"baseColorTexture":{
+					"index":1
+				},
+				"metallicFactor":0,
+				"roughnessFactor":0.5
+			}
 		}
 	],
 	"meshes":[
@@ -70,7 +81,8 @@
 						"NORMAL":5,
 						"TEXCOORD_0":6
 					},
-					"indices":7
+					"indices":7,
+					"material":1
 				}
 			]
 		}
@@ -79,6 +91,10 @@
 		{
 			"sampler":0,
 			"source":0
+		},
+		{
+			"sampler":0,
+			"source":1
 		}
 	],
 	"images":[
@@ -86,6 +102,11 @@
 			"mimeType":"image/jpeg",
 			"name":"sand-tex",
 			"uri":"sand-tex.jpg"
+		},
+		{
+			"mimeType":"image/jpeg",
+			"name":"crushed-stone-asphalt-staggered-isosceles-9539-in-architextures",
+			"uri":"crushed-stone-asphalt-staggered-isosceles-9539-in-architextures.jpg"
 		}
 	],
 	"accessors":[
