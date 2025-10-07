@@ -100,8 +100,8 @@
 	"images":[
 		{
 			"mimeType":"image/jpeg",
-			"name":"sand-tex",
-			"uri":"sand-tex.jpg"
+			"name":"granite-and-grass-diamond-square-5268-in-architextures",
+			"uri":"granite-and-grass-diamond-square-5268-in-architextures.jpg"
 		},
 		{
 			"mimeType":"image/jpeg",
@@ -113,7 +113,7 @@
 		{
 			"bufferView":0,
 			"componentType":5126,
-			"count":142,
+			"count":121,
 			"max":[
 				1,
 				0,
@@ -129,13 +129,13 @@
 		{
 			"bufferView":1,
 			"componentType":5126,
-			"count":142,
+			"count":121,
 			"type":"VEC3"
 		},
 		{
 			"bufferView":2,
 			"componentType":5126,
-			"count":142,
+			"count":121,
 			"type":"VEC2"
 		},
 		{
@@ -182,50 +182,50 @@
 	"bufferViews":[
 		{
 			"buffer":0,
-			"byteLength":1704,
+			"byteLength":1452,
 			"byteOffset":0,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1704,
-			"byteOffset":1704,
+			"byteLength":1452,
+			"byteOffset":1452,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1136,
-			"byteOffset":3408,
+			"byteLength":968,
+			"byteOffset":2904,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":1200,
-			"byteOffset":4544,
+			"byteOffset":3872,
 			"target":34963
 		},
 		{
 			"buffer":0,
 			"byteLength":288,
-			"byteOffset":5744,
+			"byteOffset":5072,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":288,
-			"byteOffset":6032,
+			"byteOffset":5360,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":192,
-			"byteOffset":6320,
+			"byteOffset":5648,
 			"target":34962
 		},
 		{
 			"buffer":0,
 			"byteLength":72,
-			"byteOffset":6512,
+			"byteOffset":5840,
 			"target":34963
 		}
 	],
@@ -237,7 +237,7 @@
 	],
 	"buffers":[
 		{
-			"byteLength":6584,
+			"byteLength":5912,
 			"uri":"grid-sand.bin"
 		}
 	]
