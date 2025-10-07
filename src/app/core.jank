@@ -30,7 +30,7 @@
 (defn process-input
   [{{:keys [position front up]} :camera
     :keys [window delta-time]}]
-  (let [camera-speed (cpp/* (cpp/float 2.5) (math/*-> :float delta-time))
+  (let [camera-speed (cpp/* (cpp/float 15.0) (math/*-> :float delta-time))
         window (cpp/unbox cpp/GLFWwindow* window)
         camera-position (math/*-> :vec3 position)
         camera-front (math/*-> :vec3 front)
@@ -133,7 +133,7 @@
 
         projection-m-loc (cpp/glGetUniformLocation shader "projection")
         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
-                                          (cpp// (cpp/float 800.0) (cpp/float 600.0))
+                                          (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                                           (cpp/float 0.1)
                                           (cpp/float 100.0))
 
@@ -236,7 +236,7 @@
 
 (defn -main [x]
   (let [_ (cpp/glfwInit)
-        window (setup-window {:width 800 :height 600 :name "Learn OpenGL"})
+        window (setup-window {:width 1280 :height 720 :name "Learn OpenGL"})
         _ (cpp/glfwSetInputMode
            (cpp/unbox cpp/GLFWwindow* window)
            (cpp/value "GLFW_CURSOR")
@@ -248,7 +248,7 @@
                  "shaders/basic_fragment.glsl"})
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
-        model (gltf/load {:model (gltf/parse {:path "models/grid-sand.gltf"})})
+        model (gltf/load {:model (gltf/parse {:path "models/test-level.gltf"})})
         camera (setup-camera)]
 
     (run-loop {:window window

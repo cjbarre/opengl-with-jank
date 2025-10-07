@@ -18,9 +18,9 @@
 			"mesh":0,
 			"name":"Grid",
 			"scale":[
-				50,
-				1,
-				50
+				25,
+				0,
+				25
 			]
 		},
 		{
@@ -100,13 +100,13 @@
 	"images":[
 		{
 			"mimeType":"image/jpeg",
-			"name":"granite-and-grass-diamond-square-5268-in-architextures",
-			"uri":"granite-and-grass-diamond-square-5268-in-architextures.jpg"
+			"name":"granite-and-grass",
+			"uri":"granite-and-grass.jpg"
 		},
 		{
 			"mimeType":"image/jpeg",
-			"name":"crushed-stone-asphalt-staggered-isosceles-9539-in-architextures",
-			"uri":"crushed-stone-asphalt-staggered-isosceles-9539-in-architextures.jpg"
+			"name":"crushed-stone",
+			"uri":"crushed-stone.jpg"
 		}
 	],
 	"accessors":[
@@ -238,7 +238,7 @@
 	"buffers":[
 		{
 			"byteLength":5912,
-			"uri":"grid-sand.bin"
+			"uri":"test-level.bin"
 		}
 	]
 }
