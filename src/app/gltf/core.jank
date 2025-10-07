@@ -2,6 +2,7 @@
   (:refer-clojure :exclude [load])
   (:require [app.shaders.interface :as shaders]
             [app.textures.interface :as textures]
+            [app.math.interface :as math]
             [app.macros :refer [clet]]))
 
 (cpp/raw
@@ -78,32 +79,111 @@
                    (cpp/cgltf_accessor_read_index accessor (cpp/cgltf_size i))))
            (range count))}))
 
+(cpp/raw
+ "bool cgltf_primitive_has_material(cgltf_primitive* prim) {
+      return (prim->material != nullptr);
+ }")
+
 (defn parse-material
   [primitive]
-  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)
-        material (cpp/* (cpp/.-material primitive))]
-    {:material (cond-> {}
-                 (not= 0 (cpp/.-has_pbr_metallic_roughness material))
-                 (assoc :pbr-metallic-roughness
-                        (let [pbrmr (cpp/.-pbr_metallic_roughness material)
-                              bct (cpp/.-base_color_texture pbrmr)
-                              texture (cpp/* (cpp/.-texture bct))
-                              image (cpp/* (cpp/.-image texture))
-                              sampler (cpp/* (cpp/.-sampler texture))]
-                          {:base-color-factor [1.0 1.0 1.0 1.0]
-                           :base-color-texture
-                           {:texcoord (cpp/.-texcoord bct)
-                            :scale (cpp/.-scale bct)
-                            :texture {:image
-                                      {:name (str (cpp/.-name image))
-                                       :uri (str (cpp/.-uri image))
-                                       :mime-type (str (cpp/.-mime_type image))}
-                                      :sampler {:mag-filter (cpp/.-mag_filter sampler)
-                                                :min-filter (cpp/.-min_filter sampler)
-                                                :wrap-s (cpp/.-wrap_s sampler)
-                                                :wrap-t (cpp/.-wrap_t sampler)}}}})))}))
+  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)]
+    (when (cpp/cgltf_primitive_has_material primitive)
+      (let [material (cpp/* (cpp/.-material primitive))]
+        {:material (cond-> {}
+                     (not= 0 (cpp/.-has_pbr_metallic_roughness material))
+                     (assoc :pbr-metallic-roughness
+                            (let [pbrmr (cpp/.-pbr_metallic_roughness material)
+                                  bct (cpp/.-base_color_texture pbrmr)
+                                  texture (cpp/* (cpp/.-texture bct))
+                                  image (cpp/* (cpp/.-image texture))
+                                  sampler (cpp/* (cpp/.-sampler texture))]
+                              {:base-color-factor [1.0 1.0 1.0 1.0]
+                               :base-color-texture
+                               {:texcoord (cpp/.-texcoord bct)
+                                :scale (cpp/.-scale bct)
+                                :texture {:image
+                                          {:name (str (cpp/.-name image))
+                                           :uri (str (cpp/.-uri image))
+                                           :mime-type (str (cpp/.-mime_type image))}
+                                          :sampler {:mag-filter (cpp/.-mag_filter sampler)
+                                                    :min-filter (cpp/.-min_filter sampler)
+                                                    :wrap-s (cpp/.-wrap_s sampler)
+                                                    :wrap-t (cpp/.-wrap_t sampler)}}}})))}))))
 
-(defn parse [{:keys [path] :as args}]
+(defn parse-mesh [mesh]
+  (let [mesh (cpp/unbox cpp/cgltf_mesh* mesh)
+        primitives-box (cpp/box (cpp/.-primitives mesh))]
+    {:name (str (cpp/.-name mesh))
+     :primitives
+     (vec
+      (for [j (range (cpp/.-primitives_count mesh))
+            :let [primitives     (cpp/unbox cpp/cgltf_primitive* primitives-box)
+                  primitive      (cpp/aget primitives (cpp/int j))
+                  attributes-box (cpp/box (cpp/.-attributes primitive))]]
+        (let [attribute-data (reduce
+                              (fn [acc k]
+                                (let [attributes (cpp/unbox cpp/cgltf_attribute* attributes-box)
+                                      attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                                  (if-let [result (parse-attribute attribute)]
+                                    (merge acc result)
+                                    acc)))
+                              {}
+                              (range (cpp/.-attributes_count primitive)))
+              indices-data (parse-indices (cpp/box (cpp/& primitive)))
+              material-data (parse-material (cpp/box (cpp/& primitive)))]
+          (merge attribute-data indices-data material-data))))}))
+
+(cpp/raw 
+ "cgltf_float* get_node_translation (cgltf_node* node) {
+  return node->translation;
+  }")
+
+(cpp/raw
+ "cgltf_float* get_node_scale (cgltf_node* node) {
+  return node->scale;
+  }")
+
+(defn parse-node
+  [node]
+  (clet [node (cpp/unbox cpp/cgltf_node* node)
+         :when (cpp/> (cpp/.-children_count node) (cpp/int 0))
+         :error (throw (ex-info "Parsing node children not implemented" {}))
+         mesh (cpp/box (cpp/.-mesh node))]
+        (cond-> {:name (str (cpp/.-name node))
+                 :mesh (parse-mesh mesh)}
+          (cpp/!= cpp/false (cpp/.-has_translation node))
+          (assoc :translation
+                 (let [translation (cpp/get_node_translation node)]
+                   [(cpp/aget translation (cpp/int 0))
+                    (cpp/aget translation (cpp/int 1))
+                    (cpp/aget translation (cpp/int 2))]))
+
+          (cpp/!= cpp/false (cpp/.-has_scale node))
+          (assoc :scale
+                 (let [scale (cpp/get_node_scale node)]
+                   [(cpp/aget scale (cpp/int 0))
+                    (cpp/aget scale (cpp/int 1))
+                    (cpp/aget scale (cpp/int 2))]))
+          
+          (cpp/!= cpp/false (cpp/.-has_rotation node))
+          (assoc :rotation (throw (ex-info "Node rotation not implemeted" {})))
+          
+          (cpp/!= cpp/false (cpp/.-has_matrix node))
+          (assoc :matrix (throw (ex-info "Node matrix not implemeted" {}))))))
+
+(defn parse-scene
+  [scene]
+  (let [scene (cpp/unbox cpp/cgltf_scene* scene)
+        nodes (cpp/box (cpp/.-nodes scene))]
+    {:name (str (cpp/.-name scene))
+     :nodes (vec
+             (for [node-i (range (cpp/.-nodes_count scene))
+                   :let [nodes (cpp/unbox cpp/cgltf_node** nodes)
+                         node (cpp/box (cpp/aget nodes (cpp/int node-i)))]]
+               (parse-node node)))}))
+
+(defn parse
+  [{:keys [path] :as args}]
   (clet [options (cpp/cgltf_options)
          data (cpp/cgltf_data* cpp/nullptr)
          result (cpp/cgltf_parse_file (cpp/& options) path (cpp/& data))
@@ -112,35 +192,14 @@
          result (cpp/cgltf_load_buffers (cpp/& options) data path)
          :when (cpp/!= result cpp/cgltf_result_success)
          :error (throw (ex-info "Cloud not load GLTF buffers" (assoc args :error result)))
-         meshes (cpp/box (cpp/.-meshes data))
-         model-data (vec
-                     (for [i (range (cpp/.-meshes_count data))
-                           :let [meshes        (cpp/unbox cpp/cgltf_mesh* meshes)
-                                 mesh          (cpp/aget meshes (cpp/int i))
-                                 mesh-name     (str (cpp/.-name mesh))
-                                 primitives-box (cpp/box (cpp/.-primitives mesh))]]
+         scenes (cpp/box (cpp/.-scenes data))]
+        {:scenes
+         (vec
+          (for [scene-i (range (cpp/.-scenes_count data))
+                :let [scenes (cpp/unbox cpp/cgltf_scene* scenes)
+                      scene (cpp/box (cpp/& (cpp/aget scenes (cpp/int scene-i))))]]
+            (parse-scene scene)))}))
 
-                       {:name mesh-name
-                        :primitives
-                        (vec
-                         (for [j (range (cpp/.-primitives_count mesh))
-                               :let [primitives     (cpp/unbox cpp/cgltf_primitive* primitives-box)
-                                     primitive      (cpp/aget primitives (cpp/int j))
-                                     attributes-box (cpp/box (cpp/.-attributes primitive))]]
-                           (let [attribute-data (reduce
-                                                 (fn [acc k]
-                                                   (let [attributes (cpp/unbox cpp/cgltf_attribute* attributes-box)
-                                                         attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
-                                                     (if-let [result (parse-attribute attribute)]
-                                                       (merge acc result)
-                                                       acc)))
-                                                 {}
-                                                 (range (cpp/.-attributes_count primitive)))
-                                 indices-data (parse-indices (cpp/box (cpp/& primitive)))
-                                 material-data (parse-material (cpp/box (cpp/& primitive)))]
-                             (merge attribute-data indices-data material-data))))}))]
-        {:path path
-         :data model-data}))
 
 (cpp/raw
  "struct Vertex {
@@ -177,7 +236,11 @@
 (defn load
   [{:keys [model]}]
   (let [primitive-instances
-        (for [mesh (:data model)
+        (for [scene (:scenes model)
+              node (:nodes scene)
+              :let [mesh (:mesh node)
+                    [scale-x scale-y scale-z] (:scale node)
+                    [translate-x translate-y translate-z] (:translation node)]
               {:keys [positions normals uvs material] :as primitive} (:primitives mesh)]
           (let [vertices ((cpp/type "std::vector<Vertex>"))
                 vertices-box (cpp/box (cpp/& vertices))
@@ -268,28 +331,35 @@
                 [r g b a] (-> material
                               :pbr-metallic-roughness
                               :base-color-factor)
-                texture-id (textures/load-texture
-                            (merge {:path (str "models/" (-> texture :image :uri))}
-                                   (:sampler texture)))]
-
-
-
-
+                texture-id (when texture
+                             (textures/load-texture
+                              (merge {:path (str "models/" (-> texture :image :uri))}
+                                     (:sampler texture))))]
+            
             {:draw
-             (fn draw-primitive [{:keys [shader] :as _context}]
-               (let [_ (shaders/bind-vertex-array-object
+             (fn draw-primitive [{model-m-loc :model/local-matrix-uniform
+                                  :keys [shader] :as _context}]
+               (let [local-model-m (-> (cpp/identity_matrix)
+                                       (cpp/glm.scale (math/gimmie :vec3 [(or scale-x 1.0) (or scale-y 1.0) (or scale-z 1.0)]))
+                                       (cpp/glm.translate (math/gimmie :vec3 [(or translate-x 0.0) (or translate-y 0.0) (or translate-z 0.0)])))
+                     _ (shaders/bind-vertex-array-object
                         {:vertex-array-object-id vao})
-                     _ (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
-                     _ (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture-id)
-                     _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uHasBaseColorTex") 1)
-                     _ (cpp/glUniform4f (cpp/glGetUniformLocation shader "uBaseColorFactor") r g b a)
+                     _ (when texture-id
+                         (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
+                         (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture-id)
+                         (cpp/glUniform1i (cpp/glGetUniformLocation shader "uHasBaseColorTex") 1)
+                         (cpp/glUniform4f (cpp/glGetUniformLocation shader "uBaseColorFactor") r g b a))
+                     _ (cpp/glUniformMatrix4fv (cpp/glGetUniformLocation shader model-m-loc) 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr local-model-m))
                      _ (cpp/glDrawElements
                         GL_TRIANGLES
                         (count (:indices primitive))
                         (cpp/value "GL_UNSIGNED_INT")
-                        (cpp/voidify_int (cpp/int 0)))]))}))]
-    {:draw (fn draw-model [{:keys [_shader] :as context}]
-             (doseq [pi primitive-instances]
-               ((:draw pi) context)))}))
+                        (cpp/voidify_int (cpp/int 0)))
+                     _ (when texture-id
+                         (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
+                         (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") 0))]))}))]
 
-
+    {:draw
+     (fn draw-model [context]
+       (doseq [pi primitive-instances]
+         ((:draw pi) context)))}))

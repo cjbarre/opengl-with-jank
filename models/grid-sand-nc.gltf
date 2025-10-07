@@ -8,8 +8,7 @@
 		{
 			"name":"Scene",
 			"nodes":[
-				0,
-				1
+				0
 			]
 		}
 	],
@@ -21,15 +20,6 @@
 				50,
 				1,
 				50
-			]
-		},
-		{
-			"mesh":1,
-			"name":"Cube",
-			"translation":[
-				0,
-				5.041863918304443,
-				0
 			]
 		}
 	],
@@ -58,19 +48,6 @@
 					},
 					"indices":3,
 					"material":0
-				}
-			]
-		},
-		{
-			"name":"Cube",
-			"primitives":[
-				{
-					"attributes":{
-						"POSITION":4,
-						"NORMAL":5,
-						"TEXCOORD_0":6
-					},
-					"indices":7
 				}
 			]
 		}
@@ -122,40 +99,6 @@
 			"componentType":5123,
 			"count":600,
 			"type":"SCALAR"
-		},
-		{
-			"bufferView":4,
-			"componentType":5126,
-			"count":24,
-			"max":[
-				1,
-				1,
-				1
-			],
-			"min":[
-				-1,
-				-1,
-				-1
-			],
-			"type":"VEC3"
-		},
-		{
-			"bufferView":5,
-			"componentType":5126,
-			"count":24,
-			"type":"VEC3"
-		},
-		{
-			"bufferView":6,
-			"componentType":5126,
-			"count":24,
-			"type":"VEC2"
-		},
-		{
-			"bufferView":7,
-			"componentType":5123,
-			"count":36,
-			"type":"SCALAR"
 		}
 	],
 	"bufferViews":[
@@ -182,30 +125,6 @@
 			"byteLength":1200,
 			"byteOffset":4544,
 			"target":34963
-		},
-		{
-			"buffer":0,
-			"byteLength":288,
-			"byteOffset":5744,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":288,
-			"byteOffset":6032,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":192,
-			"byteOffset":6320,
-			"target":34962
-		},
-		{
-			"buffer":0,
-			"byteLength":72,
-			"byteOffset":6512,
-			"target":34963
 		}
 	],
 	"samplers":[
@@ -216,8 +135,8 @@
 	],
 	"buffers":[
 		{
-			"byteLength":6584,
-			"uri":"grid-sand.bin"
+			"byteLength":5744,
+			"uri":"grid-sand-nc.bin"
 		}
 	]
 }

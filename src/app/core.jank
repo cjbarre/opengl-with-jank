@@ -20,11 +20,6 @@
       glViewport(0, 0, width, height);
     }")
 
-(cpp/raw
- "glm::mat4 identity_matrix () {
-    return glm::mat4(1.0f);
-  }")
-
 (def GLFW_PRESS (cpp/value "GLFW_PRESS"))
 (def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
 (def GLFW_KEY_W (cpp/value "GLFW_KEY_W"))
@@ -128,7 +123,6 @@
         camera-front (math/*-> :vec3 front)
 
         model-m (cpp/identity_matrix)
-        model-m (cpp/glm.scale model-m (cpp/glm.vec3 (cpp/float 50.0) (cpp/float 1.0) (cpp/float 50.0)))
         model-m-loc (cpp/glGetUniformLocation shader "model")
         _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
 
@@ -144,8 +138,9 @@
                                           (cpp/float 100.0))
 
         _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))]
-    
-    ((:draw model) {:shader shader})))
+
+    ((:draw model) {:shader shader
+                    :model/local-matrix-uniform "local"})))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
