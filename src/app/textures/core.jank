@@ -31,16 +31,19 @@
 
 (defn load-texture
   [{:keys [path alpha-channel?
-           wrap-s wrap-t min-filter mag-filter] 
+           wrap-s wrap-t 
+           min-filter mag-filter
+           flip-vertically?] 
     :or {wrap-s GL_REPEAT
          wrap-t GL_REPEAT
          min-filter GL_LINEAR
-         mag-filter GL_LINEAR}
+         mag-filter GL_LINEAR
+         flip-vertically? false}
     :as args}]
   (clet [width (cpp/int)
          height (cpp/int)
          channel-count (cpp/int)
-         _ (cpp/stbi_set_flip_vertically_on_load 1)
+         _ (cpp/stbi_set_flip_vertically_on_load (if flip-vertically? 1 0))
          data (cpp/stbi_load path
                              (cpp/& width)
                              (cpp/& height)

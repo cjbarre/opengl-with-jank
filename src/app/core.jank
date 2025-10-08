@@ -113,7 +113,7 @@
 
 (defn draw-3D
   [{{:keys [position front]} :camera
-    :keys [_window model shader] :as context}]
+    :keys [_window models shader] :as context}]
   (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
         _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
         _ (cpp/glUseProgram shader)
@@ -138,9 +138,9 @@
                                           (cpp/float 100.0))
 
         _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))]
-
-    ((:draw model) {:shader shader
-                    :model/local-matrix-uniform "local"})))
+    (doseq [m models]
+      ((:draw m) {:shader shader
+                  :model/local-matrix-uniform "local"}))))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
@@ -248,12 +248,13 @@
                  "shaders/basic_fragment.glsl"})
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
-        model (gltf/load {:model (gltf/parse {:path "models/test-level.gltf"})})
+        level (gltf/load {:model (gltf/parse {:path "models/test-level.gltf"})})
+        player (gltf/load {:model (gltf/parse {:path "models/player.gltf"})})
         camera (setup-camera)]
 
     (run-loop {:window window
                :shader shader
-               :model model
+               :models [level player]
                :camera camera
                :delta-time          (math/gimmie :boxed :float 0.0)
                :last-frame          (math/gimmie :boxed :float 0.0)
