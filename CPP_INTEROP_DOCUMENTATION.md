@@ -2,7 +2,7 @@
 
 ## Overview
 
-Jank provides seamless C++ interoperability, allowing you to directly use C++ code, types, and functions from within Jank programs. This is a core feature that enables native performance and integration with existing C++ libraries.
+Jank provides seamless C++ interoperability, allowing you to directly use C++ code, types, and functions from within Jank programs. This documentation covers only the interop patterns actually used in this codebase.
 
 ## Core Interop Forms
 
@@ -11,101 +11,105 @@ Jank provides seamless C++ interoperability, allowing you to directly use C++ co
 The `cpp/raw` form allows you to embed raw C++ code directly into your Jank program:
 
 ```clojure
-(cpp/raw "namespace jank::example {
-            struct foo {
-              int value{42};
-            };
-          }")
+(cpp/raw "#include <GLFW/glfw3.h>")
+
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+
+(cpp/raw
+ "void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+      (void) window;
+      glViewport(0, 0, width, height);
+    }")
 ```
 
-**Requirements:**
-- Must take exactly one argument: a string literal containing valid C++ code
-- The C++ code is compiled as part of your program
-- Typically used to define types, functions, and variables in C++ namespaces
+**Usage patterns:**
+- Include C/C++ headers
+- Define C functions and structs
+- Declare global variables and constants
+- Define helper functions for type conversions
 
-### 2. Accessing C++ Values and Types
+### 2. Accessing C++ Values
 
-#### Global Values and Static Members
-Access C++ global variables, static members, and enum values using the `cpp/` prefix with dot notation:
+#### Global Functions and Constants
+
+Access C++ global functions and constants using the `cpp/` prefix with dot notation:
 
 ```clojure
-; Access enum values
-cpp/jank.example.MyEnum.VALUE1
+; Call C functions
+(cpp/glfwInit)
+(cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)
+(cpp/glGetUniformLocation shader "view")
 
-; Access static members
-cpp/jank.example.MyClass.static_member
+; Call C++ namespace functions
+(cpp/glm.vec3 (cpp/float. 0.0) (cpp/float. 1.0) (cpp/float. 0.0))
+(cpp/glm.lookAt camera-pos target up)
+(cpp/glm.radians (cpp/float. 45.0))
 
-; Access global variables
-cpp/jank.example.global_var
+; Access global variables defined in cpp/raw
+cpp/textured_rectangle_2D_vertices
+cpp/float_size
 ```
 
 #### Member Access with `cpp/.-`
+
 Access instance members (fields) of C++ objects:
 
 ```clojure
-(let [obj (cpp/jank.example.foo.)]
-  (cpp/.-value obj))  ; Access the 'value' field
+(let [attribute (cpp/unbox cpp/cgltf_attribute* attribute-box)]
+  (cpp/.-type attribute)
+  (cpp/.-data attribute)
+  (cpp/.-count attribute))
+```
+
+#### Method Calls with `cpp/.`
+
+Call methods on C++ objects:
+
+```clojure
+; Call methods on C++ containers
+(cpp/.push_back vertices vertex-data)
+(cpp/.size vertices)
+(cpp/.data array)
 ```
 
 ### 3. Creating C++ Objects
 
 #### Stack-Allocated Objects (Constructors)
+
 Create C++ objects on the stack using constructor syntax with a trailing dot:
 
 ```clojure
-; Default constructor
-(cpp/jank.example.foo.)
-
-; Constructor with arguments
-(cpp/jank.example.foo. arg1 arg2)
-
 ; Built-in types
-(cpp/int.)       ; Creates int with default value
-(cpp/int. 42)    ; Creates int with value 42
-(cpp/long. 100)
+(cpp/int)        ; Default initialized int
+(cpp/int. 42)    ; int with value 42
+(cpp/float)      ; Default initialized float
+(cpp/float. 3.14) ; float with value 3.14
+(cpp/double)
+(cpp/double. 2.718)
+(cpp/char)
+(cpp/char. 65)   ; char 'A'
+
+; C++ library types
+(cpp/glm.vec3 (cpp/float. 0.0) (cpp/float. 1.0) (cpp/float. 0.0))
+(cpp/cgltf_options)
 ```
 
 #### Heap-Allocated Objects with `cpp/new`
+
 Allocate objects on the heap, returning a pointer:
 
 ```clojure
-(let [ptr (cpp/new cpp/jank.example.foo)]
-  ; Use cpp/* to dereference the pointer
-  (cpp/.-value (cpp/* ptr)))
+; Allocate on heap
+(cpp/new cpp/float (cpp/float. 0.0))
+(cpp/new cpp/glm.vec3 vec-expr)
+(cpp/new (cpp/type "std::array<glm::vec3, 3>"))
 ```
 
-#### Deleting Heap Objects with `cpp/delete`
-Delete heap-allocated objects:
+**Note:** This codebase does not use `cpp/delete`. Objects are managed through boxing and Jank's lifecycle.
 
-```clojure
-(let [ptr (cpp/new cpp/jank.example.foo)]
-  ; ... use the object ...
-  (cpp/delete ptr))
-```
-
-### 4. Calling C++ Functions
-
-#### Global and Namespace-Level Functions
-Call C++ functions directly:
-
-```clojure
-(cpp/jank.example.my_function arg1 arg2)
-
-; Void functions return nil
-(cpp/jank.example.void_function)
-```
-
-#### Member Functions
-Call member functions on C++ objects:
-
-```clojure
-(let [obj (cpp/jank.example.MyClass.)]
-  (cpp/.member_function obj arg1 arg2))
-```
-
-### 5. C++ Operators
-
-Jank provides access to C++ operators through special forms:
+### 4. C++ Operators
 
 #### Arithmetic Operators
 ```clojure
@@ -114,13 +118,6 @@ Jank provides access to C++ operators through special forms:
 (cpp/* ptr)   ; Dereference (unary)
 (cpp/* a b)   ; Multiplication (binary)
 (cpp// a b)   ; Division
-(cpp/% a b)   ; Modulo
-```
-
-#### Increment/Decrement
-```clojure
-(cpp/++ ptr)  ; Pre-increment
-(cpp/-- ptr)  ; Pre-decrement
 ```
 
 #### Comparison Operators
@@ -140,28 +137,69 @@ Jank provides access to C++ operators through special forms:
 
 #### Bitwise Operators
 ```clojure
-(cpp/<< a b)  ; Left shift
-(cpp/>> a b)  ; Right shift
 (cpp/| a b)   ; Bitwise OR
 (cpp/& value) ; Address-of (unary)
-(cpp/& a b)   ; Bitwise AND (binary)
 ```
 
 #### Assignment
 ```clojure
-(cpp/= target value)  ; Assignment
+(cpp/= target value)  ; Assignment (sets target to value, returns void)
+```
+
+### 5. Array Operations
+
+#### `cpp/aget` - Array Element Access
+
+Access elements of C++ arrays or array-like structures:
+
+```clojure
+; Access array elements by index
+(cpp/aget array (cpp/int 0))
+(cpp/aget vertices (cpp/int i))
+(cpp/aget direction (cpp/int 2))
+
+; Access translation array from cgltf
+(let [translation (cpp/get_node_translation node)]
+  [(cpp/aget translation (cpp/int 0))
+   (cpp/aget translation (cpp/int 1))
+   (cpp/aget translation (cpp/int 2))])
+```
+
+#### `aset` - Array Element Assignment
+
+Set elements of arrays:
+
+```clojure
+; Set array element
+(aset array (cpp/int index) value)
+
+; Example from math.core.jank
+(aset (cpp/* arr-sym) (cpp/int idx)
+      (cpp/glm.vec3 (cpp/float x) (cpp/float y) (cpp/float z)))
+
+; Example from io.core.jank
+(aset (cpp/charify_void buffer) (cpp/int bytes-read) (cpp/char 0))
 ```
 
 ### 6. Type Specifications with `cpp/type`
 
-Explicitly specify C++ types, especially useful for templates:
+Explicitly specify C++ types, especially useful for templates and complex type names:
 
 ```clojure
-; Create a templated type
+; Create instances of templated types
 ((cpp/type "std::vector<int>"))
+((cpp/type "std::vector<Vertex>"))
+((cpp/type "std::array<float, 3>"))
+((cpp/type "std::array<glm::vec3, 3>"))
 
-; Use with constructors
-((cpp/type "jank::example::foo<int, long>") arg1 arg2)
+; Create unsigned int (common in OpenGL)
+((cpp/type "unsigned int"))
+
+; Use for casting and type specifications
+(cpp/cast (cpp/type "void*") buffer)
+(cpp/unbox (cpp/type "void*") boxed-buffer)
+(cpp/unbox (cpp/type "std::vector<Vertex>*") vertices-box)
+(cpp/unbox (cpp/type "std::vector<int>*") indices-box)
 ```
 
 ### 7. Boxing and Unboxing
@@ -170,418 +208,228 @@ Convert between Jank's boxed types and C++ native types:
 
 #### `cpp/box` - Convert C++ Value to Jank Object
 ```clojure
-(cpp/box cpp-value)
+(cpp/box pointer)
+(cpp/box (cpp/new cpp/float (cpp/float. 0.0)))
+(cpp/box (cpp/& accessor))
+(cpp/box (cpp/.-primitives mesh))
 ```
 
 #### `cpp/unbox` - Extract C++ Value from Jank Object
-```clojure
-(cpp/unbox boxed-value)
-```
-
-### 8. Working with C++ Values
-
-#### `cpp/value` - Access C++ Values
-Access specific C++ values or create value wrappers:
 
 ```clojure
-(cpp/value "expression")
+; Unbox takes TWO arguments: type and boxed-value
+(cpp/unbox cpp/GLFWwindow* window)
+(cpp/unbox cpp/FILE* file)
+(cpp/unbox cpp/cgltf_attribute* attribute)
+(cpp/unbox cpp/cgltf_accessor* accessor-box)
+(cpp/unbox cpp/cgltf_node* node)
+(cpp/unbox cpp/cgltf_node** nodes)
+(cpp/unbox cpp/cgltf_scene* scenes)
+(cpp/unbox cpp/float* ptr)
+(cpp/unbox cpp/glm.vec3* ptr)
+
+; For complex types, use cpp/type for the first argument
+(cpp/unbox (cpp/type "void*") buffer)
+(cpp/unbox (cpp/type "std::vector<Vertex>*") vertices-box)
+(cpp/unbox (cpp/type "std::vector<int>*") indices-box)
 ```
 
-## Type System Integration
+**Note:** `cpp/unbox` always takes exactly two arguments - the type specification first, then the boxed value.
 
-### Built-in Type Constructors
-Jank provides constructors for common C++ types:
+### 8. Working with C++ Constants
 
-- `cpp/int`, `cpp/int.`
-- `cpp/long`, `cpp/long.`
-- `cpp/float`, `cpp/float.`
-- `cpp/double`, `cpp/double.`
-- `cpp/bool`, `cpp/bool.`
-- `cpp/char`, `cpp/char.`
+#### `cpp/value` - Access C++ Constants and Macro Values
 
-### Nullptr Support
+Access C preprocessor macros and compile-time constants:
+
+```clojure
+; OpenGL constants
+(cpp/value "GL_TRIANGLES")
+(cpp/value "GL_FLOAT")
+(cpp/value "GL_TEXTURE_2D")
+(cpp/value "GL_DEPTH_TEST")
+(cpp/value "GL_COLOR_BUFFER_BIT")
+
+; GLFW constants
+(cpp/value "GLFW_PRESS")
+(cpp/value "GLFW_KEY_ESCAPE")
+(cpp/value "GLFW_KEY_W")
+(cpp/value "GLFW_CONTEXT_VERSION_MAJOR")
+(cpp/value "GLFW_OPENGL_CORE_PROFILE")
+(cpp/value "GLFW_CURSOR")
+
+; C standard library constants
+(cpp/value "SEEK_END")
+
+; Boolean/Special constants
+(cpp/value "GL_TRUE")
+(cpp/value "GL_FALSE")
+```
+
+**Common Pattern:** Bind frequently used constants to Clojure defs:
+```clojure
+(def GLFW_PRESS (cpp/value "GLFW_PRESS"))
+(def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
+(def GL_TRIANGLES (cpp/value "GL_TRIANGLES"))
+```
+
+#### `cpp/nullptr` - Null Pointer Constant
+
 ```clojure
 cpp/nullptr  ; C++ nullptr value
+
+; Common usage
+(cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)
+(when (cpp/! window)  ; Check for nullptr
+  (println "Window creation failed"))
 ```
 
-## Templates and Generics
-
-Jank supports C++ templates through explicit type specifications:
+#### `cpp/false` - Boolean Constant
 
 ```clojure
-(cpp/raw "namespace example {
-            template<typename T>
-            struct Container {
-              T value;
-            };
-          }")
+cpp/false  ; C++ false boolean constant
 
-; Instantiate template
-((cpp/type "example::Container<int>") 42)
+; Common usage
+(when (cpp/!= cpp/false (cpp/.-has_translation node))
+  (assoc :translation [...]))
 ```
 
-## Enums
+## Memory Management
 
-Both C-style and C++11 enum classes are supported:
+### Using malloc and free
 
 ```clojure
-(cpp/raw "namespace example {
-            enum Color { RED = 1, GREEN = 2, BLUE = 3 };
-            enum class Status { OK, ERROR };
-          }")
+(cpp/raw "#include <stdlib.h>")
 
-; Access enum values
-cpp/example.RED
-cpp/example.Status.OK
+; Allocate memory
+(let [buffer (cpp/malloc size)]
+  (when (cpp/! buffer)
+    (cpp/perror "malloc"))
+  ; ... use buffer ...
+  (cpp/free buffer))
+
+; From shaders/core.jank
+(cpp/free source)
+(cpp/free (cpp/cast (cpp/type "void*") sources))
 ```
 
-## Function Overloading
+## Common Patterns
 
-C++ function overloading is supported - the correct overload is selected based on argument types:
+### C++ Helper Functions for Type Conversions
+
+Define small C++ helper functions in `cpp/raw` blocks to handle type conversions:
 
 ```clojure
-(cpp/raw "namespace example {
-            int process(int x) { return x * 2; }
-            float process(float x) { return x * 3.0f; }
-          }")
+; From geometry/core.jank
+(cpp/raw
+ "void* voidify_int (int i) {
+    return (void*) i;
+  }")
 
-(cpp/example.process (cpp/int. 5))    ; Calls int version
-(cpp/example.process (cpp/float. 5))  ; Calls float version
+; From io/core.jank
+(cpp/raw
+ "char* charify_void (void* buffer) {
+    return static_cast<char*>(buffer);
+  }")
+
+; From textures/core.jank
+(cpp/raw
+ "void* voidify_stbi_uc (stbi_uc* x) {
+    return (void*) x;
+  }")
+
+; Usage
+(cpp/voidify_int (cpp/int 0))
+(cpp/charify_void buffer)
+(cpp/voidify_stbi_uc data)
 ```
 
-## Lifetime Management
+### Accessing Struct Fields and Nested Data
 
-- Stack-allocated objects (created with constructors) are automatically destroyed when they go out of scope
-- Heap-allocated objects (created with `cpp/new`) must be manually deleted with `cpp/delete`
-- References obtained with `cpp/&` do not affect object lifetime
+Helper functions for cleaner null checks and field access:
 
-## Error Handling
+```clojure
+; From gltf/core.jank
+(cpp/raw
+ "cgltf_float* get_node_translation (cgltf_node* node) {
+    return node->translation;
+  }
 
-The Jank compiler provides compile-time errors for:
-- Invalid C++ code in `cpp/raw`
-- Type mismatches in function calls
-- Access to private/protected members
-- Missing or ambiguous function overloads
-- Incorrect constructor arguments
+  cgltf_float* get_node_scale (cgltf_node* node) {
+    return node->scale;
+  }
+
+  bool cgltf_primitive_has_material(cgltf_primitive* prim) {
+    return (prim->material != nullptr);
+  }")
+
+; Usage
+(when (cpp/cgltf_primitive_has_material primitive)
+  (let [translation (cpp/get_node_translation node)]
+    ...))
+```
+
+### Creating Constant Arrays in C++
+
+For geometry data and other large constant arrays:
+
+```clojure
+; From geometry/core.jank
+(cpp/raw
+ "float textured_rectangle_2D_vertices[] = {
+    0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+    0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+    // ...
+  };
+
+  unsigned int textured_rectangle_2D_indices [] = {
+    0, 1, 3,
+    1, 2, 3
+  };
+
+  size_t textured_rectangle_2D_vertices_size = sizeof(textured_rectangle_2D_vertices);
+  size_t textured_rectangle_2D_indices_size = sizeof(textured_rectangle_2D_indices);
+  size_t float_size = sizeof(float);")
+
+; Access from Jank
+(cpp/glBufferData GL_ARRAY_BUFFER
+                  cpp/textured_rectangle_2D_vertices_size
+                  (cpp/cast (cpp/type "void*")
+                            cpp/textured_rectangle_2D_vertices)
+                  GL_STATIC_DRAW)
+```
+
+### Helper Functions for Custom Operations
+
+```clojure
+; From math/core.jank - Identity matrix helper
+(cpp/raw
+ "glm::mat4 identity_matrix () {
+    return glm::mat4(1.0f);
+  }")
+
+(let [model (cpp/identity_matrix)]
+  ...)
+
+; From shaders/core.jank - Creating C string arrays
+(cpp/raw
+ "char **sources(void* source) {
+    char **arr = (char **) malloc(sizeof(char *));
+    arr[0] = (char*) source;
+    return arr;
+  }")
+```
+
+## Usage Examples from This Codebase
+
+**Locations:** `app.core`, `app.shaders.core`, `app.textures.core`, `app.geometry.core`, `app.gltf.core`, `app.io.core`, `app.math.core`
 
 ## Best Practices
 
-1. **Namespace Organization**: Use consistent namespace patterns for C++ code embedded with `cpp/raw`
-2. **Memory Management**: Be explicit about ownership - prefer stack allocation where possible
-3. **Type Safety**: Use `cpp/type` for complex template instantiations
-4. **Interop Boundaries**: Keep interop code localized to specific modules when possible
-5. **Documentation**: Document the C++ APIs you're exposing to Jank code
-
-## Examples
-
-### Example 1: Using STL Containers
-```clojure
-(cpp/raw "#include <vector>")
-
-(let [vec ((cpp/type "std::vector<int>"))
-      _ (cpp/.push_back vec (cpp/int. 1))
-      _ (cpp/.push_back vec (cpp/int. 2))
-      size (cpp/.size vec)]
-  size)  ; Returns 2
-```
-
-### Example 2: Working with Chrono
-```clojure
-(defn sleep [ms]
-  (let [duration (cpp/std.chrono.milliseconds ms)]
-    (cpp/std.this_thread.sleep_for duration)))
-```
-
-### Example 3: Custom Class with Operators
-```clojure
-(cpp/raw "namespace math {
-            struct Vector2 {
-              float x, y;
-              Vector2 operator+(const Vector2& other) const {
-                return {x + other.x, y + other.y};
-              }
-            };
-          }")
-
-(let [v1 (cpp/math.Vector2. (cpp/float. 1) (cpp/float. 2))
-      v2 (cpp/math.Vector2. (cpp/float. 3) (cpp/float. 4))
-      v3 (cpp/+ v1 v2)]
-  [(cpp/.-x v3) (cpp/.-y v3)])  ; Returns [4.0 6.0]
-```
-
-## Implementation Details
-
-The C++ interop system is implemented through:
-- `cpp_raw` expression nodes in the AST (analyze/expr/cpp_raw.hpp)
-- Analyzer processing of cpp/* forms (analyze/processor.cpp)
-- Codegen that directly emits C++ code or LLVM IR
-- Integration with CppInterOp library for runtime type information
-
-## C Language Interop
-
-While Jank's interop system uses the `cpp/` prefix, it fully supports C language features and idioms. Since C++ is largely a superset of C, you can work with pure C code seamlessly.
-
-### Working with C Headers
-
-Include C headers using `extern "C"` blocks to ensure proper linkage:
-
-```clojure
-(cpp/raw "#ifdef __cplusplus
-          extern \"C\" {
-          #endif
-          #include <stdio.h>
-          #include <stdlib.h>
-          #include <string.h>
-          #ifdef __cplusplus
-          }
-          #endif")
-```
-
-Or if the headers already have C++ guards:
-
-```clojure
-(cpp/raw "#include <math.h>
-          #include <time.h>")
-```
-
-### C Functions
-
-Call C standard library and custom C functions directly:
-
-```clojure
-; Standard library functions
-(cpp/printf "Hello, %s!\n" "World")
-(cpp/malloc 1024)
-(cpp/strlen "test string")
-(cpp/sqrt 16.0)
-
-; Custom C functions
-(cpp/raw "extern \"C\" {
-            int add_numbers(int a, int b) {
-              return a + b;
-            }
-          }")
-
-(cpp/add_numbers 5 7)  ; Returns 12
-```
-
-### C Structs
-
-Define and use C-style structs:
-
-```clojure
-(cpp/raw "extern \"C\" {
-            typedef struct {
-              int x;
-              int y;
-              char label[32];
-            } Point;
-            
-            Point create_point(int x, int y, const char* label) {
-              Point p;
-              p.x = x;
-              p.y = y;
-              strncpy(p.label, label, 31);
-              p.label[31] = '\\0';
-              return p;
-            }
-          }")
-
-(let [pt (cpp/create_point 10 20 "origin")]
-  [(cpp/.-x pt) (cpp/.-y pt)])  ; Returns [10 20]
-```
-
-### C Arrays and Pointers
-
-Work with C-style arrays and pointer arithmetic:
-
-```clojure
-(cpp/raw "extern \"C\" {
-            int sum_array(int* arr, int size) {
-              int sum = 0;
-              for(int i = 0; i < size; i++) {
-                sum += arr[i];
-              }
-              return sum;
-            }
-            
-            void fill_buffer(char* buffer, size_t size) {
-              for(size_t i = 0; i < size - 1; i++) {
-                buffer[i] = 'A' + (i % 26);
-              }
-              buffer[size - 1] = '\\0';
-            }
-          }")
-
-; Allocate and use C arrays
-(let [buffer (cpp/malloc 256)]
-  (cpp/fill_buffer buffer 256)
-  ; ... use buffer ...
-  (cpp/free buffer))
-```
-
-### C Enums
-
-C enums work identically to C++ enums:
-
-```clojure
-(cpp/raw "extern \"C\" {
-            enum FileMode {
-              READ_ONLY = 0,
-              WRITE_ONLY = 1,
-              READ_WRITE = 2
-            };
-          }")
-
-(let [mode cpp/READ_WRITE]
-  (if (= mode 2)
-    :read-write-mode))
-```
-
-### Function Pointers
-
-Work with C function pointers:
-
-```clojure
-(cpp/raw "extern \"C\" {
-            typedef int (*operation)(int, int);
-            
-            int apply_operation(operation op, int a, int b) {
-              return op(a, b);
-            }
-            
-            int multiply(int a, int b) {
-              return a * b;
-            }
-          }")
-
-(cpp/apply_operation cpp/multiply 6 7)  ; Returns 42
-```
-
-### C Macros
-
-Use C preprocessor macros (they're expanded at compile time):
-
-```clojure
-(cpp/raw "#define MAX(a, b) ((a) > (b) ? (a) : (b))
-          #define BUFFER_SIZE 1024
-          #define DEBUG_MODE 1")
-
-; Use macro constants
-(let [size cpp/BUFFER_SIZE]  ; Gets the value 1024
-  (cpp/malloc size))
-```
-
-### Memory Management
-
-Use C memory management functions:
-
-```clojure
-; Allocate memory
-(let [ptr (cpp/malloc 100)]
-  ; Use the memory
-  (cpp/memset ptr 0 100)
-  ; Free when done
-  (cpp/free ptr))
-
-; Allocate zeroed memory
-(let [arr (cpp/calloc 10 (cpp/sizeof cpp/int))]
-  ; ... use array ...
-  (cpp/free arr))
-
-; Reallocate
-(let [ptr (cpp/malloc 100)
-      new-ptr (cpp/realloc ptr 200)]
-  ; ... use new-ptr ...
-  (cpp/free new-ptr))
-```
-
-### String Manipulation
-
-Work with C strings:
-
-```clojure
-(cpp/raw "#include <string.h>")
-
-(let [dest (cpp/malloc 256)
-      src "Hello, C!"]
-  (cpp/strcpy dest src)
-  (cpp/strcat dest " From Jank")
-  (let [len (cpp/strlen dest)]
-    (cpp/free dest)
-    len))  ; Returns length of concatenated string
-```
-
-### File I/O
-
-Use C file operations:
-
-```clojure
-(cpp/raw "#include <stdio.h>")
-
-(let [file (cpp/fopen "test.txt" "w")]
-  (when (not= file cpp/nullptr)
-    (cpp/fprintf file "Hello from Jank via C!\n")
-    (cpp/fclose file)))
-
-; Reading
-(let [file (cpp/fopen "test.txt" "r")
-      buffer (cpp/malloc 256)]
-  (when (not= file cpp/nullptr)
-    (cpp/fgets buffer 256 file)
-    (cpp/fclose file)
-    ; ... process buffer ...
-    (cpp/free buffer)))
-```
-
-### Best Practices for C Interop
-
-1. **Use `extern "C"`**: Always wrap C headers and functions in `extern "C"` blocks to prevent C++ name mangling
-2. **Manual Memory Management**: Remember to `free` any memory allocated with `malloc`, `calloc`, or `realloc`
-3. **Null Checks**: Always check for NULL/nullptr returns from C functions like `malloc` or `fopen`
-4. **Buffer Sizes**: Be careful with buffer sizes and string termination when using C string functions
-5. **Type Safety**: C is less type-safe than C++ - be extra careful with void pointers and casts
-6. **Error Handling**: Check return codes from C functions (many return -1 or NULL on error)
-
-### Example: Complete C Library Integration
-
-```clojure
-; Integrate with a C math library
-(cpp/raw "extern \"C\" {
-            #include <math.h>
-            
-            typedef struct {
-              double real;
-              double imag;
-            } Complex;
-            
-            Complex complex_add(Complex a, Complex b) {
-              Complex result;
-              result.real = a.real + b.real;
-              result.imag = a.imag + b.imag;
-              return result;
-            }
-            
-            double complex_magnitude(Complex c) {
-              return sqrt(c.real * c.real + c.imag * c.imag);
-            }
-          }")
-
-(defn complex-arithmetic []
-  (let [c1 (cpp/Complex. 3.0 4.0)
-        c2 (cpp/Complex. 1.0 2.0)
-        sum (cpp/complex_add c1 c2)
-        mag (cpp/complex_magnitude sum)]
-    {:sum-real (cpp/.-real sum)
-     :sum-imag (cpp/.-imag sum)
-     :magnitude mag}))
-```
-
-## Limitations
-
-- Template metaprogramming must be explicitly instantiated
-- Some C++ features like SFINAE may require workarounds
-- Virtual function calls work but dynamic dispatch follows C++ rules
-- Exception handling integration is implementation-defined
-- C variadic functions require careful type handling
-- Some C macros that use token pasting or complex preprocessing may not work as expected
+1. **Helper Functions**: Create small C++ helper functions for repetitive type conversions and null checks
+2. **Constants as Defs**: Bind frequently used `cpp/value` constants to Clojure `def` symbols for readability
+3. **Boxing for Persistence**: Use `cpp/box` to store C++ pointers in Jank data structures
+4. **Explicit Types**: Use `cpp/type` for template instantiations and unsigned types
+5. **Memory Management**: Always free allocated memory with `cpp/free` when done
+6. **Null Checks**: Check for `cpp/nullptr` after operations that can fail (malloc, fopen, etc.)
+7. **cpp/raw Organization**: Group related C++ code together in `cpp/raw` blocks at the top of namespaces
