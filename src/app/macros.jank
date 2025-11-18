@@ -35,7 +35,7 @@
         `(let [~name ~expr]
            (if (not ~when)
              (clet ~rest ~@body)
-             ~error))
+             (do ~error nil)))
         `(let [~name ~expr]
            (clet ~rest ~@body)))
       `(do ~@body))))
