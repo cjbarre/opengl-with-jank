@@ -188,7 +188,7 @@
         cursor-pitch (math/*-> :float pitch)]
 
     (cpp/= cursor-yaw (cpp/+ cursor-yaw x-offset))
-    (cpp/= cursor-pitch (cpp/+ cursor-pitch y-offset))
+    (cpp/= cursor-pitch (cpp/- cursor-pitch y-offset))
 
     (cpp/= cursor-last-x cursor-x)
     (cpp/= cursor-last-y cursor-y)
