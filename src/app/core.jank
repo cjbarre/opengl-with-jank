@@ -4,7 +4,8 @@
             [app.geometry.interface :as geometry]
             [app.textures.interface :as textures]
             [app.math.interface :as math]
-            [app.gltf.interface :as gltf]))
+            [app.gltf.interface :as gltf]
+            [app.event-store.interface :as es]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -28,51 +29,28 @@
 (def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
 
 (defn process-input
-  [{{:keys [position front up]} :camera
-    :keys [window delta-time]}]
-  (let [camera-speed (cpp/* (cpp/float 15.0) (math/*-> :float delta-time))
-        window (cpp/unbox cpp/GLFWwindow* window)
-        camera-position (math/*-> :vec3 position)
-        camera-front (math/*-> :vec3 front)
-        camera-up (math/*-> :vec3 up)]
+  [{:keys [window delta-time cursor/pitch cursor/yaw]}]
+  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+    (cond-> {:command/name :player/process-input
+             :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
+             :delta-time (float (math/*-> :float delta-time))
+             :pitch (float (math/*-> :float pitch))
+             :yaw (float (math/*-> :float yaw))}
+      (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE)
+         GLFW_PRESS)
+      (assoc :exit true)
 
-    (when (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE)
-             GLFW_PRESS)
-      (cpp/glfwSetWindowShouldClose window 1))
+      (= (cpp/glfwGetKey window GLFW_KEY_W) GLFW_PRESS)
+      (assoc :forward true)
 
-    (when (= (cpp/glfwGetKey window GLFW_KEY_W) GLFW_PRESS)
-      (cpp/= camera-position
-             (cpp/+ camera-position
-                    (cpp/* camera-speed
-                           camera-front)))
-      nil)
+      (= (cpp/glfwGetKey window GLFW_KEY_S) GLFW_PRESS)
+      (assoc :backward true)
 
-    (when (= (cpp/glfwGetKey window GLFW_KEY_S) GLFW_PRESS)
-      (cpp/= camera-position
-             (cpp/- camera-position
-                    (cpp/* camera-speed
-                           camera-front)))
-      nil)
+      (= (cpp/glfwGetKey window GLFW_KEY_A) GLFW_PRESS)
+      (assoc :left true)
 
-    (when (= (cpp/glfwGetKey window GLFW_KEY_A) GLFW_PRESS)
-      (cpp/= camera-position
-             (cpp/- camera-position
-                    (cpp/* (cpp/glm.normalize
-                            (cpp/glm.cross
-                             camera-front
-                             camera-up))
-                           camera-speed)))
-      nil)
-
-    (when (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
-      (cpp/= camera-position
-             (cpp/+ camera-position
-                    (cpp/* (cpp/glm.normalize
-                            (cpp/glm.cross
-                             camera-front
-                             camera-up))
-                           camera-speed)))
-      nil)))
+      (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
+      (assoc :right true))))
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -85,15 +63,38 @@
                       (cpp/value "GL_TRUE"))
 
   (let [window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
-    (if (cpp/! window)
-      (do (println "Window creation failed")
-          (cpp/exit 0))
-      (do
-        (cpp/glfwMakeContextCurrent window)
-        (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
-        (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+    (when (cpp/! window)
+      (println "Window creation failed")
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
+    (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+    (cpp/box window)))
 
-        (cpp/box window)))))
+(cpp/raw
+ "glm::mat4* new_identity_matrix () {
+    return new glm::mat4(1.0f);
+  }")
+
+(defn transform-system
+  [{:keys [shader]} {:keys [tags] :as entity}]
+  (if (contains? tags :transform)
+    (let [[px py pz] (:transform/position entity)
+          model-m (-> (cpp/identity_matrix)
+                      (cpp/glm.translate (math/gimmie :vec3 [px py pz])))
+          model-m-loc (cpp/glGetUniformLocation shader "model")
+          _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
+      :done)
+    (let [model-m-loc (cpp/glGetUniformLocation shader "model")
+          _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr (cpp/identity_matrix)))]
+      :done)))
+
+(defn render-system
+  [{:keys [shader]} {:keys [tags] :as entity}]
+  (when (contains? tags :render)
+    ((:draw (:model entity))
+     {:shader shader
+      :model/local-matrix-uniform "local"})))
 
 (defn update-camera
   [{{:keys [front]} :camera
@@ -111,25 +112,25 @@
                         (cpp/cos (cpp/glm.radians pitch))))
         _ (cpp/= (math/*-> :vec3 front) direction)]))
 
-(defn draw-3D
-  [{{:keys [position front]} :camera
-    :keys [_window models shader] :as context}]
-  (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
-        _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
-        _ (cpp/glUseProgram shader)
-        _ (update-camera context)
+(defn camera-system
+  [{{:keys [front position]} :camera
+    :keys [shader state]
+    :as context}]
+  (let [player (get-in @state [:entities #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"])
+        _ (update-camera context) 
         camera-position (math/*-> :vec3 position)
         camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
         camera-front (math/*-> :vec3 front)
 
-        model-m (cpp/identity_matrix)
-        model-m-loc (cpp/glGetUniformLocation shader "model")
-        _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
-
         view-m (cpp/glm.lookAt camera-position (cpp/+ camera-position camera-front) camera-up)
-
         view-m-loc (cpp/glGetUniformLocation shader "view")
-        _ (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m))
+        _ (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m))]))
+
+(defn draw-3D
+  [{:keys [state shader] :as context}]
+  (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
+        _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
+        _ (cpp/glUseProgram shader)
 
         projection-m-loc (cpp/glGetUniformLocation shader "projection")
         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
@@ -137,10 +138,11 @@
                                           (cpp/float 0.1)
                                           (cpp/float 100.0))
 
-        _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))]
-    (doseq [m models]
-      ((:draw m) {:shader shader
-                  :model/local-matrix-uniform "local"}))))
+        _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))
+        _ (camera-system context)]
+    (doseq [e (vals (:entities @state))]
+      (transform-system context e)
+      (render-system context e))))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
@@ -150,7 +152,7 @@
 
         _ (cpp/glfwGetCursorPos (cpp/unbox cpp/GLFWwindow* window)
                                 (cpp/& cursor-x)
-                                (cpp/& cursor-y)) 
+                                (cpp/& cursor-y))
 
         cursor-last-x (math/*-> :float last-x)
         cursor-last-y (math/*-> :float last-y)
@@ -188,18 +190,125 @@
     (cpp/= delta-time (cpp/- current-frame last-frame))
     (cpp/= last-frame current-frame)))
 
+(defmulti handle-event
+  (fn [state {:keys [event]}] (:event/type event)))
+
+(defmethod handle-event :system/exit
+  [state {:keys [window]}]
+  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+    (cpp/glfwSetWindowShouldClose window 1)
+    state))
+
+(defmethod handle-event :level/spawned
+  [state {{:keys [id] :as event} :event}]
+  (update state :entities assoc id
+          (-> event
+              (select-keys [:id :model])
+              (update :model #(gltf/load {:model (gltf/parse {:path %})}))
+              (update :tags (fnil conj #{}) :render))))
+
+(defmethod handle-event :player/spawned
+  [state {{:keys [id] :as event} :event}]
+  (update state :entities assoc id
+          (-> event
+              (select-keys [:id :model :transform/position])
+              (assoc :transform/pitch 0.0 :transform/yaw -90.0)
+              (update :model #(gltf/load {:model (gltf/parse {:path %})}))
+              (update :tags (fnil conj #{}) :render :transform :camera))))
+
+
+(defmethod handle-event :player/moved
+  [{:keys [entities] :as state}
+   {{:keys [id forward backward left right yaw pitch delta-time]} :event}]
+  (let [player (get entities id)
+        movespeed (cpp/* (cpp/float 5.0) (cpp/float delta-time))
+        yaw-radians (cpp/glm.radians (cpp/float yaw))
+        front (math/gimmie :vec3 [(cpp/cos yaw-radians) 0.0 (cpp/sin yaw-radians)])
+        velocity (->> front
+                      (cpp/* movespeed))
+        [px py pz] (:transform/position player)
+        current-position (math/gimmie :vec3 [px py pz])
+        up (math/gimmie :vec3 [0.0 1.0 0.0])
+        _ (when forward
+            (cpp/= current-position
+                   (cpp/+ current-position
+                          (cpp/* movespeed
+                                 front)))
+            nil)
+        _ (when backward
+            (cpp/= current-position
+                   (cpp/- current-position
+                          (cpp/* movespeed
+                                 front)))
+            nil)
+        _ (when left
+            (cpp/= current-position
+                   (cpp/- current-position
+                          (cpp/* (cpp/glm.normalize
+                                  (cpp/glm.cross
+                                   front
+                                   up))
+                                 movespeed)))
+            nil)
+        _ (when right
+            (cpp/= current-position
+                   (cpp/+ current-position
+                          (cpp/* (cpp/glm.normalize
+                                  (cpp/glm.cross
+                                   front
+                                   up))
+                                 movespeed)))
+            nil)
+        adjusted-position (cpp/+ current-position (cpp/* (cpp/float delta-time) velocity))]
+    (-> state
+        (update-in [:entities id] assoc
+                   :transform/position
+                   [(cpp/aget adjusted-position (cpp/int 0))
+                    (cpp/aget adjusted-position (cpp/int 1))
+                    (cpp/aget adjusted-position (cpp/int 2))]
+                   :transform/pitch pitch
+                   :transform/yaw yaw))))
+
+(defmethod handle-event :default
+  [state _]
+  state)
+
+(defmulti handle-command
+  (fn [{:keys [command]}] (:command/name command)))
+
+(defmethod handle-command :player/process-input
+  [{:keys [command]}]
+  (let [{:keys [exit forward backward left right]} command]
+    (cond
+      exit [{:event/type :system/exit}]
+      (or forward backward left right)
+      [(-> command
+           (dissoc :command/name)
+           (assoc :event/type :player/moved))])))
+
+(defmethod handle-command :default
+  [])
+
 (defn run-loop
-  [{:keys [window]
+  [{:keys [window event-store state]
     :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
-    (update-time context)
-    (update-cursor context)
-    (process-input context)
+    (let [_ (update-time context)
+          _ (update-cursor context)
+          command (process-input context) 
+          events (handle-command (assoc context :command command))
+          _ (es/append event-store {:events events})
+          _ (reset! state (reduce
+                           (fn [state event]
+                             (handle-event state (assoc context :event event)))
+                           @state
+                           (es/read event-store {})))
+          _ (reset! event-store {:events []})]
 
-    (draw-3D context)
+      (draw-3D context)
 
-    (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
-    (cpp/glfwPollEvents)))
+      (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
+      (cpp/glfwPollEvents))))
 
 (defn setup-camera []
   (let [camera-target (math/gimmie :boxed :vec3 [0.0 0.0 0.0])
@@ -248,19 +357,28 @@
                  "shaders/basic_fragment.glsl"})
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
-        level (gltf/load {:model (gltf/parse {:path "models/test-level.gltf"})})
-        player (gltf/load {:model (gltf/parse {:path "models/player.gltf"})})
-        camera (setup-camera)]
+        camera (setup-camera)
+        event-store (es/start {})
+        _ (es/append event-store {:events [{:event/type :level/spawned
+                                            :event/tags #{}
+                                            :id #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345"
+                                            :model "models/test-level.gltf"}
+                                           {:event/type :player/spawned
+                                            :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
+                                            :model "models/player.gltf"
+                                            :transform/position [0.0 0.0 0.0]}]})]
 
-    (run-loop {:window window
+    (run-loop {:event-store event-store
+               :state (atom {})
+               :window window
                :shader shader
-               :models [level player]
+               :models []
                :camera camera
                :delta-time          (math/gimmie :boxed :float 0.0)
                :last-frame          (math/gimmie :boxed :float 0.0)
                :cursor/initialized? (atom false)
                :cursor/last-x       (math/gimmie :boxed :float 400.0)
                :cursor/last-y       (math/gimmie :boxed :float 300.0)
-               :cursor/sensitivity  (math/gimmie :boxed :float 0.1)
+               :cursor/sensitivity  (math/gimmie :boxed :float 0.05)
                :cursor/pitch        (math/gimmie :boxed :float 0.0)
                :cursor/yaw          (math/gimmie :boxed :float -90.0)})))

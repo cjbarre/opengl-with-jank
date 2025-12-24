@@ -1,0 +1,19 @@
+(ns app.event-store.interface
+  (:refer-clojure :exclude [read])
+  (:require [app.event-store.core :as core]))
+
+(defn start
+  [config]
+  (core/start config))
+
+(defn stop 
+  [event-store]
+  (core/stop event-store))
+
+(defn read
+  [event-store args]
+  (core/read event-store args))
+
+(defn append
+  [event-store args]
+  (core/append event-store args))

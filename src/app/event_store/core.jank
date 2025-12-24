@@ -1,0 +1,43 @@
+(ns app.event-store.core
+  (:refer-clojure :exclude [read])
+  (:require [clojure.set :as set]))
+
+(defn start
+  [_config]
+  (atom {:events []}))
+
+(defn stop
+  [state]
+  (reset! state {:events []}))
+
+(defn read
+  [event-store {:keys [tags types as-of after] :as _args}]
+  (let [filtered-events
+        (->> (-> event-store deref :events)
+             (filter
+              (fn [event]
+                (and
+                 (or (not tags)
+                     (set/subset? tags (:event/tags event)))
+                 (or (not types)
+                     (contains? types (:event/type event)))
+                 (cond
+                   as-of (or (< (:event/id event) as-of)
+                             (= (:event/id event) as-of))
+                   after (> (:event/id event) after)
+                   :else true)))))]
+    filtered-events))
+
+(defn append
+  [event-store {{:keys [predicate-fn] :as cas} :cas
+                :keys [events]}]
+  (if cas
+    (let [events* (read event-store cas)
+          pred-result (predicate-fn events*)]
+      (if pred-result
+        (swap! event-store update :events into events)
+        (let [anomaly {:anom/category :anom/conflict
+                       :anom/message "CAS failed"
+                       :cas cas}]
+          anomaly)))
+    (swap! event-store update :events into events)))
