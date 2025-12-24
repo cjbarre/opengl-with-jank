@@ -80,13 +80,17 @@
   [{:keys [shader]} {:keys [tags] :as entity}]
   (if (contains? tags :transform)
     (let [[px py pz] (:transform/position entity)
+          yaw (:transform/yaw entity 0.0)
+          ;; Translate then rotate around Y axis (negate yaw to match camera direction)
           model-m (-> (cpp/identity_matrix)
-                      (cpp/glm.translate (math/gimmie :vec3 [px py pz])))
-          model-m-loc (cpp/glGetUniformLocation shader "model")
-          _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))]
+                      (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
+                      (cpp/glm.rotate (cpp/glm.radians (cpp/- (cpp/float 0.0) (cpp/float yaw)))
+                                      (math/gimmie :vec3 [0.0 1.0 0.0])))
+          model-m-loc (cpp/glGetUniformLocation shader "model")]
+      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
       :done)
-    (let [model-m-loc (cpp/glGetUniformLocation shader "model")
-          _ (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr (cpp/identity_matrix)))]
+    (let [model-m-loc (cpp/glGetUniformLocation shader "model")]
+      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr (cpp/identity_matrix)))
       :done)))
 
 (defn render-system
@@ -96,35 +100,48 @@
      {:shader shader
       :model/local-matrix-uniform "local"})))
 
-(defn update-camera
-  [{{:keys [front]} :camera
-    :cursor/keys [pitch yaw]}]
-  (let [direction (math/gimmie :vec3 [0.0 0.0 0.0])
-        pitch (math/*-> :float pitch)
-        yaw (math/*-> :float yaw)
-        _ (cpp/= (cpp/aget direction (cpp/int 0))
-                 (cpp/* (cpp/cos (cpp/glm.radians yaw))
-                        (cpp/cos (cpp/glm.radians pitch))))
-        _ (cpp/= (cpp/aget direction (cpp/int 1))
-                 (cpp/sin (cpp/glm.radians pitch)))
-        _ (cpp/= (cpp/aget direction (cpp/int 2))
-                 (cpp/* (cpp/sin (cpp/glm.radians yaw))
-                        (cpp/cos (cpp/glm.radians pitch))))
-        _ (cpp/= (math/*-> :vec3 front) direction)]))
 
 (defn camera-system
-  [{{:keys [front position]} :camera
+  [{{:keys [follow-distance follow-height look-height-offset]} :camera
     :keys [shader state]
-    :as context}]
-  (let [player (get-in @state [:entities #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"])
-        _ (update-camera context) 
-        camera-position (math/*-> :vec3 position)
-        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
-        camera-front (math/*-> :vec3 front)
+    :cursor/keys [yaw pitch]}]
+  (when-let [player (get-in @state [:entities #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"])]
+    (let [[px py pz] (:transform/position player)
 
-        view-m (cpp/glm.lookAt camera-position (cpp/+ camera-position camera-front) camera-up)
-        view-m-loc (cpp/glGetUniformLocation shader "view")
-        _ (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m))]))
+          ;; Get parameters
+          distance (math/*-> :float follow-distance)
+          height (math/*-> :float follow-height)
+          look-offset (math/*-> :float look-height-offset)
+          player-yaw (math/*-> :float yaw)
+          camera-pitch (math/*-> :float pitch)
+
+          ;; Camera offset behind player (spherical coords)
+          yaw-rad (cpp/glm.radians player-yaw)
+          pitch-rad (cpp/glm.radians camera-pitch)
+
+          ;; Horizontal offset: negate cos/sin to be BEHIND player
+          offset-x (cpp/* (cpp/- (cpp/float 0.0) (cpp/cos yaw-rad))
+                          (cpp/* distance (cpp/cos pitch-rad)))
+          offset-z (cpp/* (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad))
+                          (cpp/* distance (cpp/cos pitch-rad)))
+          offset-y (cpp/+ height (cpp/* distance (cpp/sin pitch-rad)))
+
+          ;; Camera world position
+          camera-pos (cpp/glm.vec3
+                      (cpp/+ (cpp/float px) offset-x)
+                      (cpp/+ (cpp/float py) offset-y)
+                      (cpp/+ (cpp/float pz) offset-z))
+
+          ;; Look at player head
+          look-target (cpp/glm.vec3 (cpp/float px)
+                                    (cpp/+ (cpp/float py) look-offset)
+                                    (cpp/float pz))
+          camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
+
+          ;; Set view matrix
+          view-m (cpp/glm.lookAt camera-pos look-target camera-up)
+          view-m-loc (cpp/glGetUniformLocation shader "view")]
+      (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m)))))
 
 (defn draw-3D
   [{:keys [state shader] :as context}]
@@ -176,11 +193,12 @@
     (cpp/= cursor-last-x cursor-x)
     (cpp/= cursor-last-y cursor-y)
 
-    (when (cpp/> cursor-pitch (cpp/float 89.0))
-      (cpp/= cursor-pitch (cpp/float 89.0)))
+    ;; Pitch constraints for third-person camera
+    (when (cpp/> cursor-pitch (cpp/float 60.0))
+      (cpp/= cursor-pitch (cpp/float 60.0)))
 
-    (when (cpp/< cursor-pitch (cpp/float -89.0))
-      (cpp/= cursor-pitch (cpp/float -89.0)))))
+    (when (cpp/< cursor-pitch (cpp/float -30.0))
+      (cpp/= cursor-pitch (cpp/float -30.0)))))
 
 (defn update-time
   [{:keys [delta-time last-frame]}]
@@ -278,13 +296,13 @@
 
 (defmethod handle-command :player/process-input
   [{:keys [command]}]
-  (let [{:keys [exit forward backward left right]} command]
+  (let [{:keys [exit]} command]
     (cond
       exit [{:event/type :system/exit}]
-      (or forward backward left right)
-      [(-> command
-           (dissoc :command/name)
-           (assoc :event/type :player/moved))])))
+      ;; Always generate :player/moved to keep yaw in sync with camera
+      :else [(-> command
+                 (dissoc :command/name)
+                 (assoc :event/type :player/moved))])))
 
 (defmethod handle-command :default
   [])
@@ -311,37 +329,9 @@
       (cpp/glfwPollEvents))))
 
 (defn setup-camera []
-  (let [camera-target (math/gimmie :boxed :vec3 [0.0 0.0 0.0])
-        camera-position (math/gimmie :boxed :vec3 [0.0 1.0 3.0])
-        up (math/gimmie :boxed :vec3 [0.0 1.0 0.0])
-        camera-direction
-        (cpp/box
-         (cpp/new
-          cpp/glm.vec3
-          (cpp/glm.normalize
-           (cpp/- (math/*-> :vec3 camera-position)
-                  (math/*-> :vec3 camera-target)))))
-        camera-right
-        (cpp/box
-         (cpp/new
-          cpp/glm.vec3
-          (cpp/glm.normalize
-           (cpp/glm.cross (math/*-> :vec3 up)
-                          (math/*-> :vec3 camera-direction)))))
-        camera-up
-        (cpp/box
-         (cpp/new
-          cpp/glm.vec3
-          (cpp/glm.cross (math/*-> :vec3 camera-direction)
-                         (math/*-> :vec3 camera-right))))
-        camera-front (math/gimmie :boxed :vec3 [0.0 0.0 -1.0])]
-
-    {:target camera-target
-     :position camera-position
-     :direction camera-direction
-     :right camera-right
-     :up camera-up
-     :front camera-front}))
+  {:follow-distance    (math/gimmie :boxed :float 5.0)   ; Distance behind player
+   :follow-height      (math/gimmie :boxed :float 2.0)   ; Height above player
+   :look-height-offset (math/gimmie :boxed :float 1.5)}) ; Look at head, not feet
 
 (defn -main [x]
   (let [_ (cpp/glfwInit)
