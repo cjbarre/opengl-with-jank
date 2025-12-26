@@ -27,6 +27,17 @@
 (def GLFW_KEY_S (cpp/value "GLFW_KEY_S"))
 (def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
 (def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
+(def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
+
+;; JKA-style physics constants (scaled for game world)
+(def GRAVITY 20.0)
+(def JUMP_VELOCITY 7.0)
+(def GROUND_ACCEL 10.0)
+(def AIR_ACCEL 1.0)       ;; Key for JKA feel: 10:1 ratio
+(def FRICTION 6.0)
+(def STOP_SPEED 2.5)
+(def MAX_SPEED 8.0)
+(def GROUND_HEIGHT 0.1)
 
 (defn process-input
   [{:keys [window delta-time cursor/pitch cursor/yaw]}]
@@ -50,7 +61,10 @@
       (assoc :left true)
 
       (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
-      (assoc :right true))))
+      (assoc :right true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
+      (assoc :jump true))))
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -231,59 +245,115 @@
   (update state :entities assoc id
           (-> event
               (select-keys [:id :model :transform/position])
-              (assoc :transform/pitch 0.0 :transform/yaw -90.0)
+              (assoc :transform/pitch 0.0
+                     :transform/yaw -90.0
+                     :physics/velocity [0.0 0.0 0.0]
+                     :physics/grounded true)
               (update :model #(gltf/load {:model (gltf/parse {:path %})
                                           :base-path "models/"}))
               (update :tags (fnil conj #{}) :render :transform :camera))))
 
+(defn pm-friction
+  "JKA-style friction - reduces horizontal velocity"
+  [vx vz friction stopspeed dt]
+  (let [vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        speed (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f))))]
+    (if (cpp/< speed (cpp/float 0.1))
+      [(cpp/float 0.0) (cpp/float 0.0)]
+      (let [stopspeed-f (cpp/float stopspeed)
+            control (if (cpp/< speed stopspeed-f) stopspeed-f speed)
+            drop (cpp/* control (cpp/* (cpp/float friction) (cpp/float dt)))
+            newspeed-raw (cpp/- speed drop)
+            newspeed (if (cpp/< newspeed-raw (cpp/float 0.0)) (cpp/float 0.0) newspeed-raw)
+            scale (cpp// newspeed speed)]
+        [(cpp/* vx-f scale) (cpp/* vz-f scale)]))))
+
+(defn pm-accelerate
+  "JKA-style acceleration toward wish direction"
+  [vx vz dx dz wishspeed accel dt]
+  (let [dx-f (cpp/float dx)
+        dz-f (cpp/float dz)
+        vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        wish-len (cpp/float (cpp/sqrt (cpp/+ (cpp/* dx-f dx-f) (cpp/* dz-f dz-f))))]
+    (if (cpp/< wish-len (cpp/float 0.001))
+      [vx-f vz-f]
+      (let [dx-norm (cpp// dx-f wish-len)
+            dz-norm (cpp// dz-f wish-len)
+            currentspeed (cpp/+ (cpp/* vx-f dx-norm) (cpp/* vz-f dz-norm))
+            addspeed (cpp/- (cpp/float wishspeed) currentspeed)]
+        (if (cpp/<= addspeed (cpp/float 0.0))
+          [vx-f vz-f]
+          (let [accelspeed (cpp/* (cpp/float accel)
+                                  (cpp/* (cpp/float dt) (cpp/float wishspeed)))
+                accelspeed (if (cpp/> accelspeed addspeed) addspeed accelspeed)]
+            [(cpp/+ vx-f (cpp/* accelspeed dx-norm))
+             (cpp/+ vz-f (cpp/* accelspeed dz-norm))]))))))
 
 (defmethod handle-event :player/moved
   [{:keys [entities] :as state}
-   {{:keys [id forward backward left right yaw pitch delta-time]} :event}]
+   {{:keys [id forward backward left right jump yaw pitch delta-time]} :event}]
   (let [player (get entities id)
-        movespeed (cpp/* (cpp/float 5.0) (cpp/float delta-time))
-        yaw-radians (cpp/glm.radians (cpp/float yaw))
-        front (math/gimmie :vec3 [(cpp/cos yaw-radians) 0.0 (cpp/sin yaw-radians)])
         [px py pz] (:transform/position player)
-        current-position (math/gimmie :vec3 [px py pz])
-        up (math/gimmie :vec3 [0.0 1.0 0.0])
-        _ (when forward
-            (cpp/= current-position
-                   (cpp/+ current-position
-                          (cpp/* movespeed
-                                 front)))
-            nil)
-        _ (when backward
-            (cpp/= current-position
-                   (cpp/- current-position
-                          (cpp/* movespeed
-                                 front)))
-            nil)
-        _ (when left
-            (cpp/= current-position
-                   (cpp/- current-position
-                          (cpp/* (cpp/glm.normalize
-                                  (cpp/glm.cross
-                                   front
-                                   up))
-                                 movespeed)))
-            nil)
-        _ (when right
-            (cpp/= current-position
-                   (cpp/+ current-position
-                          (cpp/* (cpp/glm.normalize
-                                  (cpp/glm.cross
-                                   front
-                                   up))
-                                 movespeed)))
-            nil)
-        adjusted-position current-position]
+        [vx vy vz] (:physics/velocity player [0.0 0.0 0.0])
+
+        ;; Ground detection (simple height check)
+        is-grounded (<= py GROUND_HEIGHT)
+
+        ;; Build wish direction from input
+        yaw-radians (cpp/glm.radians (cpp/float yaw))
+        front-x (cpp/cos yaw-radians)
+        front-z (cpp/sin yaw-radians)
+        right-x (cpp/sin yaw-radians)
+        right-z (cpp/- (cpp/float 0.0) (cpp/cos yaw-radians))
+
+        ;; Accumulate wish direction
+        wish-x (cond-> 0.0
+                 forward (+ front-x)
+                 backward (- front-x)
+                 left (+ right-x)
+                 right (- right-x))
+        wish-z (cond-> 0.0
+                 forward (+ front-z)
+                 backward (- front-z)
+                 left (+ right-z)
+                 right (- right-z))
+
+        ;; Apply friction (only when grounded)
+        [vx vz] (if is-grounded
+                  (pm-friction vx vz FRICTION STOP_SPEED delta-time)
+                  [vx vz])
+
+        ;; Accelerate (different rates for ground vs air)
+        accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
+        [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
+
+        ;; Jump (only when grounded and pressing jump)
+        [vy is-grounded] (if (and is-grounded jump)
+                           [JUMP_VELOCITY false]
+                           [vy is-grounded])
+
+        ;; Apply gravity (only when airborne)
+        vy (if (not is-grounded)
+             (- vy (* GRAVITY delta-time))
+             vy)
+
+        ;; Integrate velocity to position
+        new-px (+ px (* vx delta-time))
+        new-py (+ py (* vy delta-time))
+        new-pz (+ pz (* vz delta-time))
+
+        ;; Clamp to ground (simple collision)
+        [new-py vy is-grounded] (if (< new-py GROUND_HEIGHT)
+                                  [GROUND_HEIGHT 0.0 true]
+                                  [new-py vy is-grounded])]
+
     (-> state
         (update-in [:entities id] assoc
-                   :transform/position
-                   [(cpp/aget adjusted-position (cpp/int 0))
-                    (cpp/aget adjusted-position (cpp/int 1))
-                    (cpp/aget adjusted-position (cpp/int 2))]
+                   :transform/position [new-px new-py new-pz]
+                   :physics/velocity [vx vy vz]
+                   :physics/grounded is-grounded
                    :transform/pitch pitch
                    :transform/yaw yaw))))
 
