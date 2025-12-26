@@ -244,8 +244,6 @@
         movespeed (cpp/* (cpp/float 5.0) (cpp/float delta-time))
         yaw-radians (cpp/glm.radians (cpp/float yaw))
         front (math/gimmie :vec3 [(cpp/cos yaw-radians) 0.0 (cpp/sin yaw-radians)])
-        velocity (->> front
-                      (cpp/* movespeed))
         [px py pz] (:transform/position player)
         current-position (math/gimmie :vec3 [px py pz])
         up (math/gimmie :vec3 [0.0 1.0 0.0])
@@ -279,7 +277,7 @@
                                    up))
                                  movespeed)))
             nil)
-        adjusted-position (cpp/+ current-position (cpp/* (cpp/float delta-time) velocity))]
+        adjusted-position current-position]
     (-> state
         (update-in [:entities id] assoc
                    :transform/position
