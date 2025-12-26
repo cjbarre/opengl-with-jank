@@ -30,8 +30,10 @@
 (def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
 
 ;; JKA-style physics constants (scaled for game world)
-(def GRAVITY 20.0)
-(def JUMP_VELOCITY 7.0)
+(def GRAVITY 25.6)
+(def JUMP_VELOCITY 7.2)
+(def FORCE_JUMP_STRENGTH 26.88)  ;; Level 3 force jump strength (840 scaled)
+(def FORCE_JUMP_HEIGHT 12.3)     ;; Level 3 max height above jump start (384 scaled)
 (def GROUND_ACCEL 10.0)
 (def AIR_ACCEL 1.0)       ;; Key for JKA feel: 10:1 ratio
 (def FRICTION 6.0)
@@ -64,7 +66,7 @@
       (assoc :right true)
 
       (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
-      (assoc :jump true))))
+      (assoc :jump-held true))))
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -248,7 +250,8 @@
               (assoc :transform/pitch 0.0
                      :transform/yaw -90.0
                      :physics/velocity [0.0 0.0 0.0]
-                     :physics/grounded true)
+                     :physics/grounded true
+                     :physics/jump-z-start nil)
               (update :model #(gltf/load {:model (gltf/parse {:path %})
                                           :base-path "models/"}))
               (update :tags (fnil conj #{}) :render :transform :camera))))
@@ -293,10 +296,11 @@
 
 (defmethod handle-event :player/moved
   [{:keys [entities] :as state}
-   {{:keys [id forward backward left right jump yaw pitch delta-time]} :event}]
+   {{:keys [id forward backward left right jump-held yaw pitch delta-time]} :event}]
   (let [player (get entities id)
         [px py pz] (:transform/position player)
         [vx vy vz] (:physics/velocity player [0.0 0.0 0.0])
+        jump-z-start (:physics/jump-z-start player)
 
         ;; Ground detection (simple height check)
         is-grounded (<= py GROUND_HEIGHT)
@@ -329,12 +333,35 @@
         accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
         [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
 
-        ;; Jump (only when grounded and pressing jump)
-        [vy is-grounded] (if (and is-grounded jump)
-                           [JUMP_VELOCITY false]
-                           [vy is-grounded])
+        ;; Clear jump-z-start when not holding jump (resets jump state)
+        ;; This allows re-jumping if player releases and presses again mid-air
+        jump-z-start (if (not jump-held) nil jump-z-start)
 
-        ;; Apply gravity (only when airborne)
+        ;; Initial jump (grounded + button pressed + not already jumping)
+        [vy is-grounded jump-z-start]
+        (if (and is-grounded jump-held (nil? jump-z-start))
+          [JUMP_VELOCITY false py]  ;; Start jump, record starting Y
+          [vy is-grounded jump-z-start])
+
+        ;; Force Jump thrust (JKA Metroid-style)
+        ;; Thrust scales down as you approach max height
+        ;; Formula: vy = (maxHeight - curHeight) / maxHeight * strength / 10 + JUMP_VELOCITY
+        vy (if (and (not is-grounded)
+                    jump-held
+                    jump-z-start
+                    (> vy 0))
+             (let [cur-height (- py jump-z-start)]
+               (if (< cur-height FORCE_JUMP_HEIGHT)
+                 ;; Still have headroom - apply scaled thrust
+                 (+ (/ (* (/ (- FORCE_JUMP_HEIGHT cur-height) FORCE_JUMP_HEIGHT)
+                          FORCE_JUMP_STRENGTH)
+                       10.0)
+                    JUMP_VELOCITY)
+                 ;; At max height - cap at normal jump velocity
+                 (min vy JUMP_VELOCITY)))
+             vy)
+
+        ;; Apply gravity (always when airborne)
         vy (if (not is-grounded)
              (- vy (* GRAVITY delta-time))
              vy)
@@ -354,6 +381,7 @@
                    :transform/position [new-px new-py new-pz]
                    :physics/velocity [vx vy vz]
                    :physics/grounded is-grounded
+                   :physics/jump-z-start jump-z-start
                    :transform/pitch pitch
                    :transform/yaw yaw))))
 
