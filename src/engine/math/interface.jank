@@ -1,5 +1,5 @@
-(ns app.math.interface
-  (:require [app.math.core :as core]))
+(ns engine.math.interface
+  (:require [engine.math.core :as core]))
 
 (defmacro gimmie
   [& args]

@@ -1,10 +1,10 @@
-(ns app.macros)
+(ns engine.macros)
 
 (defmacro clet
   "Let bindings with C-style error checking.
    Each binding can be:
      [name expr]
-     [name expr :when pred]  
+     [name expr :when pred]
      [name expr :when pred :error error-handler]
    If :when is omitted, no check is performed.
    When predicate returns true, an error occurred and :error handler is executed.

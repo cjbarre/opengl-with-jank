@@ -1,12 +1,12 @@
-(ns app.event-store.interface
+(ns engine.events.interface
   (:refer-clojure :exclude [read])
-  (:require [app.event-store.core :as core]))
+  (:require [engine.events.core :as core]))
 
 (defn start
   [config]
   (core/start config))
 
-(defn stop 
+(defn stop
   [event-store]
   (core/stop event-store))
 

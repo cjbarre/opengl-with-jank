@@ -1,4 +1,4 @@
-(ns app.event-store.core
+(ns engine.events.core
   (:refer-clojure :exclude [read])
   (:require [clojure.set :as set]))
 

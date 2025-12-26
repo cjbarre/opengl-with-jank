@@ -1,6 +1,6 @@
-(ns app.textures.core
-  (:require [app.io.interface :as io]
-            [app.macros :refer [clet]]))
+(ns engine.textures.core
+  (:require [engine.io.interface :as io]
+            [engine.macros :refer [clet]]))
 
 (cpp/raw
  "#define STBI_NO_THREAD_LOCALS 1
@@ -12,7 +12,7 @@
    void glGenerateMipmap(GLenum target);
  }")
 
-(cpp/raw 
+(cpp/raw
  "void* voidify_stbi_uc (stbi_uc*  x) {
     return (void*) x;
   }")
@@ -31,9 +31,9 @@
 
 (defn load-texture
   [{:keys [path alpha-channel?
-           wrap-s wrap-t 
+           wrap-s wrap-t
            min-filter mag-filter
-           flip-vertically?] 
+           flip-vertically?]
     :or {wrap-s GL_REPEAT
          wrap-t GL_REPEAT
          min-filter GL_LINEAR

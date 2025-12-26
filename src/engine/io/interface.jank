@@ -1,0 +1,7 @@
+(ns engine.io.interface
+  (:refer-clojure :exclude [slurp])
+  (:require [engine.io.core :as core]))
+
+(defn slurp
+  [{:keys [_path] :as args}]
+  (core/slurp args))

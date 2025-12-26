@@ -1,16 +1,16 @@
-(ns app.core
-  (:require [app.io.interface :as io]
-            [app.shaders.interface :as shaders]
-            [app.geometry.interface :as geometry]
-            [app.textures.interface :as textures]
-            [app.math.interface :as math]
-            [app.gltf.interface :as gltf]
-            [app.event-store.interface :as es]))
+(ns examples.demo.core
+  (:require [engine.io.interface :as io]
+            [engine.shaders.interface :as shaders]
+            [engine.geometry.interface :as geometry]
+            [engine.textures.interface :as textures]
+            [engine.math.interface :as math]
+            [engine.gltf.interface :as gltf]
+            [engine.events.interface :as es]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
-(cpp/raw "#include <glm/glm.hpp> 
-          #include <glm/gtc/matrix_transform.hpp> 
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
 
 (cpp/raw "#include <math.h>")
@@ -222,7 +222,8 @@
   (update state :entities assoc id
           (-> event
               (select-keys [:id :model])
-              (update :model #(gltf/load {:model (gltf/parse {:path %})}))
+              (update :model #(gltf/load {:model (gltf/parse {:path %})
+                                          :base-path "models/"}))
               (update :tags (fnil conj #{}) :render))))
 
 (defmethod handle-event :player/spawned
@@ -231,7 +232,8 @@
           (-> event
               (select-keys [:id :model :transform/position])
               (assoc :transform/pitch 0.0 :transform/yaw -90.0)
-              (update :model #(gltf/load {:model (gltf/parse {:path %})}))
+              (update :model #(gltf/load {:model (gltf/parse {:path %})
+                                          :base-path "models/"}))
               (update :tags (fnil conj #{}) :render :transform :camera))))
 
 
@@ -313,7 +315,7 @@
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
     (let [_ (update-time context)
           _ (update-cursor context)
-          command (process-input context) 
+          command (process-input context)
           events (handle-command (assoc context :command command))
           _ (es/append event-store {:events events})
           _ (reset! state (reduce
@@ -333,7 +335,9 @@
    :follow-height      (math/gimmie :boxed :float 2.0)   ; Height above player
    :look-height-offset (math/gimmie :boxed :float 1.5)}) ; Look at head, not feet
 
-(defn -main [x]
+(defn -main
+  ([] (-main nil))
+  ([x]
   (let [_ (cpp/glfwInit)
         window (setup-window {:width 1280 :height 720 :name "Learn OpenGL"})
         _ (cpp/glfwSetInputMode
@@ -371,4 +375,4 @@
                :cursor/last-y       (math/gimmie :boxed :float 300.0)
                :cursor/sensitivity  (math/gimmie :boxed :float 0.05)
                :cursor/pitch        (math/gimmie :boxed :float 0.0)
-               :cursor/yaw          (math/gimmie :boxed :float -90.0)})))
+               :cursor/yaw          (math/gimmie :boxed :float -90.0)}))))

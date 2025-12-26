@@ -1,12 +1,12 @@
-(ns app.geometry.core
-  (:require [app.shaders.interface :as shaders]
-            [app.macros :refer [clet]]))
+(ns engine.geometry.core
+  (:require [engine.shaders.interface :as shaders]
+            [engine.macros :refer [clet]]))
 
 (cpp/raw
- "float textured_rectangle_2D_vertices[] = { // positions // colors // texture coords 
-        0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, // top right 
-        0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, // bottom right 
-       -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, // bottom left 
+ "float textured_rectangle_2D_vertices[] = { // positions // colors // texture coords
+        0.5f, 0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f, // top right
+        0.5f, -0.5f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, // bottom right
+       -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, // bottom left
        -0.5f, 0.5f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f // top left };
     };
 
@@ -14,7 +14,7 @@
         0, 1, 3, // first triangle
         1, 2, 3  // second triangle
     };
-  
+
   size_t textured_rectangle_2D_vertices_size = sizeof(textured_rectangle_2D_vertices);
   size_t textured_rectangle_2D_indices_size = sizeof(textured_rectangle_2D_indices);
 
@@ -23,49 +23,49 @@
   void* voidify_int (int i) {
     return (void*) i;
   }
-  
 
-  float textured_cube_3D_vertices[] = 
-                   { -0.5f, -0.5f, -0.5f, 0.0f, 0.0f, 
-                      0.5f, -0.5f, -0.5f, 1.0f, 0.0f, 
-                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
-                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
+
+  float textured_cube_3D_vertices[] =
+                   { -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,
+                      0.5f, -0.5f, -0.5f, 1.0f, 0.0f,
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f,
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f,
                      -0.5f,  0.5f, -0.5f, 0.0f, 1.0f,
-                     -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,  
-        
-                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f, 
-                      0.5f, -0.5f, 0.5f,  1.0f, 0.0f, 
-                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f, 
-                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f, 
-                     -0.5f,  0.5f, 0.5f,  0.0f, 1.0f, 
-                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,  
-  
-                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
-                     -0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
-                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
-                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
-                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
-                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f,  
+                     -0.5f, -0.5f, -0.5f, 0.0f, 0.0f,
 
-                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
-                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
-                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
-                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
-                      0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
-                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,  
-                     
-                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f, 
-                      0.5f, -0.5f, -0.5f, 1.0f, 1.0f, 
-                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 
-                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f, 
-                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f, 
-                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,  
-                     
-                     -0.5f,  0.5f, -0.5f, 0.0f, 1.0f, 
-                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f, 
-                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
-                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f, 
-                     -0.5f,  0.5f,  0.5f, 0.0f, 0.0f, 
+                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,
+                      0.5f, -0.5f, 0.5f,  1.0f, 0.0f,
+                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f,
+                      0.5f,  0.5f, 0.5f,  1.0f, 1.0f,
+                     -0.5f,  0.5f, 0.5f,  0.0f, 1.0f,
+                     -0.5f, -0.5f, 0.5f,  0.0f, 0.0f,
+
+                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+                     -0.5f,  0.5f, -0.5f, 1.0f, 1.0f,
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f,
+                     -0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f,
+                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+                      0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+                      0.5f, -0.5f,  0.5f, 0.0f, 0.0f,
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+                      0.5f, -0.5f, -0.5f, 1.0f, 1.0f,
+                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f,
+                      0.5f, -0.5f,  0.5f, 1.0f, 0.0f,
+                     -0.5f, -0.5f,  0.5f, 0.0f, 0.0f,
+                     -0.5f, -0.5f, -0.5f, 0.0f, 1.0f,
+
+                     -0.5f,  0.5f, -0.5f, 0.0f, 1.0f,
+                      0.5f,  0.5f, -0.5f, 1.0f, 1.0f,
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+                      0.5f,  0.5f,  0.5f, 1.0f, 0.0f,
+                     -0.5f,  0.5f,  0.5f, 0.0f, 0.0f,
                      -0.5f,  0.5f, -0.5f, 0.0f, 1.0f };
 
   size_t textured_cube_3D_vertices_size = sizeof(textured_cube_3D_vertices);")
@@ -105,7 +105,7 @@
                                        cpp/textured_rectangle_2D_indices)
                              GL_STATIC_DRAW)
          ;;
-         ;; Vertex Attributes 
+         ;; Vertex Attributes
          ;;
          _ (cpp/glVertexAttribPointer 0
                                       3
@@ -156,7 +156,7 @@
                              GL_STATIC_DRAW)
 
          ;;
-         ;; Vertex Attributes 
+         ;; Vertex Attributes
          ;;
          _ (cpp/glVertexAttribPointer 0
                                       3
@@ -172,7 +172,7 @@
                                       (cpp/* (cpp/int 5) cpp/float_size)
                                       (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
          _ (cpp/glEnableVertexAttribArray 1)]
-  
+
         {:vao vao
          :vbo vbo
          :draw #(cpp/glDrawArrays GL_TRIANGLES 0 36)}))

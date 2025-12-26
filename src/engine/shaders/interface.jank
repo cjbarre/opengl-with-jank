@@ -1,5 +1,5 @@
-(ns app.shaders.interface
-  (:require [app.shaders.core :as core]))
+(ns engine.shaders.interface
+  (:require [engine.shaders.core :as core]))
 
 (defn load-shader-program
   [{:keys [_vertex-shader-path _fragment-shader-path]

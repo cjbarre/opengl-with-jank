@@ -1,7 +1,7 @@
-(ns app.math.core)
+(ns engine.math.core)
 
-(cpp/raw "#include <glm/glm.hpp> 
-          #include <glm/gtc/matrix_transform.hpp> 
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
 
 (cpp/raw
@@ -35,7 +35,7 @@
         type (if boxed? (first args) type-or-boxed)
         data (if boxed? (second args) (first args))]
     (case type
-      :float 
+      :float
       `(cpp/box (cpp/new cpp/float (cpp/float ~data)))
       :vec3 ;; Single vector only
       (let [[x y z] data

@@ -422,7 +422,7 @@ For geometry data and other large constant arrays:
 
 ## Usage Examples from This Codebase
 
-**Locations:** `app.core`, `app.shaders.core`, `app.textures.core`, `app.geometry.core`, `app.gltf.core`, `app.io.core`, `app.math.core`
+**Locations:** `engine.shaders.core`, `engine.textures.core`, `engine.geometry.core`, `engine.gltf.core`, `engine.io.core`, `engine.math.core`, `examples.demo.core`
 
 ## Best Practices
 

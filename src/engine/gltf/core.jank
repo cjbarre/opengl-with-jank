@@ -1,9 +1,9 @@
-(ns app.gltf.core
+(ns engine.gltf.core
   (:refer-clojure :exclude [load])
-  (:require [app.shaders.interface :as shaders]
-            [app.textures.interface :as textures]
-            [app.math.interface :as math]
-            [app.macros :refer [clet]]))
+  (:require [engine.shaders.interface :as shaders]
+            [engine.textures.interface :as textures]
+            [engine.math.interface :as math]
+            [engine.macros :refer [clet]]))
 
 (cpp/raw
  "#define CGLTF_IMPLEMENTATION
@@ -133,7 +133,7 @@
               material-data (parse-material (cpp/box (cpp/& primitive)))]
           (merge attribute-data indices-data material-data))))}))
 
-(cpp/raw 
+(cpp/raw
  "cgltf_float* get_node_translation (cgltf_node* node) {
   return node->translation;
   }")
@@ -164,10 +164,10 @@
                    [(cpp/aget scale (cpp/int 0))
                     (cpp/aget scale (cpp/int 1))
                     (cpp/aget scale (cpp/int 2))]))
-          
+
           (cpp/!= cpp/false (cpp/.-has_rotation node))
           (assoc :rotation (throw (ex-info "Node rotation not implemeted" {})))
-          
+
           (cpp/!= cpp/false (cpp/.-has_matrix node))
           (assoc :matrix (throw (ex-info "Node matrix not implemeted" {}))))))
 
@@ -221,9 +221,9 @@
         uv[0]=uv[1]=0.0f;
     }
   };
-  
+
   size_t int_size = sizeof(int);
-    
+
   size_t vertex_size = sizeof(Vertex);")
 
 (def GL_ARRAY_BUFFER (cpp/value "GL_ARRAY_BUFFER"))
@@ -234,7 +234,8 @@
 (def GL_TRIANGLES (cpp/value "GL_TRIANGLES"))
 
 (defn load
-  [{:keys [model]}]
+  [{:keys [model base-path]
+    :or {base-path ""}}]
   (let [primitive-instances
         (for [scene (:scenes model)
               node (:nodes scene)
@@ -299,7 +300,7 @@
                                     GL_STATIC_DRAW)
 
                 ;;
-                ;; Vertex Attributes 
+                ;; Vertex Attributes
                 ;;
                 _ (cpp/glVertexAttribPointer 0
                                              3
@@ -333,9 +334,9 @@
                               :base-color-factor)
                 texture-id (when texture
                              (textures/load-texture
-                              (merge {:path (str "models/" (-> texture :image :uri))}
+                              (merge {:path (str base-path (-> texture :image :uri))}
                                      (:sampler texture))))]
-            
+
             {:draw
              (fn draw-primitive [{model-m-loc :model/local-matrix-uniform
                                   :keys [shader] :as _context}]

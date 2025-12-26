@@ -1,6 +1,6 @@
-(ns app.shaders.core
-  (:require [app.macros :refer [clet]]
-            [app.io.interface :as io]))
+(ns engine.shaders.core
+  (:require [engine.macros :refer [clet]]
+            [engine.io.interface :as io]))
 
 (cpp/raw
  "#include <GLFW/glfw3.h>
@@ -56,7 +56,7 @@
                                     args)))
          _ (cpp/free source)
          _ (cpp/free (cpp/cast (cpp/type "void*") sources))]
-        
+
         shader))
 
 (defn load-shader-program
@@ -82,7 +82,7 @@
                                   args)))
          _ (cpp/glDeleteShader vertex-shader)
          _ (cpp/glDeleteShader fragment-shader)]
-        
+
         program))
 
 (defn create-vertex-array-object
@@ -90,7 +90,7 @@
   (clet [vao ((cpp/type "unsigned int"))
          _ (cpp/glGenVertexArrays 1 (cpp/& vao))
          _ (cpp/glBindVertexArray vao)]
-        
+
         vao))
 
 (defn bind-vertex-array-object

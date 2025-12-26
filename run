@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
+GAME="${1:-demo}"
+NAMESPACE="examples.${GAME}.core"
+
 jank \
   -Ilibs/glfw/include -Ilibs/glm -Iinclude \
   -Llibs/glfw/lib -llibglfw.3.dylib \
-  --module-path $(clojure -Spath) run-main app.core "$@"
-       
-     
+  --module-path $(clojure -Spath) run-main "$NAMESPACE"

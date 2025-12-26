@@ -1,7 +1,0 @@
-(ns app.io.interface
-  (:refer-clojure :exclude [slurp])
-  (:require [app.io.core :as core]))
-
-(defn slurp
-  [{:keys [_path] :as args}]
-  (core/slurp args))
