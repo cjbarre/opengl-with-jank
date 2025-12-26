@@ -143,14 +143,28 @@
   return node->scale;
   }")
 
+(cpp/raw
+ "bool node_is_colonly(cgltf_node* node) {
+    if (!node || !node->name) return false;
+    const char* str = node->name;
+    const char* suffix = \"-colonly\";
+    size_t len = strlen(str);
+    size_t slen = 8;
+    if (len < slen) return false;
+    return strcmp(str + len - slen, suffix) == 0;
+  }")
+
 (defn parse-node
   [node]
   (clet [node (cpp/unbox cpp/cgltf_node* node)
          :when (cpp/> (cpp/.-children_count node) (cpp/int 0))
          :error (throw (ex-info "Parsing node children not implemented" {}))
-         mesh (cpp/box (cpp/.-mesh node))]
-        (cond-> {:name (str (cpp/.-name node))
-                 :mesh (parse-mesh mesh)}
+         mesh (cpp/box (cpp/.-mesh node))
+         node-name (str (cpp/.-name node))
+         is-collision (cpp/node_is_colonly node)]
+        (cond-> {:name node-name
+                 :mesh (parse-mesh mesh)
+                 :collision-only (cpp/!= cpp/false is-collision)}
           (cpp/!= cpp/false (cpp/.-has_translation node))
           (assoc :translation
                  (let [translation (cpp/get_node_translation node)]
@@ -239,6 +253,7 @@
   (let [primitive-instances
         (for [scene (:scenes model)
               node (:nodes scene)
+              :when (not (:collision-only node))
               :let [mesh (:mesh node)
                     [scale-x scale-y scale-z] (:scale node)
                     [translate-x translate-y translate-z] (:translation node)]
@@ -363,4 +378,13 @@
     {:draw
      (fn draw-model [context]
        (doseq [pi primitive-instances]
-         ((:draw pi) context)))}))
+         ((:draw pi) context)))
+     :collision
+     (vec (for [scene (:scenes model)
+                node (:nodes scene)
+                :when (:collision-only node)
+                {:keys [positions normals indices]} (-> node :mesh :primitives)]
+            {:name (:name node)
+             :positions positions
+             :normals normals
+             :indices indices}))}))

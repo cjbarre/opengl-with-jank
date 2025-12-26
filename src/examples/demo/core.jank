@@ -5,7 +5,8 @@
             [engine.textures.interface :as textures]
             [engine.math.interface :as math]
             [engine.gltf.interface :as gltf]
-            [engine.events.interface :as es]))
+            [engine.events.interface :as es]
+            [engine.collision.interface :as collision]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -235,12 +236,15 @@
 
 (defmethod handle-event :level/spawned
   [state {{:keys [id] :as event} :event}]
-  (update state :entities assoc id
-          (-> event
-              (select-keys [:id :model])
-              (update :model #(gltf/load {:model (gltf/parse {:path %})
-                                          :base-path "models/"}))
-              (update :tags (fnil conj #{}) :render))))
+  (let [loaded (gltf/load {:model (gltf/parse {:path (:model event)})
+                           :base-path "models/"})]
+    (-> state
+        (assoc :level-collision (first (:collision loaded)))
+        (update :entities assoc id
+                (-> event
+                    (select-keys [:id])
+                    (assoc :model loaded)
+                    (update :tags (fnil conj #{}) :render))))))
 
 (defmethod handle-event :player/spawned
   [state {{:keys [id] :as event} :event}]
@@ -295,15 +299,17 @@
              (cpp/+ vz-f (cpp/* accelspeed dz-norm))]))))))
 
 (defmethod handle-event :player/moved
-  [{:keys [entities] :as state}
+  [{:keys [entities level-collision] :as state}
    {{:keys [id forward backward left right jump-held yaw pitch delta-time]} :event}]
   (let [player (get entities id)
         [px py pz] (:transform/position player)
         [vx vy vz] (:physics/velocity player [0.0 0.0 0.0])
         jump-z-start (:physics/jump-z-start player)
 
-        ;; Ground detection (simple height check)
-        is-grounded (<= py GROUND_HEIGHT)
+        ;; Ground detection via raycast
+        ground-y (when level-collision
+                   (collision/raycast-ground level-collision [px py pz]))
+        is-grounded (and ground-y (<= py (+ ground-y 0.2)))
 
         ;; Build wish direction from input
         yaw-radians (cpp/glm.radians (cpp/float yaw))
@@ -371,9 +377,11 @@
         new-py (+ py (* vy delta-time))
         new-pz (+ pz (* vz delta-time))
 
-        ;; Clamp to ground (simple collision)
-        [new-py vy is-grounded] (if (< new-py GROUND_HEIGHT)
-                                  [GROUND_HEIGHT 0.0 true]
+        ;; Clamp to ground (raycast collision)
+        ground-y-at-new-pos (when level-collision
+                              (collision/raycast-ground level-collision [new-px new-py new-pz]))
+        [new-py vy is-grounded] (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
+                                  [ground-y-at-new-pos 0.0 true]
                                   [new-py vy is-grounded])]
 
     (-> state
@@ -452,11 +460,11 @@
         _ (es/append event-store {:events [{:event/type :level/spawned
                                             :event/tags #{}
                                             :id #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345"
-                                            :model "models/test-level.gltf"}
+                                            :model "models/hills.gltf"}
                                            {:event/type :player/spawned
                                             :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
                                             :model "models/player.gltf"
-                                            :transform/position [0.0 0.0 0.0]}]})]
+                                            :transform/position [0.0 50.0 0.0]}]})]
 
     (run-loop {:event-store event-store
                :state (atom {})

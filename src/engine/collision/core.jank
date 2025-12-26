@@ -1,0 +1,68 @@
+(ns engine.collision.core)
+
+(def EPSILON 0.000001)
+
+(defn vec3-sub
+  "Subtract two 3D vectors: a - b"
+  [[ax ay az] [bx by bz]]
+  [(- ax bx) (- ay by) (- az bz)])
+
+(defn vec3-cross
+  "Cross product of two 3D vectors"
+  [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by))
+   (- (* az bx) (* ax bz))
+   (- (* ax by) (* ay bx))])
+
+(defn vec3-dot
+  "Dot product of two 3D vectors"
+  [[ax ay az] [bx by bz]]
+  (+ (* ax bx) (* ay by) (* az bz)))
+
+(defn ray-triangle-intersection
+  "Double-sided Möller–Trumbore ray-triangle intersection.
+   Returns distance t if ray hits triangle, nil otherwise."
+  [ray-origin ray-dir v0 v1 v2]
+  (let [edge1 (vec3-sub v1 v0)
+        edge2 (vec3-sub v2 v0)
+        h (vec3-cross ray-dir edge2)
+        a (vec3-dot edge1 h)]
+    (when (> (abs a) EPSILON)  ;; Either facing direction
+      (let [f (/ 1.0 a)
+            s (vec3-sub ray-origin v0)
+            u (* f (vec3-dot s h))]
+        (when (and (>= u 0.0) (<= u 1.0))
+          (let [q (vec3-cross s edge1)
+                v (* f (vec3-dot ray-dir q))]
+            (when (and (>= v 0.0) (<= (+ u v) 1.0))
+              (let [t (* f (vec3-dot edge2 q))]
+                (when (> t EPSILON)
+                  t)))))))))
+
+(defn raycast-ground
+  "Cast ray down from position, find ground height.
+   collision-mesh: {:positions [[x y z]...] :indices [i0 i1 i2...]}
+   position: [x y z]
+   Returns: ground Y coordinate, or nil if no ground found"
+  [{:keys [positions indices]} [px py pz]]
+  (let [;; Cast from 100 units above to always find ground even if we've fallen through
+        ray-height (+ py 100.0)
+        ray-origin [px ray-height pz]
+        ray-dir [0.0 -1.0 0.0]
+        num-triangles (/ (count indices) 3)]
+    (loop [i 0
+           closest-y nil]
+      (if (>= i num-triangles)
+        closest-y
+        (let [base (* i 3)
+              v0 (get positions (get indices base))
+              v1 (get positions (get indices (+ base 1)))
+              v2 (get positions (get indices (+ base 2)))
+              t (ray-triangle-intersection ray-origin ray-dir v0 v1 v2)
+              hit-y (when t (- ray-height t))]
+          (if hit-y
+            (recur (inc i)
+                   (if (or (nil? closest-y) (> hit-y closest-y))
+                     hit-y
+                     closest-y))
+            (recur (inc i) closest-y)))))))
