@@ -29,6 +29,7 @@
 (def GLFW_KEY_S (cpp/value "GLFW_KEY_S"))
 (def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
 (def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
+(def GLFW_KEY_F3 (cpp/value "GLFW_KEY_F3"))
 (def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
 
 ;; JKA-style physics constants (scaled for game world)
@@ -68,7 +69,10 @@
       (assoc :right true)
 
       (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
-      (assoc :jump-held true))))
+      (assoc :jump-held true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_F3) GLFW_PRESS)
+      (assoc :f3-pressed true))))
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -396,6 +400,14 @@
                    :transform/pitch pitch
                    :transform/yaw yaw))))
 
+(defmethod handle-event :debug/toggled
+  [state _]
+  (update state :debug/overlay-visible not))
+
+(defmethod handle-event :debug/f3-updated
+  [state {{:keys [pressed]} :event}]
+  (assoc state :debug/f3-was-pressed pressed))
+
 (defmethod handle-event :default
   [state _]
   state)
@@ -404,14 +416,21 @@
   (fn [{:keys [command]}] (:command/name command)))
 
 (defmethod handle-command :player/process-input
-  [{:keys [command]}]
-  (let [{:keys [exit]} command]
+  [{:keys [command state]}]
+  (let [{:keys [exit f3-pressed]} command
+        f3-was-pressed (:debug/f3-was-pressed @state)]
     (cond
       exit [{:event/type :system/exit}]
-      ;; Always generate :player/moved to keep yaw in sync with camera
-      :else [(-> command
-                 (dissoc :command/name)
-                 (assoc :event/type :player/moved))])))
+      :else (cond-> [(-> command
+                         (dissoc :command/name :f3-pressed)
+                         (assoc :event/type :player/moved))]
+              ;; Toggle debug on F3 press (not hold)
+              (and f3-pressed (not f3-was-pressed))
+              (conj {:event/type :debug/toggled})
+
+              ;; Always track F3 state for debouncing
+              true
+              (conj {:event/type :debug/f3-updated :pressed f3-pressed})))))
 
 (defmethod handle-command :default
   [])
@@ -423,7 +442,7 @@
     (let [_ (update-time context)
           _ (update-cursor context)
           command (process-input context)
-          events (handle-command (assoc context :command command))
+          events (handle-command (assoc context :command command :state state))
           _ (es/append event-store {:events events})
           _ (reset! state (reduce
                            (fn [state event]
@@ -434,11 +453,24 @@
 
       (draw-3D context)
 
-      ;; Render FPS
-      (let [dt (math/*-> :float delta-time)
-            fps (if (> dt 0.0) (/ 1.0 dt) 0.0)
-            fps-text (str "FPS: " (int fps))]
-        (text/render-text fps-text 10.0 30.0 [1.0 1.0 1.0] 1280 720))
+      ;; Render debug overlay (F3 to toggle)
+      (when (get @state :debug/overlay-visible true)
+        (let [dt (math/*-> :float delta-time)
+              fps (if (> dt 0.0) (/ 1.0 dt) 0.0)
+              player (get-in @state [:entities #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"])
+              [px py pz] (or (:transform/position player) [0 0 0])
+              [vx vy vz] (or (:physics/velocity player) [0 0 0])
+              grounded (:physics/grounded player)
+              speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float. vx) (cpp/float. vx))
+                                     (cpp/* (cpp/float. vz) (cpp/float. vz))))]
+          (text/render-text (str "FPS: " (int fps)) 10.0 30.0 [1.0 1.0 1.0] 1280 720)
+          (text/render-text (str "Pos: " (int px) ", " (int py) ", " (int pz))
+                            10.0 55.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Vel: " (int vx) ", " (int vy) ", " (int vz))
+                            10.0 80.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Speed: " (int speed)) 10.0 105.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Grounded: " grounded) 10.0 130.0
+                            (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)))
 
       (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
       (cpp/glfwPollEvents))))
