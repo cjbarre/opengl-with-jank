@@ -114,11 +114,14 @@
           yaw (:transform/yaw entity 0.0)
           ;; Model rotation offset (some models face different directions)
           model-offset (if (contains? tags :animated) 90.0 0.0)
+          ;; Mixamo models may need scaling
+          model-scale (if (contains? tags :animated) 1.0 1.0)
           ;; Translate then rotate around Y axis (negate yaw to match camera direction)
           model-m (-> (cpp/identity_matrix)
                       (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
                       (cpp/glm.rotate (cpp/glm.radians (cpp/- (cpp/float model-offset) (cpp/float yaw)))
-                                      (math/gimmie :vec3 [0.0 1.0 0.0])))
+                                      (math/gimmie :vec3 [0.0 1.0 0.0]))
+                      (cpp/glm.scale (math/gimmie :vec3 [model-scale model-scale model-scale])))
           model-m-loc (cpp/glGetUniformLocation shader "model")]
       (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
       :done)
@@ -178,21 +181,40 @@
 
 (defn update-animations
   "Advances animation time and samples for all animated entities.
-   Updates state atom in place."
+   Only animates when player is moving, scales speed with velocity."
   [{:keys [state delta-time]}]
   (let [dt-raw (math/*-> :float delta-time)
-        ;; Convert C++ float to Jank number for arithmetic
         dt (double dt-raw)]
     (doseq [[id entity] (:entities @state)]
       (when (contains? (:tags entity) :animated)
-        (let [current-time (double (:animation/time entity 0.0))
-              duration (double (:animation/duration entity 1.0))
-              ;; Advance time with looping
-              new-time (mod (+ current-time dt) duration)
+        (let [[vx _ vz] (or (:physics/velocity entity) [0 0 0])
+              grounded (:physics/grounded entity true)
+              ;; Calculate horizontal speed
+              horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                           (cpp/* (cpp/float vz) (cpp/float vz))))
+              ;; Select animation: 0=run, 1=jump
+              anim-index (if grounded 0 1)
+              ;; Only advance run animation if moving on ground
+              is-moving (and grounded (> horiz-speed 0.5))
+              current-time (double (:animation/time entity 0.0))
+              run-duration (double (:animation/duration entity 1.0))
+              jump-duration 0.85 ;; Jump animation duration
+              ;; Calculate new time based on state
+              new-time (cond
+                         ;; In air: play jump once, hold at 30%
+                         (not grounded)
+                         (min (+ current-time (* dt 1.5)) (* jump-duration 0.3))
+                         ;; On ground moving: advance run animation
+                         is-moving
+                         (mod (+ current-time (* dt (/ horiz-speed 8.0))) run-duration)
+                         ;; On ground idle: reset to 0
+                         :else 0.0)
+              ;; Use appropriate duration for ratio
+              duration (if grounded run-duration jump-duration)
               time-ratio (/ new-time duration)]
           ;; Sample animation at current time
           (anim/sample {:context (:animation/context entity)
-                        :animation-index (:animation/current-index entity 0)
+                        :animation-index anim-index
                         :time-ratio time-ratio})
           ;; Update entity time
           (swap! state assoc-in [:entities id :animation/time] new-time))))))
@@ -349,12 +371,16 @@
   "Initialize player animation system with ozz assets"
   []
   (let [ctx (anim/create-context)
-        ;; Load Ruby assets (verified to work together)
-        skeleton-info (anim/load-skeleton {:path "models/player/ruby_skeleton.ozz"
+        ;; Load Mixamo skeleton + mesh + animations (all compatible)
+        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
                                            :context ctx})
-        anim-info (anim/load-animation {:path "models/player/ruby_animation.ozz"
+        ;; Animation 0: run
+        run-info (anim/load-animation {:path "models/player/run.ozz"
+                                       :context ctx})
+        ;; Animation 1: crouch (used when in air)
+        jump-info (anim/load-animation {:path "models/player/crouch.ozz"
                                         :context ctx})
-        mesh-data (anim/load-meshes {:path "models/player/ruby_mesh.ozz"})
+        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
         ;; Sample animation at time 0 to initialize bone matrices
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
         ;; Create OpenGL VAOs for each mesh
@@ -372,12 +398,13 @@
                    (range mesh-count))]
     (println "Animation system initialized:")
     (println "  Skeleton joints:" (:num-joints skeleton-info))
-    (println "  Animation duration:" (:duration anim-info) "seconds")
+    (println "  Run animation duration:" (:duration run-info) "seconds")
+    (println "  Crouch animation duration:" (:duration jump-info) "seconds")
     (println "  Mesh count:" mesh-count)
     (println "  VAOs created:" (count vaos))
     {:animation/context ctx
      :animation/current-index 0
-     :animation/duration (:duration anim-info)
+     :animation/duration (:duration run-info)
      :animation/meshes (:meshes mesh-data)
      :animation/mesh-count mesh-count
      :animation/vaos vaos
@@ -640,9 +667,9 @@
       (cpp/glfwPollEvents))))
 
 (defn setup-camera []
-  {:follow-distance    (math/gimmie :boxed :float 5.0)   ; Distance behind player
-   :follow-height      (math/gimmie :boxed :float 2.0)   ; Height above player
-   :look-height-offset (math/gimmie :boxed :float 1.5)}) ; Look at head, not feet
+  {:follow-distance    (math/gimmie :boxed :float 2.5)   ; Distance behind player
+   :follow-height      (math/gimmie :boxed :float 1.0)   ; Height above player
+   :look-height-offset (math/gimmie :boxed :float 1.2)}) ; Look at head, not feet
 
 (defn -main
   ([] (-main nil))
