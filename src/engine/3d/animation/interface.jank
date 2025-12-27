@@ -1,0 +1,91 @@
+(ns engine.3d.animation.interface
+  (:require [engine.3d.animation.core :as core]
+            [engine.3d.animation.mesh :as mesh]))
+
+(defn create-context
+  "Creates an animation context for runtime animation playback.
+   Returns a boxed pointer to AnimationContext."
+  []
+  (core/create-context))
+
+(defn load-skeleton
+  "Loads a skeleton from an .ozz file.
+   Args: {:path \"path/to/skeleton.ozz\" :context context}
+   Returns: {:num-joints n :num-soa-joints m}"
+  [args]
+  (core/load-skeleton args))
+
+(defn load-animation
+  "Loads an animation from an .ozz file.
+   Args: {:path \"path/to/animation.ozz\" :context context}
+   Returns: {:index n :duration seconds :num-tracks m}"
+  [args]
+  (core/load-animation args))
+
+(defn sample
+  "Samples animation at given time ratio (0.0 = start, 1.0 = end).
+   Updates model matrices in the context.
+   Args: {:context ctx :animation-index n :time-ratio 0.5}
+   Returns: true on success"
+  [args]
+  (core/sample args))
+
+(defn get-model-matrices
+  "Gets model space matrices from context for GPU upload.
+   Args: {:context ctx}
+   Returns: {:num-joints n :matrices-ptr boxed-ptr}"
+  [args]
+  (core/get-model-matrices args))
+
+;; ============ MESH FUNCTIONS ============
+
+(defn load-meshes
+  "Loads meshes from an .ozz mesh file.
+   Args: {:path \"path/to/mesh.ozz\"}
+   Returns: {:meshes boxed-ptr :count n}"
+  [args]
+  (core/load-meshes args))
+
+(defn get-mesh-info
+  "Gets information about a specific mesh.
+   Args: {:meshes meshes :mesh-index 0}
+   Returns: {:vertex-count :index-count :part-count :joint-remap-count :highest-joint :skinned?}"
+  [args]
+  (core/get-mesh-info args))
+
+(defn get-part-info
+  "Gets information about a mesh part.
+   Args: {:meshes meshes :mesh-index 0 :part-index 0}
+   Returns: {:vertex-count :influences-count}"
+  [args]
+  (core/get-part-info args))
+
+(defn get-mesh-indices
+  "Gets pointer to mesh triangle indices (uint16_t).
+   Args: {:meshes meshes :mesh-index 0}
+   Returns: boxed pointer to indices"
+  [args]
+  (core/get-mesh-indices args))
+
+(defn get-part-vertex-data
+  "Gets pointers to vertex attribute data for a mesh part.
+   Args: {:meshes meshes :mesh-index 0 :part-index 0}
+   Returns: {:positions :normals :uvs :joint-indices :joint-weights}"
+  [args]
+  (core/get-part-vertex-data args))
+
+(defn compute-skinning-matrices
+  "Computes skinning matrices from animation context and mesh.
+   Args: {:context ctx :meshes meshes :mesh-index 0}
+   Returns: {:joint-count n :matrices buffer-box}"
+  [args]
+  (core/compute-skinning-matrices args))
+
+;; ============ SKINNED MESH RENDERING ============
+
+(defn create-skinned-vao
+  "Creates VAO/VBO/EBO from ozz mesh data for GPU skinning.
+   Args: {:meshes boxed-meshes-ptr :mesh-index n}
+   Returns: {:vao id :index-count n :vertex-count n}"
+  [args]
+  (mesh/create-skinned-vao args))

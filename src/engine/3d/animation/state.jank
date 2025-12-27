@@ -1,0 +1,76 @@
+(ns engine.3d.animation.state
+  "Animation state machine for managing animation transitions"
+  (:require [engine.3d.animation.interface :as anim]))
+
+(cpp/raw "#include <cmath>")
+
+(defn create-state
+  "Creates initial animation state.
+   animations: map of keyword -> {:index n :duration seconds}
+   initial: keyword for starting animation"
+  [{:keys [animations initial]}]
+  {:current initial
+   :current-time 0.0
+   :animations animations
+   :loop true})
+
+(defn update-state
+  "Advances animation time by dt seconds, handles looping.
+   Returns updated state."
+  [{:keys [current current-time animations loop] :as state} dt]
+  (if-let [anim (get animations current)]
+    (let [duration (:duration anim)
+          new-time (+ current-time dt)]
+      (if loop
+        (assoc state :current-time (mod new-time duration))
+        (assoc state :current-time (min new-time duration))))
+    state))
+
+(defn get-time-ratio
+  "Gets current time as ratio 0.0-1.0 for sampling"
+  [{:keys [current current-time animations]}]
+  (if-let [anim (get animations current)]
+    (let [duration (:duration anim)]
+      (if (> duration 0.0)
+        (/ current-time duration)
+        0.0))
+    0.0))
+
+(defn transition-to
+  "Switches to a different animation.
+   If reset-time is true (default), starts from beginning."
+  ([state new-animation]
+   (transition-to state new-animation true))
+  ([state new-animation reset-time]
+   (if (= (:current state) new-animation)
+     state
+     (cond-> (assoc state :current new-animation)
+       reset-time (assoc :current-time 0.0)))))
+
+(defn get-current-animation-index
+  "Gets the animation index for sampling"
+  [{:keys [current animations]}]
+  (when-let [anim (get animations current)]
+    (:index anim)))
+
+(defn select-animation-from-physics
+  "Selects appropriate animation based on player physics state.
+   Returns animation keyword (:idle, :walk, :run)"
+  [{:keys [velocity grounded]}]
+  (let [[vx _ vz] velocity
+        vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        horizontal-speed (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f)))]
+    (cond
+      (not grounded) nil  ; Keep current animation when airborne
+      (cpp/< horizontal-speed (cpp/float 0.5)) :idle
+      (cpp/< horizontal-speed (cpp/float 6.0)) :walk
+      :else :run)))
+
+(defn update-from-physics
+  "Updates animation state based on player physics.
+   Only transitions if player is grounded."
+  [state physics-state]
+  (if-let [target-anim (select-animation-from-physics physics-state)]
+    (transition-to state target-anim)
+    state))

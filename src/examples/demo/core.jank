@@ -9,6 +9,8 @@
             [engine.3d.collision.interface :as collision]
             [engine.2d.text.interface :as text]
             [engine.2d.graphics.interface :as gfx2d]
+            [engine.3d.animation.interface :as anim]
+            [engine.3d.animation.state :as anim-state]
             [examples.demo.strafehelper.interface :as strafehelper]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
@@ -110,10 +112,12 @@
   (if (contains? tags :transform)
     (let [[px py pz] (:transform/position entity)
           yaw (:transform/yaw entity 0.0)
+          ;; Model rotation offset (some models face different directions)
+          model-offset (if (contains? tags :animated) 90.0 0.0)
           ;; Translate then rotate around Y axis (negate yaw to match camera direction)
           model-m (-> (cpp/identity_matrix)
                       (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
-                      (cpp/glm.rotate (cpp/glm.radians (cpp/- (cpp/float 0.0) (cpp/float yaw)))
+                      (cpp/glm.rotate (cpp/glm.radians (cpp/- (cpp/float model-offset) (cpp/float yaw)))
                                       (math/gimmie :vec3 [0.0 1.0 0.0])))
           model-m-loc (cpp/glGetUniformLocation shader "model")]
       (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
@@ -172,23 +176,105 @@
           view-m-loc (cpp/glGetUniformLocation shader "view")]
       (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m)))))
 
+(defn update-animations
+  "Advances animation time and samples for all animated entities.
+   Updates state atom in place."
+  [{:keys [state delta-time]}]
+  (let [dt-raw (math/*-> :float delta-time)
+        ;; Convert C++ float to Jank number for arithmetic
+        dt (double dt-raw)]
+    (doseq [[id entity] (:entities @state)]
+      (when (contains? (:tags entity) :animated)
+        (let [current-time (double (:animation/time entity 0.0))
+              duration (double (:animation/duration entity 1.0))
+              ;; Advance time with looping
+              new-time (mod (+ current-time dt) duration)
+              time-ratio (/ new-time duration)]
+          ;; Sample animation at current time
+          (anim/sample {:context (:animation/context entity)
+                        :animation-index (:animation/current-index entity 0)
+                        :time-ratio time-ratio})
+          ;; Update entity time
+          (swap! state assoc-in [:entities id :animation/time] new-time))))))
+
+(cpp/raw
+ "void upload_identity_bones(GLint loc, int count) {
+    // Upload identity matrices for debugging
+    std::vector<float> identity_bones(count * 16);
+    for (int i = 0; i < count; ++i) {
+      // Identity matrix
+      identity_bones[i*16 + 0] = 1.0f;
+      identity_bones[i*16 + 5] = 1.0f;
+      identity_bones[i*16 + 10] = 1.0f;
+      identity_bones[i*16 + 15] = 1.0f;
+    }
+    glUniformMatrix4fv(loc, count, GL_FALSE, identity_bones.data());
+  }")
+
+(def DEBUG_NO_SKINNING false) ;; Set to true to test mesh without animation
+
+(defn render-animated-system
+  "Renders an animated entity with skinned shader"
+  [{:keys [skinned-shader]} {:keys [tags] :as entity}]
+  (when (contains? tags :animated)
+    (let [meshes (:animation/meshes entity)
+          vaos (:animation/vaos entity)
+          ctx (:animation/context entity)
+          ;; Set base color to skin tone (no texture for now)
+          _ (cpp/glUniform4f (cpp/glGetUniformLocation skinned-shader "uBaseColorFactor")
+                             (cpp/float 0.8) (cpp/float 0.6) (cpp/float 0.5) (cpp/float 1.0))
+          _ (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uHasBaseColorTex") 0)]
+      (doseq [mesh-idx (range (:animation/mesh-count entity 0))]
+        (let [loc (cpp/glGetUniformLocation skinned-shader "uBoneMatrices")
+              ;; Unbox inside the loop to avoid capture issues
+              ctx-ptr (cpp/unbox cpp/AnimationContext* ctx)
+              meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
+          (if DEBUG_NO_SKINNING
+            ;; Debug: upload identity matrices
+            (let [mesh-info (anim/get-mesh-info {:meshes meshes :mesh-index mesh-idx})
+                  joint-count (:joint-remap-count mesh-info)]
+              (cpp/upload_identity_bones loc joint-count))
+            ;; Normal: compute and upload skinning matrices directly
+            (cpp/compute_and_upload_skinning_matrices ctx-ptr meshes-ptr (cpp/int mesh-idx) loc))
+          ;; Draw mesh
+          (let [vao-data (nth vaos mesh-idx)
+                index-count (:index-count vao-data)]
+            (cpp/glBindVertexArray (:vao vao-data))
+            (cpp/glDrawElements (cpp/value "GL_TRIANGLES")
+                                index-count
+                                (cpp/value "GL_UNSIGNED_SHORT")
+                                cpp/nullptr)))))))
+
 (defn draw-3D
-  [{:keys [state shader] :as context}]
+  [{:keys [state shader skinned-shader] :as context}]
   (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
         _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
-        _ (cpp/glUseProgram shader)
 
-        projection-m-loc (cpp/glGetUniformLocation shader "projection")
         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                                           (cpp/float 0.1)
-                                          (cpp/float 100.0))
+                                          (cpp/float 100.0))]
 
-        _ (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m))
-        _ (camera-system context)]
+    ;; Render non-animated entities with basic shader
+    (cpp/glUseProgram shader)
+    (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
+      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m)))
+    (camera-system context)
     (doseq [e (vals (:entities @state))]
-      (transform-system context e)
-      (render-system context e))))
+      (when-not (contains? (:tags e) :animated)
+        (transform-system context e)
+        (render-system context e)))
+
+    ;; Render animated entities with skinned shader
+    (cpp/glDisable (cpp/value "GL_CULL_FACE")) ;; Disable culling for animated meshes
+    (cpp/glUseProgram skinned-shader)
+    (let [projection-m-loc (cpp/glGetUniformLocation skinned-shader "projection")]
+      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m)))
+    (camera-system (assoc context :shader skinned-shader))
+    (doseq [e (vals (:entities @state))]
+      (when (contains? (:tags e) :animated)
+        (transform-system (assoc context :shader skinned-shader) e)
+        (render-animated-system context e)))))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
@@ -259,19 +345,64 @@
                     (assoc :model loaded)
                     (update :tags (fnil conj #{}) :render))))))
 
+(defn init-player-animation
+  "Initialize player animation system with ozz assets"
+  []
+  (let [ctx (anim/create-context)
+        ;; Load Ruby assets (verified to work together)
+        skeleton-info (anim/load-skeleton {:path "models/player/ruby_skeleton.ozz"
+                                           :context ctx})
+        anim-info (anim/load-animation {:path "models/player/ruby_animation.ozz"
+                                        :context ctx})
+        mesh-data (anim/load-meshes {:path "models/player/ruby_mesh.ozz"})
+        ;; Sample animation at time 0 to initialize bone matrices
+        _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
+        ;; Create OpenGL VAOs for each mesh
+        mesh-count (:count mesh-data)
+        vaos (mapv (fn [i]
+                     (let [mesh-info (anim/get-mesh-info {:meshes (:meshes mesh-data) :mesh-index i})
+                           vao (anim/create-skinned-vao {:meshes (:meshes mesh-data)
+                                                          :mesh-index i})]
+                       (println "  Mesh" i ":"
+                                "verts=" (:vertex-count mesh-info)
+                                "indices=" (:index-count mesh-info)
+                                "joints=" (:joint-remap-count mesh-info)
+                                "skinned=" (:skinned? mesh-info))
+                       vao))
+                   (range mesh-count))]
+    (println "Animation system initialized:")
+    (println "  Skeleton joints:" (:num-joints skeleton-info))
+    (println "  Animation duration:" (:duration anim-info) "seconds")
+    (println "  Mesh count:" mesh-count)
+    (println "  VAOs created:" (count vaos))
+    {:animation/context ctx
+     :animation/current-index 0
+     :animation/duration (:duration anim-info)
+     :animation/meshes (:meshes mesh-data)
+     :animation/mesh-count mesh-count
+     :animation/vaos vaos
+     :animation/time 0.0}))
+
 (defmethod handle-event :player/spawned
   [state {{:keys [id] :as event} :event}]
-  (update state :entities assoc id
-          (-> event
-              (select-keys [:id :model :transform/position])
-              (assoc :transform/pitch 0.0
-                     :transform/yaw -90.0
-                     :physics/velocity [0.0 0.0 0.0]
-                     :physics/grounded true
-                     :physics/jump-z-start nil)
-              (update :model #(gltf/load {:model (gltf/parse {:path %})
-                                          :base-path "models/"}))
-              (update :tags (fnil conj #{}) :render :transform :camera))))
+  (let [;; Try to load animation, fall back to static model
+        animation-data (init-player-animation)]
+    (update state :entities assoc id
+            (-> event
+                (select-keys [:id :model :transform/position])
+                (assoc :transform/pitch 0.0
+                       :transform/yaw -90.0
+                       :physics/velocity [0.0 0.0 0.0]
+                       :physics/grounded true
+                       :physics/jump-z-start nil)
+                ;; Use static model for now, animation rendering to be added
+                (update :model #(gltf/load {:model (gltf/parse {:path %})
+                                            :base-path "models/"}))
+                (merge animation-data)
+                (update :tags (fnil into #{})
+                        (if animation-data
+                          [:render :transform :camera :animated]
+                          [:render :transform :camera]))))))
 
 (defn pm-friction
   "JKA-style friction - reduces horizontal velocity"
@@ -472,7 +603,9 @@
                              (handle-event state (assoc context :event event)))
                            @state
                            (es/read event-store {})))
-          _ (reset! event-store {:events []})]
+          _ (reset! event-store {:events []})
+          ;; Update animations before rendering
+          _ (update-animations context)]
 
       (draw-3D context)
 
@@ -524,9 +657,14 @@
                 {:vertex-shader-path
                  "shaders/basic_vertex.glsl"
                  :fragment-shader-path
-                 "shaders/basic_fragment.glsl"}) 
+                 "shaders/basic_fragment.glsl"})
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
+        skinned-shader (shaders/load-shader-program
+                        {:vertex-shader-path "shaders/skinned_vertex.glsl"
+                         :fragment-shader-path "shaders/skinned_fragment.glsl"})
+        _ (cpp/glUseProgram skinned-shader)
+        _ (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uBaseColorTex") 0)
         text-shader (shaders/load-shader-program
                      {:vertex-shader-path "shaders/text_vertex.glsl"
                       :fragment-shader-path "shaders/text_fragment.glsl"})
@@ -550,6 +688,7 @@
                :state (atom {})
                :window window
                :shader shader
+               :skinned-shader skinned-shader
                :models []
                :camera camera
                :gfx2d gfx2d
