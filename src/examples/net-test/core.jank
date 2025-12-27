@@ -1,0 +1,144 @@
+(ns examples.net-test.core
+  (:require [engine.networking.interface :as net]))
+
+(cpp/raw "#include <unistd.h>
+          #include <stdlib.h>")
+
+(defn sleep-ms
+  "Sleep for the given number of milliseconds."
+  [ms]
+  (cpp/usleep (* (cpp/int ms) 1000)))
+
+(defn run-server
+  "Run an echo server on port 7777."
+  []
+  (println "Starting server on port 7777...")
+  (when-not (net/init!)
+    (println "ERROR: Failed to initialize ENet")
+    (cpp/exit 1))
+
+  (let [host (net/create-server {:port 7777 :max-clients 32})]
+    (when-not host
+      (println "ERROR: Failed to create server")
+      (net/shutdown!)
+      (cpp/exit 1))
+
+    (println "Server listening. Press Ctrl+C to stop.")
+
+    ;; Main server loop
+    (loop [running true]
+      (when running
+        (let [events (net/poll-events host 100)]
+          (doseq [event events]
+            (case (:type event)
+              :connect
+              (println (str "Client " (:peer-id event) " connected"))
+
+              :disconnect
+              (println (str "Client " (:peer-id event) " disconnected"))
+
+              :receive
+              (let [data (:data event)
+                    peer (:peer event)]
+                (println (str "Received from client " (:peer-id event) ": " data))
+                ;; Echo the message back
+                (net/send-reliable peer (str "Echo: " data)))
+
+              ;; Ignore other event types
+              nil)))
+        (recur true)))
+
+    (net/destroy-host host)
+    (net/shutdown!)
+    (println "Server stopped.")))
+
+(defn run-client
+  "Connect to server at localhost:7777 and send a test message."
+  []
+  (println "Starting client, connecting to localhost:7777...")
+  (when-not (net/init!)
+    (println "ERROR: Failed to initialize ENet")
+    (cpp/exit 1))
+
+  (let [host (net/create-client)]
+    (when-not host
+      (println "ERROR: Failed to create client")
+      (net/shutdown!)
+      (cpp/exit 1))
+
+    (let [peer (net/connect host {:address "127.0.0.1" :port 7777})]
+      (when-not peer
+        (println "ERROR: Failed to initiate connection")
+        (net/destroy-host host)
+        (net/shutdown!)
+        (cpp/exit 1))
+
+      (println "Connecting...")
+
+      ;; Wait for connection with timeout
+      (loop [attempts 0
+             connected false]
+        (if (and (not connected) (< attempts 50))
+          (let [events (net/poll-events host 100)]
+            (if (some #(= :connect (:type %)) events)
+              (do
+                (println "Connected to server!")
+                ;; Send a hello message
+                (net/send-reliable peer "Hello from Jank client!")
+                (println "Sent: Hello from Jank client!")
+                (recur attempts true))
+              (recur (inc attempts) false)))
+          (when (not connected)
+            (println "ERROR: Connection timed out")
+            (net/destroy-host host)
+            (net/shutdown!)
+            (cpp/exit 1))))
+
+      ;; Receive loop - wait for echo and a few more messages
+      (loop [msg-count 0]
+        (when (< msg-count 5)
+          (let [events (net/poll-events host 1000)]
+            (doseq [event events]
+              (case (:type event)
+                :receive
+                (println (str "Received: " (:data event)))
+
+                :disconnect
+                (do
+                  (println "Disconnected from server")
+                  (net/destroy-host host)
+                  (net/shutdown!)
+                  (cpp/exit 0))
+
+                nil))
+            (when (empty? events)
+              ;; Send another message
+              (net/send-reliable peer (str "Message #" (inc msg-count)))
+              (println (str "Sent: Message #" (inc msg-count))))
+            (recur (inc msg-count)))))
+
+      ;; Disconnect gracefully
+      (println "Disconnecting...")
+      (net/disconnect peer)
+      ;; Give time for disconnect to process
+      (net/poll-events host 500)
+      (net/destroy-host host)))
+
+  (net/shutdown!)
+  (println "Client finished."))
+
+(defn -main
+  ([] (-main "help"))
+  ([mode]
+   (cond
+     (= mode "server")
+     (run-server)
+
+     (= mode "client")
+     (run-client)
+
+     :else
+     (do
+       (println "Usage: ./run net-test <mode>")
+       (println "  server - Run echo server on port 7777")
+       (println "  client - Connect to server and send test messages")))))

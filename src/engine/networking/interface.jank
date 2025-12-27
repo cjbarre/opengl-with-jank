@@ -1,0 +1,88 @@
+(ns engine.networking.interface
+  (:require [engine.networking.core :as core]))
+
+;; Lifecycle
+
+(defn init!
+  "Initialize ENet. Must be called before any other networking functions."
+  []
+  (core/init!))
+
+(defn shutdown!
+  "Shutdown ENet. Call when done with networking."
+  []
+  (core/shutdown!))
+
+;; Host management
+
+(defn create-server
+  "Create a server host listening on the given port.
+   Options: {:port <int> :max-clients <int>}
+   Returns a boxed ENetHost* or nil on failure."
+  [args]
+  (core/create-server args))
+
+(defn create-client
+  "Create a client host (not bound to any port).
+   Returns a boxed ENetHost* or nil on failure."
+  []
+  (core/create-client))
+
+(defn destroy-host
+  "Destroy a host and free its resources."
+  [host]
+  (core/destroy-host host))
+
+;; Connection management
+
+(defn connect
+  "Connect a client host to a server.
+   Options: {:address <string> :port <int>}
+   Returns a boxed ENetPeer* or nil on failure."
+  [host args]
+  (core/connect host args))
+
+(defn disconnect
+  "Gracefully disconnect a peer."
+  [peer]
+  (core/disconnect peer))
+
+(defn disconnect-now
+  "Immediately disconnect a peer."
+  [peer]
+  (core/disconnect-now peer))
+
+;; Messaging
+
+(defn send-reliable
+  "Send data reliably to a peer."
+  [peer data]
+  (core/send-reliable peer data))
+
+(defn send-unreliable
+  "Send data unreliably to a peer."
+  [peer data]
+  (core/send-unreliable peer data))
+
+(defn broadcast-reliable
+  "Broadcast data reliably to all connected peers."
+  [host data]
+  (core/broadcast-reliable host data))
+
+(defn broadcast-unreliable
+  "Broadcast data unreliably to all connected peers."
+  [host data]
+  (core/broadcast-unreliable host data))
+
+;; Event polling
+
+(defn poll-events
+  "Poll for network events with the given timeout in milliseconds.
+   Returns a vector of event maps with :type, :peer, :peer-id, and :data keys."
+  [host timeout-ms]
+  (core/poll-events host timeout-ms))
+
+(defn flush-host
+  "Flush any pending outgoing packets."
+  [host]
+  (core/flush-host host))

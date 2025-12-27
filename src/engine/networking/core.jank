@@ -1,0 +1,252 @@
+(ns engine.networking.core
+  (:require [engine.macros :refer [clet]]))
+
+(cpp/raw
+ "#define ENET_IMPLEMENTATION
+  #include \"enet.h\"
+  #include <cstring>
+  #include <string>")
+
+;; C helper functions for ENet
+(cpp/raw
+ "bool enet_init_wrapper() {
+    return enet_initialize() == 0;
+  }
+
+  void enet_shutdown_wrapper() {
+    enet_deinitialize();
+  }
+
+  ENetHost* create_server_host(uint16_t port, size_t max_clients) {
+    ENetAddress addr;
+    addr.host = ENET_HOST_ANY;
+    addr.port = port;
+    return enet_host_create(&addr, max_clients, 2, 0, 0);
+  }
+
+  ENetHost* create_client_host() {
+    return enet_host_create(NULL, 1, 2, 0, 0);
+  }
+
+  void destroy_host_wrapper(ENetHost* host) {
+    enet_host_destroy(host);
+  }
+
+  ENetPeer* connect_to_host(ENetHost* host, const char* hostname, uint16_t port) {
+    ENetAddress addr;
+    enet_address_set_host(&addr, hostname);
+    addr.port = port;
+    return enet_host_connect(host, &addr, 2, 0);
+  }
+
+  void disconnect_peer_wrapper(ENetPeer* peer) {
+    enet_peer_disconnect(peer, 0);
+  }
+
+  void disconnect_peer_now_wrapper(ENetPeer* peer) {
+    enet_peer_disconnect_now(peer, 0);
+  }
+
+  int send_packet(ENetPeer* peer, const char* data, size_t len, int channel, bool reliable) {
+    uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
+    ENetPacket* packet = enet_packet_create(data, len, flags);
+    if (!packet) return -1;
+    return enet_peer_send(peer, channel, packet);
+  }
+
+  void broadcast_packet(ENetHost* host, const char* data, size_t len, int channel, bool reliable) {
+    uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
+    ENetPacket* packet = enet_packet_create(data, len, flags);
+    if (packet) {
+      enet_host_broadcast(host, channel, packet);
+    }
+  }
+
+  int host_service_wrapper(ENetHost* host, ENetEvent* event, uint32_t timeout) {
+    return enet_host_service(host, event, timeout);
+  }
+
+  int get_event_type(ENetEvent* event) {
+    return event->type;
+  }
+
+  ENetPeer* get_event_peer(ENetEvent* event) {
+    return event->peer;
+  }
+
+  // Returns a null-terminated copy of packet data (caller must free)
+  char* get_event_data_copy(ENetEvent* event) {
+    if (event->packet && event->packet->data && event->packet->dataLength > 0) {
+      size_t len = event->packet->dataLength;
+      char* copy = (char*)malloc(len + 1);
+      if (copy) {
+        memcpy(copy, event->packet->data, len);
+        copy[len] = '\\0';
+      }
+      return copy;
+    }
+    return nullptr;
+  }
+
+  void destroy_event_packet(ENetEvent* event) {
+    if (event->packet) {
+      enet_packet_destroy(event->packet);
+    }
+  }
+
+  void free_data_copy(char* data) {
+    if (data) free(data);
+  }
+
+  uint32_t get_peer_id(ENetPeer* peer) {
+    if (peer && peer->host) {
+      return (uint32_t)(peer - peer->host->peers);
+    }
+    return 0;
+  }")
+
+;; Lifecycle
+
+(defn init!
+  "Initialize ENet. Must be called before any other networking functions."
+  []
+  (cpp/enet_init_wrapper))
+
+(defn shutdown!
+  "Shutdown ENet. Call when done with networking."
+  []
+  (cpp/enet_shutdown_wrapper))
+
+;; Host management
+
+(defn create-server
+  "Create a server host listening on the given port.
+   Returns a boxed ENetHost* or nil on failure."
+  [{:keys [port max-clients] :or {max-clients 32} :as args}]
+  (clet [host (cpp/create_server_host (cpp/int port) (cpp/int max-clients))
+         :when (cpp/! host)
+         :error nil]
+    (cpp/box host)))
+
+(defn create-client
+  "Create a client host (not bound to any port).
+   Returns a boxed ENetHost* or nil on failure."
+  []
+  (clet [host (cpp/create_client_host)
+         :when (cpp/! host)
+         :error nil]
+    (cpp/box host)))
+
+(defn destroy-host
+  "Destroy a host and free its resources."
+  [host]
+  (cpp/destroy_host_wrapper (cpp/unbox (cpp/type "ENetHost*") host)))
+
+;; Connection management
+
+(defn connect
+  "Connect a client host to a server.
+   Returns a boxed ENetPeer* or nil on failure."
+  [host {:keys [address port] :as args}]
+  (clet [host* (cpp/unbox (cpp/type "ENetHost*") host)
+         peer (cpp/connect_to_host host* address (cpp/int port))
+         :when (cpp/! peer)
+         :error nil]
+    (cpp/box peer)))
+
+(defn disconnect
+  "Gracefully disconnect a peer."
+  [peer]
+  (cpp/disconnect_peer_wrapper (cpp/unbox (cpp/type "ENetPeer*") peer)))
+
+(defn disconnect-now
+  "Immediately disconnect a peer without waiting for acknowledgment."
+  [peer]
+  (cpp/disconnect_peer_now_wrapper (cpp/unbox (cpp/type "ENetPeer*") peer)))
+
+;; Messaging
+
+(defn send-reliable
+  "Send data reliably to a peer (will be retransmitted if lost).
+   data should be a string. Returns 0 on success, negative on failure."
+  [peer data]
+  (let [peer* (cpp/unbox (cpp/type "ENetPeer*") peer)
+        len (count data)]
+    (cpp/send_packet peer* data (cpp/int len) 0 true)))
+
+(defn send-unreliable
+  "Send data unreliably to a peer (may be lost, but lower latency).
+   data should be a string. Returns 0 on success, negative on failure."
+  [peer data]
+  (let [peer* (cpp/unbox (cpp/type "ENetPeer*") peer)
+        len (count data)]
+    (cpp/send_packet peer* data (cpp/int len) 1 false)))
+
+(defn broadcast-reliable
+  "Broadcast data reliably to all connected peers."
+  [host data]
+  (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
+        len (count data)]
+    (cpp/broadcast_packet host* data (cpp/int len) 0 true)))
+
+(defn broadcast-unreliable
+  "Broadcast data unreliably to all connected peers."
+  [host data]
+  (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
+        len (count data)]
+    (cpp/broadcast_packet host* data (cpp/int len) 1 false)))
+
+;; Event polling
+
+(defn poll-events
+  "Poll for network events with the given timeout in milliseconds.
+   Returns a vector of event maps. Each event has:
+   - :type - :connect, :disconnect, :receive, or :none
+   - :peer - boxed ENetPeer* (for connect/disconnect/receive)
+   - :peer-id - numeric peer ID
+   - :data - string data (for receive events only)"
+  [host timeout-ms]
+  (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
+        event (cpp/new (cpp/type "ENetEvent"))]
+    (loop [events []]
+      (let [result (cpp/host_service_wrapper host* event (cpp/int timeout-ms))]
+        (if (> result 0)
+          (let [event-type (cpp/get_event_type event)
+                peer-ptr (cpp/get_event_peer event)
+                peer-id (cpp/get_peer_id peer-ptr)
+                evt (cond
+                      ;; ENET_EVENT_TYPE_CONNECT = 1
+                      (= event-type 1)
+                      {:type :connect
+                       :peer (cpp/box peer-ptr)
+                       :peer-id peer-id}
+
+                      ;; ENET_EVENT_TYPE_DISCONNECT = 2
+                      (= event-type 2)
+                      {:type :disconnect
+                       :peer (cpp/box peer-ptr)
+                       :peer-id peer-id}
+
+                      ;; ENET_EVENT_TYPE_RECEIVE = 3
+                      (= event-type 3)
+                      (let [data-copy (cpp/get_event_data_copy event)
+                            _ (cpp/destroy_event_packet event)
+                            ;; Convert char* to Jank string (str coerces to string)
+                            data-str (when data-copy (str data-copy))
+                            _ (cpp/free_data_copy data-copy)]
+                        {:type :receive
+                         :peer (cpp/box peer-ptr)
+                         :peer-id peer-id
+                         :data data-str})
+
+                      :else
+                      {:type :none})]
+            ;; Continue polling with 0 timeout to drain all pending events
+            (recur (conj events evt)))
+          ;; No more events
+          events)))))
+
+(defn flush-host
+  "Flush any pending outgoing packets."
+  [host]
+  (cpp/enet_host_flush (cpp/unbox (cpp/type "ENetHost*") host)))

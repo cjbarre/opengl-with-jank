@@ -3,9 +3,12 @@ set -xeuo pipefail
 
 GAME="${1:-demo}"
 NAMESPACE="examples.${GAME}.core"
+# Pass remaining arguments to the program
+shift || true
+ARGS="$@"
 
 jank \
   -Ilibs/glfw/include -Ilibs/glm -Iinclude -Ilibs/ozz-animation/include \
   -Llibs/glfw/lib -llibglfw.3.dylib \
   -Llibs/ozz-animation/lib -llibozz_animation.dylib -llibozz_base.dylib -llibozz_geometry.dylib \
-  --module-path $(clojure -Spath) run-main "$NAMESPACE"
+  --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS
