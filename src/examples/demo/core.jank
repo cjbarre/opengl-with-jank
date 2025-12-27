@@ -7,7 +7,9 @@
             [engine.gltf.interface :as gltf]
             [engine.events.interface :as es]
             [engine.collision.interface :as collision]
-            [engine.text.interface :as text]))
+            [engine.text.interface :as text]
+            [engine.graphics2d.interface :as gfx2d]
+            [engine.strafehelper.interface :as strafehelper]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -30,6 +32,7 @@
 (def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
 (def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
 (def GLFW_KEY_F3 (cpp/value "GLFW_KEY_F3"))
+(def GLFW_KEY_F4 (cpp/value "GLFW_KEY_F4"))
 (def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
 
 ;; JKA-style physics constants (scaled for game world)
@@ -72,7 +75,10 @@
       (assoc :jump-held true)
 
       (= (cpp/glfwGetKey window GLFW_KEY_F3) GLFW_PRESS)
-      (assoc :f3-pressed true))))
+      (assoc :f3-pressed true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_F4) GLFW_PRESS)
+      (assoc :f4-pressed true))))
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -408,6 +414,14 @@
   [state {{:keys [pressed]} :event}]
   (assoc state :debug/f3-was-pressed pressed))
 
+(defmethod handle-event :strafehelper/toggled
+  [state _]
+  (update state :strafehelper/visible not))
+
+(defmethod handle-event :strafehelper/f4-updated
+  [state {{:keys [pressed]} :event}]
+  (assoc state :strafehelper/f4-was-pressed pressed))
+
 (defmethod handle-event :default
   [state _]
   state)
@@ -417,12 +431,13 @@
 
 (defmethod handle-command :player/process-input
   [{:keys [command state]}]
-  (let [{:keys [exit f3-pressed]} command
-        f3-was-pressed (:debug/f3-was-pressed @state)]
+  (let [{:keys [exit f3-pressed f4-pressed]} command
+        f3-was-pressed (:debug/f3-was-pressed @state)
+        f4-was-pressed (:strafehelper/f4-was-pressed @state)]
     (cond
       exit [{:event/type :system/exit}]
       :else (cond-> [(-> command
-                         (dissoc :command/name :f3-pressed)
+                         (dissoc :command/name :f3-pressed :f4-pressed)
                          (assoc :event/type :player/moved))]
               ;; Toggle debug on F3 press (not hold)
               (and f3-pressed (not f3-was-pressed))
@@ -430,7 +445,15 @@
 
               ;; Always track F3 state for debouncing
               true
-              (conj {:event/type :debug/f3-updated :pressed f3-pressed})))))
+              (conj {:event/type :debug/f3-updated :pressed f3-pressed})
+
+              ;; Toggle strafehelper on F4 press (not hold)
+              (and f4-pressed (not f4-was-pressed))
+              (conj {:event/type :strafehelper/toggled})
+
+              ;; Always track F4 state for debouncing
+              true
+              (conj {:event/type :strafehelper/f4-updated :pressed f4-pressed})))))
 
 (defmethod handle-command :default
   [])
@@ -472,6 +495,14 @@
           (text/render-text (str "Grounded: " grounded) 10.0 130.0
                             (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)))
 
+      ;; Render strafehelper (F4 to toggle)
+      (when (get @state :strafehelper/visible false)
+        (let [player (get-in @state [:entities #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"])
+              velocity (or (:physics/velocity player) [0 0 0])
+              yaw (:transform/yaw player 0.0)
+              grounded (:physics/grounded player false)]
+          (strafehelper/render-strafehelper velocity yaw grounded 1280 720)))
+
       (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
       (cpp/glfwPollEvents))))
 
@@ -493,13 +524,17 @@
                 {:vertex-shader-path
                  "shaders/basic_vertex.glsl"
                  :fragment-shader-path
-                 "shaders/basic_fragment.glsl"})
+                 "shaders/basic_fragment.glsl"}) 
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
         text-shader (shaders/load-shader-program
                      {:vertex-shader-path "shaders/text_vertex.glsl"
                       :fragment-shader-path "shaders/text_fragment.glsl"})
         _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
+        graphics2d-shader (shaders/load-shader-program
+                           {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
+                            :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
+        _ (gfx2d/init-graphics2d graphics2d-shader)
         camera (setup-camera)
         event-store (es/start {})
         _ (es/append event-store {:events [{:event/type :level/spawned

@@ -1,0 +1,206 @@
+(ns engine.graphics2d.core
+  (:require [engine.shaders.interface :as shaders]))
+
+(cpp/raw "
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <cmath>
+#include <vector>
+
+// 2D graphics state
+struct Graphics2DState {
+    GLuint vao;
+    GLuint vbo;
+    GLuint shader;
+};
+
+Graphics2DState* g_gfx2d = nullptr;
+
+bool init_graphics2d_cpp(GLuint shader) {
+    g_gfx2d = new Graphics2DState();
+    g_gfx2d->shader = shader;
+
+    glGenVertexArrays(1, &g_gfx2d->vao);
+    glGenBuffers(1, &g_gfx2d->vbo);
+
+    glBindVertexArray(g_gfx2d->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_gfx2d->vbo);
+    // Allocate space for up to 1024 vertices (enough for arcs)
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 2 * 1024, nullptr, GL_DYNAMIC_DRAW);
+
+    // Position (vec2)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    return true;
+}
+
+void begin_2d_cpp(int screen_w, int screen_h) {
+    if (!g_gfx2d) return;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+
+    glUseProgram(g_gfx2d->shader);
+
+    // Orthographic projection (0,0 at top-left)
+    glm::mat4 projection = glm::ortho(0.0f, (float)screen_w, (float)screen_h, 0.0f);
+    glUniformMatrix4fv(glGetUniformLocation(g_gfx2d->shader, \"projection\"), 1, GL_FALSE, glm::value_ptr(projection));
+
+    glBindVertexArray(g_gfx2d->vao);
+}
+
+void end_2d_cpp() {
+    glBindVertexArray(0);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+}
+
+void set_color_cpp(float r, float g, float b, float a) {
+    if (!g_gfx2d) return;
+    glUniform4f(glGetUniformLocation(g_gfx2d->shader, \"uColor\"), r, g, b, a);
+}
+
+void render_line_cpp(float x1, float y1, float x2, float y2, float thickness) {
+    if (!g_gfx2d) return;
+
+    // Calculate perpendicular direction for line thickness
+    float dx = x2 - x1;
+    float dy = y2 - y1;
+    float len = sqrt(dx*dx + dy*dy);
+    if (len < 0.001f) return;
+
+    float nx = -dy / len * thickness * 0.5f;
+    float ny = dx / len * thickness * 0.5f;
+
+    float vertices[] = {
+        x1 - nx, y1 - ny,
+        x1 + nx, y1 + ny,
+        x2 + nx, y2 + ny,
+
+        x1 - nx, y1 - ny,
+        x2 + nx, y2 + ny,
+        x2 - nx, y2 - ny
+    };
+
+    glBindBuffer(GL_ARRAY_BUFFER, g_gfx2d->vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
+}
+
+void render_arc_outline_cpp(float cx, float cy, float radius, float start_angle, float end_angle, int segments, float thickness) {
+    if (!g_gfx2d) return;
+
+    std::vector<float> vertices;
+    float angle_step = (end_angle - start_angle) / segments;
+    float inner_r = radius - thickness * 0.5f;
+    float outer_r = radius + thickness * 0.5f;
+
+    for (int i = 0; i < segments; i++) {
+        float a1 = start_angle + i * angle_step;
+        float a2 = start_angle + (i + 1) * angle_step;
+
+        float cos1 = cos(a1), sin1 = sin(a1);
+        float cos2 = cos(a2), sin2 = sin(a2);
+
+        // Two triangles per segment (quad)
+        // Inner point 1
+        vertices.push_back(cx + inner_r * cos1);
+        vertices.push_back(cy + inner_r * sin1);
+        // Outer point 1
+        vertices.push_back(cx + outer_r * cos1);
+        vertices.push_back(cy + outer_r * sin1);
+        // Outer point 2
+        vertices.push_back(cx + outer_r * cos2);
+        vertices.push_back(cy + outer_r * sin2);
+
+        // Inner point 1
+        vertices.push_back(cx + inner_r * cos1);
+        vertices.push_back(cy + inner_r * sin1);
+        // Outer point 2
+        vertices.push_back(cx + outer_r * cos2);
+        vertices.push_back(cy + outer_r * sin2);
+        // Inner point 2
+        vertices.push_back(cx + inner_r * cos2);
+        vertices.push_back(cy + inner_r * sin2);
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, g_gfx2d->vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
+    glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 2);
+}
+
+void render_filled_arc_cpp(float cx, float cy, float radius, float start_angle, float end_angle, int segments) {
+    if (!g_gfx2d) return;
+
+    std::vector<float> vertices;
+    float angle_step = (end_angle - start_angle) / segments;
+
+    for (int i = 0; i < segments; i++) {
+        float a1 = start_angle + i * angle_step;
+        float a2 = start_angle + (i + 1) * angle_step;
+
+        // Triangle fan from center
+        vertices.push_back(cx);
+        vertices.push_back(cy);
+        vertices.push_back(cx + radius * cos(a1));
+        vertices.push_back(cy + radius * sin(a1));
+        vertices.push_back(cx + radius * cos(a2));
+        vertices.push_back(cy + radius * sin(a2));
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, g_gfx2d->vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
+    glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 2);
+}
+")
+
+(defn init-graphics2d
+  "Initialize 2D graphics. Call once at startup.
+   shader: compiled graphics2d shader program
+   Returns true on success."
+  [shader]
+  (cpp/init_graphics2d_cpp shader))
+
+(defn begin-2d
+  "Begin 2D rendering. Sets up orthographic projection and blending."
+  [screen-width screen-height]
+  (cpp/begin_2d_cpp (cpp/int screen-width) (cpp/int screen-height)))
+
+(defn end-2d
+  "End 2D rendering. Restores OpenGL state."
+  []
+  (cpp/end_2d_cpp))
+
+(defn set-color
+  "Set the current drawing color."
+  [[r g b a]]
+  (cpp/set_color_cpp (cpp/float. r) (cpp/float. g) (cpp/float. b) (cpp/float. a)))
+
+(defn render-line
+  "Render a line from (x1,y1) to (x2,y2) with given thickness."
+  [x1 y1 x2 y2 thickness]
+  (cpp/render_line_cpp (cpp/float. x1) (cpp/float. y1)
+                       (cpp/float. x2) (cpp/float. y2)
+                       (cpp/float. thickness)))
+
+(defn render-arc-outline
+  "Render an arc outline from start-angle to end-angle (radians)."
+  [cx cy radius start-angle end-angle segments thickness]
+  (cpp/render_arc_outline_cpp (cpp/float. cx) (cpp/float. cy)
+                               (cpp/float. radius)
+                               (cpp/float. start-angle) (cpp/float. end-angle)
+                               (cpp/int segments) (cpp/float. thickness)))
+
+(defn render-filled-arc
+  "Render a filled arc from start-angle to end-angle (radians)."
+  [cx cy radius start-angle end-angle segments]
+  (cpp/render_filled_arc_cpp (cpp/float. cx) (cpp/float. cy)
+                              (cpp/float. radius)
+                              (cpp/float. start-angle) (cpp/float. end-angle)
+                              (cpp/int segments)))

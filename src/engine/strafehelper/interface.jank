@@ -1,0 +1,11 @@
+(ns engine.strafehelper.interface
+  (:require [engine.strafehelper.core :as core]))
+
+(defn render-strafehelper
+  "Render the CGaz-style strafehelper HUD.
+   velocity: [vx vy vz] player velocity
+   yaw: player yaw in degrees
+   grounded: true if player is on ground
+   screen-width, screen-height: window dimensions"
+  [velocity yaw grounded screen-width screen-height]
+  (core/render-strafehelper velocity yaw grounded screen-width screen-height))
