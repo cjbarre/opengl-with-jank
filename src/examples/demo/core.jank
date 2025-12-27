@@ -239,7 +239,8 @@
   (let [loaded (gltf/load {:model (gltf/parse {:path (:model event)})
                            :base-path "models/"})]
     (-> state
-        (assoc :level-collision (first (:collision loaded)))
+        (assoc :level-collision (when-let [col (first (:collision loaded))]
+                              (collision/prepare-collision-mesh col)))
         (update :entities assoc id
                 (-> event
                     (select-keys [:id])

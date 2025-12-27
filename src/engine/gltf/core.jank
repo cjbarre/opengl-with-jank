@@ -383,8 +383,7 @@
      (vec (for [scene (:scenes model)
                 node (:nodes scene)
                 :when (:collision-only node)
-                {:keys [positions normals indices]} (-> node :mesh :primitives)]
+                {:keys [positions indices]} (-> node :mesh :primitives)]
             {:name (:name node)
              :positions positions
-             :normals normals
              :indices indices}))}))

@@ -1,68 +1,92 @@
 (ns engine.collision.core)
 
-(def EPSILON 0.000001)
+(cpp/raw "
+#include <glm/glm.hpp>
+#include <vector>
+#include <cmath>
 
-(defn vec3-sub
-  "Subtract two 3D vectors: a - b"
-  [[ax ay az] [bx by bz]]
-  [(- ax bx) (- ay by) (- az bz)])
+// Raycast down from position, find highest ground below
+// Returns ground Y coordinate, or -99999.0f if no ground found
+float raycast_ground_cpp(
+    std::vector<glm::vec3>* positions,
+    std::vector<unsigned int>* indices,
+    float px, float py, float pz
+) {
+    const float EPSILON = 0.000001f;
+    float ray_height = py + 100.0f;
+    glm::vec3 ray_origin(px, ray_height, pz);
+    glm::vec3 ray_dir(0.0f, -1.0f, 0.0f);
 
-(defn vec3-cross
-  "Cross product of two 3D vectors"
-  [[ax ay az] [bx by bz]]
-  [(- (* ay bz) (* az by))
-   (- (* az bx) (* ax bz))
-   (- (* ax by) (* ay bx))])
+    float closest_y = -99999.0f;
+    bool found = false;
 
-(defn vec3-dot
-  "Dot product of two 3D vectors"
-  [[ax ay az] [bx by bz]]
-  (+ (* ax bx) (* ay by) (* az bz)))
+    size_t num_tris = indices->size() / 3;
+    for (size_t i = 0; i < num_tris; i++) {
+        glm::vec3 v0 = (*positions)[(*indices)[i*3]];
+        glm::vec3 v1 = (*positions)[(*indices)[i*3+1]];
+        glm::vec3 v2 = (*positions)[(*indices)[i*3+2]];
 
-(defn ray-triangle-intersection
-  "Double-sided Möller–Trumbore ray-triangle intersection.
-   Returns distance t if ray hits triangle, nil otherwise."
-  [ray-origin ray-dir v0 v1 v2]
-  (let [edge1 (vec3-sub v1 v0)
-        edge2 (vec3-sub v2 v0)
-        h (vec3-cross ray-dir edge2)
-        a (vec3-dot edge1 h)]
-    (when (> (abs a) EPSILON)  ;; Either facing direction
-      (let [f (/ 1.0 a)
-            s (vec3-sub ray-origin v0)
-            u (* f (vec3-dot s h))]
-        (when (and (>= u 0.0) (<= u 1.0))
-          (let [q (vec3-cross s edge1)
-                v (* f (vec3-dot ray-dir q))]
-            (when (and (>= v 0.0) (<= (+ u v) 1.0))
-              (let [t (* f (vec3-dot edge2 q))]
-                (when (> t EPSILON)
-                  t)))))))))
+        // Möller-Trumbore
+        glm::vec3 edge1 = v1 - v0;
+        glm::vec3 edge2 = v2 - v0;
+        glm::vec3 h = glm::cross(ray_dir, edge2);
+        float a = glm::dot(edge1, h);
+
+        if (fabs(a) < EPSILON) continue;
+
+        float f = 1.0f / a;
+        glm::vec3 s = ray_origin - v0;
+        float u = f * glm::dot(s, h);
+        if (u < 0.0f || u > 1.0f) continue;
+
+        glm::vec3 q = glm::cross(s, edge1);
+        float v = f * glm::dot(ray_dir, q);
+        if (v < 0.0f || u + v > 1.0f) continue;
+
+        float t = f * glm::dot(edge2, q);
+        if (t > EPSILON) {
+            float hit_y = ray_height - t;
+            if (hit_y > closest_y) {
+                closest_y = hit_y;
+                found = true;
+            }
+        }
+    }
+
+    return found ? closest_y : -99999.0f;
+}
+")
+
+(defn prepare-collision-mesh
+  "Convert Jank collision data to C++ vectors for fast raycast.
+   Call this once at level load, then pass the result to raycast-ground."
+  [{:keys [positions indices]}]
+  (let [cpp-positions (cpp/new (cpp/type "std::vector<glm::vec3>"))
+        cpp-indices (cpp/new (cpp/type "std::vector<unsigned int>"))
+        positions-box (cpp/box cpp-positions)
+        indices-box (cpp/box cpp-indices)]
+    ;; Fill positions
+    (doseq [[px py pz] positions]
+      (let [ptr (cpp/unbox (cpp/type "std::vector<glm::vec3>*") positions-box)]
+        (cpp/.push_back ptr (cpp/glm.vec3 (cpp/float. px) (cpp/float. py) (cpp/float. pz)))))
+    ;; Fill indices
+    (doseq [idx indices]
+      (let [ptr (cpp/unbox (cpp/type "std::vector<unsigned int>*") indices-box)]
+        (cpp/.push_back ptr (cpp/int idx))))
+    {:positions positions-box
+     :indices indices-box}))
 
 (defn raycast-ground
   "Cast ray down from position, find ground height.
-   collision-mesh: {:positions [[x y z]...] :indices [i0 i1 i2...]}
+   collision-mesh: prepared C++ mesh from prepare-collision-mesh
    position: [x y z]
    Returns: ground Y coordinate, or nil if no ground found"
   [{:keys [positions indices]} [px py pz]]
-  (let [;; Cast from 100 units above to always find ground even if we've fallen through
-        ray-height (+ py 100.0)
-        ray-origin [px ray-height pz]
-        ray-dir [0.0 -1.0 0.0]
-        num-triangles (/ (count indices) 3)]
-    (loop [i 0
-           closest-y nil]
-      (if (>= i num-triangles)
-        closest-y
-        (let [base (* i 3)
-              v0 (get positions (get indices base))
-              v1 (get positions (get indices (+ base 1)))
-              v2 (get positions (get indices (+ base 2)))
-              t (ray-triangle-intersection ray-origin ray-dir v0 v1 v2)
-              hit-y (when t (- ray-height t))]
-          (if hit-y
-            (recur (inc i)
-                   (if (or (nil? closest-y) (> hit-y closest-y))
-                     hit-y
-                     closest-y))
-            (recur (inc i) closest-y)))))))
+  (let [positions-ptr (cpp/unbox (cpp/type "std::vector<glm::vec3>*") positions)
+        indices-ptr (cpp/unbox (cpp/type "std::vector<unsigned int>*") indices)
+        result (cpp/raycast_ground_cpp positions-ptr indices-ptr
+                                       (cpp/float. px)
+                                       (cpp/float. py)
+                                       (cpp/float. pz))]
+    (when (> result -99998.0)
+      result)))

@@ -1,9 +1,15 @@
 (ns engine.collision.interface
   (:require [engine.collision.core :as core]))
 
+(defn prepare-collision-mesh
+  "Convert Jank collision data to C++ vectors for fast raycast.
+   Call this once at level load."
+  [collision-mesh]
+  (core/prepare-collision-mesh collision-mesh))
+
 (defn raycast-ground
   "Cast ray straight down from position, find ground height.
-   collision-mesh: {:positions [[x y z]...] :indices [i0 i1 i2...]}
+   collision-mesh: prepared mesh from prepare-collision-mesh
    position: [x y z]
    Returns: ground Y coordinate, or nil if no ground found"
   [collision-mesh position]
