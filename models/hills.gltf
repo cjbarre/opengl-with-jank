@@ -26,7 +26,8 @@
 				15,
 				16,
 				17,
-				18
+				18,
+				19
 			]
 		}
 	],
@@ -165,6 +166,15 @@
 		},
 		{
 			"mesh":18,
+			"name":"Ground_Strip",
+			"translation":[
+				0,
+				0,
+				200
+			]
+		},
+		{
+			"mesh":19,
 			"name":"Level-colonly"
 		}
 	],
@@ -457,7 +467,7 @@
 			]
 		},
 		{
-			"name":"Plane.015",
+			"name":"Plane.009",
 			"primitives":[
 				{
 					"attributes":{
@@ -465,7 +475,21 @@
 						"NORMAL":67,
 						"TEXCOORD_0":68
 					},
-					"indices":69
+					"indices":3,
+					"material":0
+				}
+			]
+		},
+		{
+			"name":"Plane.010",
+			"primitives":[
+				{
+					"attributes":{
+						"POSITION":69,
+						"NORMAL":70,
+						"TEXCOORD_0":71
+					},
+					"indices":72
 				}
 			]
 		}
@@ -1081,11 +1105,39 @@
 		{
 			"bufferView":66,
 			"componentType":5126,
-			"count":400,
+			"count":4,
+			"max":[
+				15,
+				0,
+				150
+			],
+			"min":[
+				-15,
+				0,
+				-150
+			],
+			"type":"VEC3"
+		},
+		{
+			"bufferView":67,
+			"componentType":5126,
+			"count":4,
+			"type":"VEC3"
+		},
+		{
+			"bufferView":68,
+			"componentType":5126,
+			"count":4,
+			"type":"VEC2"
+		},
+		{
+			"bufferView":69,
+			"componentType":5126,
+			"count":404,
 			"max":[
 				50,
 				5,
-				50
+				350
 			],
 			"min":[
 				-50,
@@ -1095,21 +1147,21 @@
 			"type":"VEC3"
 		},
 		{
-			"bufferView":67,
+			"bufferView":70,
 			"componentType":5126,
-			"count":400,
+			"count":404,
 			"type":"VEC3"
 		},
 		{
-			"bufferView":68,
+			"bufferView":71,
 			"componentType":5126,
-			"count":400,
+			"count":404,
 			"type":"VEC2"
 		},
 		{
-			"bufferView":69,
+			"bufferView":72,
 			"componentType":5123,
-			"count":618,
+			"count":624,
 			"type":"SCALAR"
 		}
 	],
@@ -1512,26 +1564,44 @@
 		},
 		{
 			"buffer":0,
-			"byteLength":4800,
+			"byteLength":48,
 			"byteOffset":13604,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":4800,
-			"byteOffset":18404,
+			"byteLength":48,
+			"byteOffset":13652,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":3200,
-			"byteOffset":23204,
+			"byteLength":32,
+			"byteOffset":13700,
 			"target":34962
 		},
 		{
 			"buffer":0,
-			"byteLength":1236,
-			"byteOffset":26404,
+			"byteLength":4848,
+			"byteOffset":13732,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":4848,
+			"byteOffset":18580,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":3232,
+			"byteOffset":23428,
+			"target":34962
+		},
+		{
+			"buffer":0,
+			"byteLength":1248,
+			"byteOffset":26660,
 			"target":34963
 		}
 	],
@@ -1543,7 +1613,7 @@
 	],
 	"buffers":[
 		{
-			"byteLength":27640,
+			"byteLength":27908,
 			"uri":"hills.bin"
 		}
 	]

@@ -1,4 +1,4 @@
-(ns engine.collision.core)
+(ns engine.3d.collision.core)
 
 (cpp/raw "
 #include <glm/glm.hpp>

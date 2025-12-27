@@ -1,6 +1,6 @@
-(ns engine.strafehelper.core
-  (:require [engine.graphics2d.interface :as gfx2d]
-            [engine.text.interface :as text]))
+(ns examples.demo.strafehelper.core
+  (:require [engine.2d.graphics.interface :as gfx2d]
+            [engine.2d.text.interface :as text]))
 
 (cpp/raw "#include <cmath>")
 
@@ -107,11 +107,12 @@ float calc_max_accel_angle_cpp(float speed, float max_speed) {
 
 (defn render-strafehelper
   "Render the CGaz-style strafehelper.
+   gfx2d: graphics2d map from init-graphics2d (contains render closures)
    velocity: [vx vy vz] player velocity
    yaw: player yaw in degrees
    grounded: true if player is on ground
    screen-width, screen-height: window dimensions"
-  [velocity yaw grounded screen-width screen-height]
+  [gfx2d velocity yaw grounded screen-width screen-height]
   (let [[vx vy vz] velocity
         cx (:center-x config)
         cy (:center-y config)
@@ -144,11 +145,11 @@ float calc_max_accel_angle_cpp(float speed, float max_speed) {
         ;; Velocity direction on the arc (relative to view)
         screen-vel-angle (+ center-angle rel-vel-angle)]
 
-    (gfx2d/begin-2d screen-width screen-height)
+    ((:begin-2d gfx2d) screen-width screen-height)
 
     ;; Draw background arc
-    (gfx2d/set-color color-background)
-    (gfx2d/render-arc-outline cx cy radius bg-start bg-end segs arc-thick)
+    ((:set-color gfx2d) color-background)
+    ((:render-arc-outline gfx2d) cx cy radius bg-start bg-end segs arc-thick)
 
     ;; Draw acceleration zones - FIXED on screen
     ;; Green zones show where velocity should be for acceleration
@@ -163,24 +164,24 @@ float calc_max_accel_angle_cpp(float speed, float max_speed) {
             right-zone-end (+ center-angle optimal-angle)]
 
         ;; Left zone
-        (gfx2d/set-color color-accel-zone)
-        (gfx2d/render-arc-outline cx cy radius left-zone-start left-zone-end (/ segs 4) arc-thick)
+        ((:set-color gfx2d) color-accel-zone)
+        ((:render-arc-outline gfx2d) cx cy radius left-zone-start left-zone-end (/ segs 4) arc-thick)
 
         ;; Right zone
-        (gfx2d/render-arc-outline cx cy radius right-zone-start right-zone-end (/ segs 4) arc-thick)
+        ((:render-arc-outline gfx2d) cx cy radius right-zone-start right-zone-end (/ segs 4) arc-thick)
 
         ;; Optimal angle markers
-        (gfx2d/set-color color-optimal)
+        ((:set-color gfx2d) color-optimal)
         (let [opt-left (- center-angle optimal-angle)
               opt-right (+ center-angle optimal-angle)
               marker-len 15.0]
-          (gfx2d/render-line
+          ((:render-line gfx2d)
            (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-left))))
            (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-left))))
            (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-left))))
            (+ cy (* (+ radius marker-len) (cpp/sin (cpp/float opt-left))))
            line-thick)
-          (gfx2d/render-line
+          ((:render-line gfx2d)
            (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-right))))
            (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-right))))
            (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-right))))
@@ -188,23 +189,23 @@ float calc_max_accel_angle_cpp(float speed, float max_speed) {
            line-thick))))
 
     ;; Draw velocity direction line (where you're moving relative to view)
-    (gfx2d/set-color color-velocity)
-    (gfx2d/render-line
+    ((:set-color gfx2d) color-velocity)
+    ((:render-line gfx2d)
      cx cy
      (+ cx (* (+ radius 20) (cpp/cos (cpp/float screen-vel-angle))))
      (+ cy (* (+ radius 20) (cpp/sin (cpp/float screen-vel-angle))))
      (+ line-thick 1.0))
 
     ;; Draw center marker (where you're looking - always points up)
-    (gfx2d/set-color color-view)
-    (gfx2d/render-line
+    ((:set-color gfx2d) color-view)
+    ((:render-line gfx2d)
      (+ cx (* (- radius 5) (cpp/cos (cpp/float center-angle))))
      (+ cy (* (- radius 5) (cpp/sin (cpp/float center-angle))))
      (+ cx (* (+ radius 10) (cpp/cos (cpp/float center-angle))))
      (+ cy (* (+ radius 10) (cpp/sin (cpp/float center-angle))))
      line-thick)
 
-    (gfx2d/end-2d)
+    ((:end-2d gfx2d))
 
     ;; Render speed text below the arc (scaled to feel like Quake ups)
     (let [display-speed (* speed 50.0)  ;; Scale factor: 8.0 max -> 400 ups

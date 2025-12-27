@@ -1,0 +1,15 @@
+(ns engine.2d.graphics.interface
+  (:require [engine.2d.graphics.core :as core]))
+
+(defn init-graphics2d
+  "Initialize 2D graphics. Call once at startup.
+   shader: compiled graphics2d shader program
+   Returns a map of render functions:
+     :begin-2d [screen-width screen-height]
+     :end-2d []
+     :set-color [color] where color is [r g b a]
+     :render-line [x1 y1 x2 y2 thickness]
+     :render-arc-outline [cx cy radius start-angle end-angle segments thickness]
+     :render-filled-arc [cx cy radius start-angle end-angle segments]"
+  [shader]
+  (core/init-graphics2d shader))

@@ -1,0 +1,12 @@
+(ns examples.demo.strafehelper.interface
+  (:require [examples.demo.strafehelper.core :as core]))
+
+(defn render-strafehelper
+  "Render the CGaz-style strafehelper HUD.
+   gfx2d: graphics2d map from init-graphics2d (contains render closures)
+   velocity: [vx vy vz] player velocity
+   yaw: player yaw in degrees
+   grounded: true if player is on ground
+   screen-width, screen-height: window dimensions"
+  [gfx2d velocity yaw grounded screen-width screen-height]
+  (core/render-strafehelper gfx2d velocity yaw grounded screen-width screen-height))

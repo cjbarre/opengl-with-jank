@@ -1,15 +1,15 @@
 (ns examples.demo.core
   (:require [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]
-            [engine.geometry.interface :as geometry]
-            [engine.textures.interface :as textures]
+            [engine.3d.geometry.interface :as geometry]
+            [engine.3d.textures.interface :as textures]
             [engine.math.interface :as math]
-            [engine.gltf.interface :as gltf]
+            [engine.3d.gltf.interface :as gltf]
             [engine.events.interface :as es]
-            [engine.collision.interface :as collision]
-            [engine.text.interface :as text]
-            [engine.graphics2d.interface :as gfx2d]
-            [engine.strafehelper.interface :as strafehelper]))
+            [engine.3d.collision.interface :as collision]
+            [engine.2d.text.interface :as text]
+            [engine.2d.graphics.interface :as gfx2d]
+            [examples.demo.strafehelper.interface :as strafehelper]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -459,7 +459,7 @@
   [])
 
 (defn run-loop
-  [{:keys [window event-store state delta-time]
+  [{:keys [window event-store state delta-time gfx2d]
     :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
     (let [_ (update-time context)
@@ -501,7 +501,7 @@
               velocity (or (:physics/velocity player) [0 0 0])
               yaw (:transform/yaw player 0.0)
               grounded (:physics/grounded player false)]
-          (strafehelper/render-strafehelper velocity yaw grounded 1280 720)))
+          (strafehelper/render-strafehelper gfx2d velocity yaw grounded 1280 720)))
 
       (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
       (cpp/glfwPollEvents))))
@@ -534,7 +534,7 @@
         graphics2d-shader (shaders/load-shader-program
                            {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
                             :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
-        _ (gfx2d/init-graphics2d graphics2d-shader)
+        gfx2d (gfx2d/init-graphics2d graphics2d-shader)
         camera (setup-camera)
         event-store (es/start {})
         _ (es/append event-store {:events [{:event/type :level/spawned
@@ -552,6 +552,7 @@
                :shader shader
                :models []
                :camera camera
+               :gfx2d gfx2d
                :delta-time          (math/gimmie :boxed :float 0.0)
                :last-frame          (math/gimmie :boxed :float 0.0)
                :cursor/initialized? (atom false)

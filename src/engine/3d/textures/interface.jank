@@ -1,0 +1,6 @@
+(ns engine.3d.textures.interface
+  (:require [engine.3d.textures.core :as core]))
+
+(defn load-texture
+  [{:keys [_path] :as args}]
+  (core/load-texture args))

@@ -1,5 +1,5 @@
-(ns engine.geometry.interface
-  (:require [engine.geometry.core :as core]))
+(ns engine.3d.geometry.interface
+  (:require [engine.3d.geometry.core :as core]))
 
 (defn textured-rectangle-2D
   []

@@ -1,4 +1,4 @@
-(ns engine.text.core
+(ns engine.2d.text.core
   (:require [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]))
 

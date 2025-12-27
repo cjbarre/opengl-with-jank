@@ -1,7 +1,7 @@
-(ns engine.gltf.core
+(ns engine.3d.gltf.core
   (:refer-clojure :exclude [load])
   (:require [engine.shaders.interface :as shaders]
-            [engine.textures.interface :as textures]
+            [engine.3d.textures.interface :as textures]
             [engine.math.interface :as math]
             [engine.macros :refer [clet]]))
 
