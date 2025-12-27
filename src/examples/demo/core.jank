@@ -6,7 +6,8 @@
             [engine.math.interface :as math]
             [engine.gltf.interface :as gltf]
             [engine.events.interface :as es]
-            [engine.collision.interface :as collision]))
+            [engine.collision.interface :as collision]
+            [engine.text.interface :as text]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -84,6 +85,7 @@
       (println "Window creation failed")
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
+    (cpp/glfwSwapInterval 0)  ;; Disable VSync
     (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
     (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
     (cpp/box window)))
@@ -415,7 +417,7 @@
   [])
 
 (defn run-loop
-  [{:keys [window event-store state]
+  [{:keys [window event-store state delta-time]
     :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
     (let [_ (update-time context)
@@ -431,6 +433,12 @@
           _ (reset! event-store {:events []})]
 
       (draw-3D context)
+
+      ;; Render FPS
+      (let [dt (math/*-> :float delta-time)
+            fps (if (> dt 0.0) (/ 1.0 dt) 0.0)
+            fps-text (str "FPS: " (int fps))]
+        (text/render-text fps-text 10.0 30.0 [1.0 1.0 1.0] 1280 720))
 
       (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
       (cpp/glfwPollEvents))))
@@ -456,6 +464,10 @@
                  "shaders/basic_fragment.glsl"})
         _ (cpp/glUseProgram shader)
         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
+        text-shader (shaders/load-shader-program
+                     {:vertex-shader-path "shaders/text_vertex.glsl"
+                      :fragment-shader-path "shaders/text_fragment.glsl"})
+        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
         camera (setup-camera)
         event-store (es/start {})
         _ (es/append event-store {:events [{:event/type :level/spawned

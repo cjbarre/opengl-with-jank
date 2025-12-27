@@ -1,0 +1,171 @@
+(ns engine.text.core
+  (:require [engine.io.interface :as io]
+            [engine.shaders.interface :as shaders]))
+
+(cpp/raw "
+#define STB_TRUETYPE_IMPLEMENTATION
+#include \"stb_truetype.h\"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+// Font rendering state
+struct FontData {
+    GLuint texture_id;
+    GLuint vao;
+    GLuint vbo;
+    GLuint shader;
+    stbtt_bakedchar char_data[96]; // ASCII 32-127
+    float font_size;
+    int atlas_width;
+    int atlas_height;
+};
+
+FontData* g_font = nullptr;
+
+bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
+    // Read font file
+    FILE* f = fopen(font_path, \"rb\");
+    if (!f) return false;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    unsigned char* font_buffer = (unsigned char*)malloc(size);
+    fread(font_buffer, 1, size, f);
+    fclose(f);
+
+    // Bake font atlas
+    int atlas_w = 512;
+    int atlas_h = 512;
+    unsigned char* atlas_bitmap = (unsigned char*)malloc(atlas_w * atlas_h);
+
+    g_font = new FontData();
+    g_font->font_size = font_size;
+    g_font->atlas_width = atlas_w;
+    g_font->atlas_height = atlas_h;
+    g_font->shader = shader;
+
+    stbtt_BakeFontBitmap(font_buffer, 0, font_size,
+                         atlas_bitmap, atlas_w, atlas_h,
+                         32, 96, g_font->char_data);
+
+    free(font_buffer);
+
+    // Create OpenGL texture
+    glGenTextures(1, &g_font->texture_id);
+    glBindTexture(GL_TEXTURE_2D, g_font->texture_id);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlas_w, atlas_h, 0,
+                 GL_RED, GL_UNSIGNED_BYTE, atlas_bitmap);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+    free(atlas_bitmap);
+
+    // Create VAO/VBO for dynamic text quads
+    glGenVertexArrays(1, &g_font->vao);
+    glGenBuffers(1, &g_font->vbo);
+
+    glBindVertexArray(g_font->vao);
+    glBindBuffer(GL_ARRAY_BUFFER, g_font->vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4 * 128, nullptr, GL_DYNAMIC_DRAW);
+
+    // Position (vec2)
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    // TexCoord (vec2)
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindVertexArray(0);
+
+    return true;
+}
+
+void render_text_cpp(const char* text, float x, float y, float r, float g, float b, int screen_w, int screen_h) {
+    if (!g_font) return;
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_DEPTH_TEST);
+
+    glUseProgram(g_font->shader);
+
+    // Orthographic projection
+    glm::mat4 projection = glm::ortho(0.0f, (float)screen_w, (float)screen_h, 0.0f);
+    glUniformMatrix4fv(glGetUniformLocation(g_font->shader, \"projection\"), 1, GL_FALSE, glm::value_ptr(projection));
+    glUniform3f(glGetUniformLocation(g_font->shader, \"uTextColor\"), r, g, b);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, g_font->texture_id);
+    glUniform1i(glGetUniformLocation(g_font->shader, \"uFontTexture\"), 0);
+
+    glBindVertexArray(g_font->vao);
+
+    // Build vertex data for all characters
+    std::vector<float> vertices;
+    float cursor_x = x;
+    float cursor_y = y;
+
+    for (const char* p = text; *p; p++) {
+        char c = *p;
+        if (c < 32 || c > 127) continue;
+
+        stbtt_bakedchar* bc = &g_font->char_data[c - 32];
+
+        float x0 = cursor_x + bc->xoff;
+        float y0 = cursor_y + bc->yoff;
+        float x1 = x0 + (bc->x1 - bc->x0);
+        float y1 = y0 + (bc->y1 - bc->y0);
+
+        float s0 = bc->x0 / (float)g_font->atlas_width;
+        float t0 = bc->y0 / (float)g_font->atlas_height;
+        float s1 = bc->x1 / (float)g_font->atlas_width;
+        float t1 = bc->y1 / (float)g_font->atlas_height;
+
+        // Two triangles per character
+        float quad[] = {
+            x0, y0, s0, t0,
+            x1, y0, s1, t0,
+            x1, y1, s1, t1,
+
+            x0, y0, s0, t0,
+            x1, y1, s1, t1,
+            x0, y1, s0, t1
+        };
+
+        for (int i = 0; i < 24; i++) {
+            vertices.push_back(quad[i]);
+        }
+
+        cursor_x += bc->xadvance;
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, g_font->vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
+
+    glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 4);
+
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_BLEND);
+}
+")
+
+(defn init-font
+  "Initialize font rendering. Call once at startup.
+   Returns true on success."
+  [font-path font-size shader]
+  (cpp/init_font_cpp font-path (cpp/float. font-size) shader))
+
+(defn render-text
+  "Render text at screen position (pixels from top-left).
+   color: [r g b] values 0.0-1.0"
+  [text x y [r g b] screen-width screen-height]
+  (cpp/render_text_cpp text
+                       (cpp/float. x) (cpp/float. y)
+                       (cpp/float. r) (cpp/float. g) (cpp/float. b)
+                       (cpp/int screen-width) (cpp/int screen-height)))
