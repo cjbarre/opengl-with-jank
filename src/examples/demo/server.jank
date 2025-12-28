@@ -72,6 +72,8 @@
 ;; Command Processing
 ;; =============================================================================
 
+(def RUN_ANIMATION_DURATION 0.8)  ; Duration of run animation in seconds
+
 (defn process-client-command
   "Process a command from a client."
   [state connection-id command collision-mesh]
@@ -87,9 +89,16 @@
             new-physics (shared/simulate-physics physics-state input delta-time collision-mesh)
             ;; Update entity
             updates (shared/physics-state->entity-updates new-physics)
+            ;; Compute animation state based on physics
+            current-anim-time (or (:animation/time entity) 0.0)
+            [anim-index anim-time] (shared/compute-animation-state
+                                    new-physics current-anim-time RUN_ANIMATION_DURATION delta-time)
+            updates-with-anim (assoc updates
+                                     :animation/current-index anim-index
+                                     :animation/time anim-time)
             cmd-seq (get command :sequence 0)]
         (-> state
-            (update-in [:entities player-id] merge updates)
+            (update-in [:entities player-id] merge updates-with-anim)
             (assoc-in [:last-processed-commands player-id] cmd-seq)))
       state)))
 
@@ -116,7 +125,7 @@
 
     (-> state
         (assoc-in [:clients connection-id] {:player-id player-id
-                                             :last-command-seq 0})
+                                            :last-command-seq 0})
         (spawn-player player-id spawn-pos))))
 
 (defn handle-client-disconnect
@@ -203,35 +212,38 @@
 
       (do
         (println "Loading level collision...")
-        (let [collision-mesh (load-level-collision)]
+        (let [collision-mesh (load-level-collision)
+              ;; Use atom for state to avoid recur issues
+              state-atom (atom (make-server-state))
+              snapshot-counter-atom (atom 0)]
           (println "Server ready. Waiting for clients...")
           (println "Running at" TICK_RATE "ticks/sec, snapshots every" TICKS_PER_SNAPSHOT "ticks")
 
-          ;; Simple tick-based loop (JKA-style)
-          (loop [state (make-server-state)
-                 snapshot-counter 0]
-
+          ;; Simple tick-based loop
+          (while true
             ;; Process network events
-            (let [events (net/poll-events! network 0)
-                  state (reduce #(handle-network-event %1 network %2 collision-mesh)
-                                state events)
-                  ;; Advance tick
-                  new-tick (inc (:tick state))
-                  new-time (+ (:server-time state) TICK_INTERVAL_MS)
-                  state (assoc state :tick new-tick :server-time new-time)
-                  ;; Snapshot counter
-                  new-snap-counter (inc snapshot-counter)]
+            (let [events (net/poll-events! network 0)]
+              (doseq [event events]
+                (swap! state-atom handle-network-event network event collision-mesh)))
 
-              ;; Broadcast snapshot every 3 ticks if we have clients
-              (if (>= new-snap-counter TICKS_PER_SNAPSHOT)
-                (do
-                  (when (pos? (count (:clients state)))
-                    (println "Tick" new-tick "- Broadcasting to" (count (:clients state)) "clients"))
-                  (sleep-ms 16)
-                  (recur (broadcast-snapshot state network) 0))
-                (do
-                  (sleep-ms 16)
-                  (recur state new-snap-counter))))))
+            ;; Advance tick
+            (swap! state-atom (fn [s]
+                                (-> s
+                                    (update :tick inc)
+                                    (update :server-time + TICK_INTERVAL_MS))))
+
+            ;; Increment snapshot counter
+            (swap! snapshot-counter-atom inc)
+
+            ;; Broadcast snapshot every 3 ticks
+            (when (>= @snapshot-counter-atom TICKS_PER_SNAPSHOT)
+              (let [state @state-atom]
+                (when (pos? (count (:clients state)))
+                  (println "Tick" (:tick state) "- Broadcasting to" (count (:clients state)) "clients"))
+                (swap! state-atom broadcast-snapshot network))
+              (reset! snapshot-counter-atom 0))
+
+            (sleep-ms 16)))
 
         (net/stop network)
         (println "Server stopped.")))))

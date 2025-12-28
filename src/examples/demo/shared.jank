@@ -194,6 +194,32 @@
    :pitch (:transform/pitch entity 0.0)
    :yaw (:transform/yaw entity 0.0)})
 
+(defn compute-animation-state
+  "Compute animation index and time based on physics state.
+   Returns [animation-index animation-time].
+   - In air: crouch (index 1), held at 30%
+   - On ground moving: run (index 0), time progresses with speed
+   - On ground idle: run at frame 0"
+  [physics-state current-anim-time run-duration delta-time]
+  (let [{:keys [velocity grounded?]} physics-state
+        [vx _vy vz] velocity
+        horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                     (cpp/* (cpp/float vz) (cpp/float vz))))
+        is-moving (> horiz-speed 0.5)]
+    (cond
+      ;; In air - crouch animation at 30%
+      (not grounded?)
+      [1 (* 0.3 run-duration)]
+
+      ;; On ground and moving - run animation
+      is-moving
+      (let [new-time (mod (+ current-anim-time (* delta-time (/ horiz-speed 8.0))) run-duration)]
+        [0 new-time])
+
+      ;; On ground idle - run at frame 0
+      :else
+      [0 0.0])))
+
 (defn physics-state->entity-updates
   "Convert physics state to entity update map."
   [physics-state]
@@ -228,8 +254,8 @@
    :pitch (:pitch physics-state)
    :yaw (:yaw physics-state)
    :grounded? (:grounded? physics-state)
-   :animation-index 0  ; TODO: derive from state
-   :animation-time 0.0})
+   :animation-index (:animation-index physics-state 0)
+   :animation-time (:animation-time physics-state 0.0)})
 
 (defn network-state->physics-state
   "Convert network state to physics state format."

@@ -91,7 +91,11 @@
         ;; Keep only last N snapshots - drop from front if too many
         new-pending (if (> (count inserted) SNAPSHOT_BUFFER_SIZE)
                       (vec (drop (- (count inserted) SNAPSHOT_BUFFER_SIZE) inserted))
-                      inserted)]
+                      inserted)
+        entity-count (count (:entities snapshot))]
+    ;; Debug: print when we add a snapshot with entities
+    (when (> entity-count 1)
+      (println "Interp: Added snapshot with" entity-count "entities, pending count:" (count new-pending)))
     (assoc interp-state :pending new-pending)))
 
 (defn init-render-time
@@ -134,6 +138,8 @@
       (let [first-snap (first pending)
             rest-pending (vec (rest pending))
             next (find-next-pending rest-pending (:server-time first-snap))]
+        (println "Interp: First snapshot! entities:" (count (:entities first-snap))
+                 "server-time:" (:server-time first-snap))
         (-> interp-state
             (assoc :snap first-snap)
             (assoc :next-snap next)
@@ -208,13 +214,21 @@
                    (lerp-angle (:yaw current-state)
                                (:yaw next-state)
                                lerp-factor)]
+     ;; Preserve animation state for remote player rendering
+     :animation-index (:animation-index current-state)
+     :animation-time (:animation-time current-state)
      :interpolate? true}
     ;; Can't interpolate - use current state directly
     {:current-state current-state
      :next-state next-state
      :lerp-origin (:position current-state)
      :lerp-angles [(:pitch current-state) (:yaw current-state)]
+     ;; Preserve animation state for remote player rendering
+     :animation-index (:animation-index current-state)
+     :animation-time (:animation-time current-state)
      :interpolate? false}))
+
+(def ^:dynamic *interp-debug-counter* (atom 0))
 
 (defn interpolate-all-entities
   "Interpolate all entities between current snapshots."
@@ -232,6 +246,10 @@
                                                                next-state
                                                                lerp-factor)])))
                               (into {}))]
+        ;; Debug: every 60 calls, print entity count
+        (swap! *interp-debug-counter* inc)
+        (when (and (> (count interpolated) 1) (= 0 (mod @*interp-debug-counter* 60)))
+          (println "Interp: interpolated" (count interpolated) "entities, lerp:" lerp-factor))
         (assoc interp-state :entities interpolated))
       interp-state)))
 

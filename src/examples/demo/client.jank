@@ -94,6 +94,40 @@
      :animation/vaos vaos
      :animation/time 0.0}))
 
+(defn init-remote-player-animation
+  "Initialize animation context for a remote player.
+   Each remote player needs their own ozz context for independent animation sampling."
+  []
+  (let [ctx (anim/create-context)
+        _ (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+                               :context ctx})
+        run-info (anim/load-animation {:path "models/player/run.ozz"
+                                       :context ctx})
+        _ (anim/load-animation {:path "models/player/crouch.ozz"
+                                :context ctx})
+        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
+        _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
+        mesh-count (:count mesh-data)
+        vaos (vec (map (fn [i]
+                         (anim/create-skinned-vao {:meshes (:meshes mesh-data)
+                                                   :mesh-index i}))
+                       (range mesh-count)))]
+    {:animation/context ctx
+     :animation/duration (:duration run-info)
+     :animation/meshes (:meshes mesh-data)
+     :animation/mesh-count mesh-count
+     :animation/vaos vaos}))
+
+(defn ensure-remote-player-anim
+  "Ensure a remote player has an animation context.
+   Returns updated remote-players map."
+  [remote-players entity-id]
+  (if (contains? remote-players entity-id)
+    remote-players
+    (do
+      (println "Creating animation context for remote player:" entity-id)
+      (assoc remote-players entity-id (init-remote-player-animation)))))
+
 (defn render-animated-entity
   "Render an animated player entity at the given position."
   [skinned-shader anim-data position yaw]
@@ -299,11 +333,12 @@
   [client-state snapshot collision-mesh]
   (let [{:keys [my-player-id pred-state interp-state]} client-state]
     (if my-player-id
-      (let [;; Create physics-fn for prediction reconciliation
-            physics-fn (fn [state input dt]
-                        (shared/simulate-physics state input dt collision-mesh))
-            ;; Reconcile our prediction
-            new-pred-state (pred/reconcile pred-state snapshot my-player-id physics-fn)
+      (let [;; NOTE: Full reconciliation disabled - causes rubber-banding due to
+            ;; timing mismatch between client prediction and server simulation.
+            ;; For now, just remove acknowledged commands and trust local prediction.
+            ;; TODO: Fix reconciliation with better state comparison or dead reckoning.
+            ack-sequence (get-in snapshot [:last-processed-commands my-player-id] 0)
+            new-pred-state (pred/remove-acknowledged-commands pred-state ack-sequence)
             ;; Add snapshot to interpolation buffer (for remote players)
             new-interp-state (interp/add-snapshot interp-state snapshot)]
         (-> client-state
@@ -440,13 +475,31 @@
 
       ;; Render remote players (interpolated, animated)
       (let [interp-state (:interp-state state)
-            remote-entities (interp/get-all-entity-render-states interp-state)]
+            remote-entities (interp/get-all-entity-render-states interp-state)
+            remote-count (count remote-entities)]
+        ;; Debug: every 60 frames, print remote entity count
+        (when (and (> remote-count 0) (= 0 (mod @*frame-count* 60)))
+          (println "Frame" @*frame-count* "- Remote entities:" remote-count
+                   "my-id:" my-id "entity-ids:" (keys remote-entities)))
         (doseq [[entity-id entity-state] remote-entities]
           (when (not= entity-id my-id)
             (let [pos (:lerp-origin entity-state)
                   [_pitch yaw] (:lerp-angles entity-state)]
-              (when (and player-anim-data pos)
-                (render-animated-entity skinned-shader @player-anim-data pos (or yaw 0.0))))))))))
+              ;; Ensure this remote player has an animation context
+              (when-not (contains? (:remote-players @client-state) entity-id)
+                (swap! client-state update :remote-players ensure-remote-player-anim entity-id))
+              ;; Get the animation context and render
+              (when-let [remote-anim (get (:remote-players @client-state) entity-id)]
+                (when pos
+                  ;; Sample this remote player's animation with their networked state
+                  (let [anim-index (or (:animation-index entity-state) 0)
+                        anim-time (or (:animation-time entity-state) 0.0)
+                        duration (or (:animation/duration remote-anim) 1.0)
+                        time-ratio (if (> duration 0.0) (/ anim-time duration) 0.0)]
+                    (anim/sample {:context (:animation/context remote-anim)
+                                  :animation-index anim-index
+                                  :time-ratio time-ratio})
+                    (render-animated-entity skinned-shader remote-anim pos (or yaw 0.0))))))))))))
 
 ;; =============================================================================
 ;; Main Client Loop
