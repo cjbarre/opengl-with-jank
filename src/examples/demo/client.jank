@@ -126,7 +126,44 @@
     remote-players
     (do
       (println "Creating animation context for remote player:" entity-id)
-      (assoc remote-players entity-id (init-remote-player-animation)))))
+      (assoc remote-players entity-id
+             (assoc (init-remote-player-animation) :animation/time 0.0)))))
+
+(defn update-remote-player-animation
+  "Update a remote player's animation based on their velocity/grounded state.
+   Returns updated anim-data with new animation time."
+  [anim-data velocity grounded delta-time]
+  (let [[vx _ vz] velocity
+        horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                     (cpp/* (cpp/float vz) (cpp/float vz))))
+        is-moving (and grounded (> horiz-speed 0.5))
+        current-time (double (or (:animation/time anim-data) 0.0))
+        run-duration (double (or (:animation/duration anim-data) 1.0))]
+    (cond
+      ;; In air - show crouch animation held at 30%
+      (not grounded)
+      (do
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 1  ; crouch
+                      :time-ratio 0.3})
+        (assoc anim-data :animation/time 0.0 :animation/current-index 1))
+
+      ;; On ground and moving - play run animation
+      is-moving
+      (let [new-time (mod (+ current-time (* delta-time (/ horiz-speed 8.0))) run-duration)
+            time-ratio (/ new-time run-duration)]
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 0  ; run
+                      :time-ratio time-ratio})
+        (assoc anim-data :animation/time new-time :animation/current-index 0))
+
+      ;; On ground idle - hold at run frame 0
+      :else
+      (do
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 0  ; run
+                      :time-ratio 0.0})
+        (assoc anim-data :animation/time 0.0 :animation/current-index 0)))))
 
 (defn render-animated-entity
   "Render an animated player entity at the given position."
@@ -421,12 +458,9 @@
     (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE")
                             (cpp/glm.value_ptr view-m))))
 
-(def ^:dynamic *frame-count* (atom 0))
-
 (defn draw-world
   "Draw the game world."
-  [{:keys [shader skinned-shader level-model player-anim-data client-state] :as context}]
-  (swap! *frame-count* inc)
+  [{:keys [shader skinned-shader level-model player-anim-data client-state delta-time] :as context}]
   (cpp/glClearColor 0.2 0.3 0.3 1.0)
   (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT")
                       (cpp/value "GL_DEPTH_BUFFER_BIT")))
@@ -475,12 +509,7 @@
 
       ;; Render remote players (interpolated, animated)
       (let [interp-state (:interp-state state)
-            remote-entities (interp/get-all-entity-render-states interp-state)
-            remote-count (count remote-entities)]
-        ;; Debug: every 60 frames, print remote entity count
-        (when (and (> remote-count 0) (= 0 (mod @*frame-count* 60)))
-          (println "Frame" @*frame-count* "- Remote entities:" remote-count
-                   "my-id:" my-id "entity-ids:" (keys remote-entities)))
+            remote-entities (interp/get-all-entity-render-states interp-state)]
         (doseq [[entity-id entity-state] remote-entities]
           (when (not= entity-id my-id)
             (let [pos (:lerp-origin entity-state)
@@ -491,11 +520,12 @@
               ;; Get the animation context and render
               (when-let [remote-anim (get (:remote-players @client-state) entity-id)]
                 (when pos
-                  ;; Sample this remote player's animation with their networked state
+                  ;; Use interpolated animation state from server (synchronized with position)
                   (let [anim-index (or (:animation-index entity-state) 0)
                         anim-time (or (:animation-time entity-state) 0.0)
-                        duration (or (:animation/duration remote-anim) 1.0)
-                        time-ratio (if (> duration 0.0) (/ anim-time duration) 0.0)]
+                        run-duration (or (:animation/duration remote-anim) 1.0)
+                        time-ratio (/ anim-time run-duration)]
+                    ;; Sample at interpolated time
                     (anim/sample {:context (:animation/context remote-anim)
                                   :animation-index anim-index
                                   :time-ratio time-ratio})
@@ -650,7 +680,7 @@
          _ (cpp/glfwSetInputMode
             (cpp/unbox cpp/GLFWwindow* window)
             (cpp/value "GLFW_CURSOR")
-            (cpp/value "GLFW_CURSOR_DISABLED"))
+            (cpp/value "GLFW_CURSOR_NORMAL"))
 
          ;; Load shaders
          shader (shaders/load-shader-program

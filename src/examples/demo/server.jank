@@ -27,8 +27,8 @@
 (def MAX_CLIENTS 32)
 (def TICK_RATE 60)                    ; Physics ticks per second
 (def TICK_INTERVAL_MS 16.0)           ; ~60 FPS = 16.67ms per tick (float for math)
-(def SNAPSHOT_RATE 20)                ; Snapshots per second
-(def TICKS_PER_SNAPSHOT 3)            ; 60/20 = 3 ticks per snapshot
+(def SNAPSHOT_RATE 60)                ; Snapshots per second (maximum - one per tick)
+(def TICKS_PER_SNAPSHOT 1)            ; 60/60 = 1 tick per snapshot
 
 (def PLAYER_ID #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d")
 (def LEVEL_ID #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345")
@@ -237,10 +237,7 @@
 
             ;; Broadcast snapshot every 3 ticks
             (when (>= @snapshot-counter-atom TICKS_PER_SNAPSHOT)
-              (let [state @state-atom]
-                (when (pos? (count (:clients state)))
-                  (println "Tick" (:tick state) "- Broadcasting to" (count (:clients state)) "clients"))
-                (swap! state-atom broadcast-snapshot network))
+              (swap! state-atom broadcast-snapshot network)
               (reset! snapshot-counter-atom 0))
 
             (sleep-ms 16)))

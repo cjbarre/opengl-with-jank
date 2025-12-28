@@ -12,7 +12,7 @@
 ;; Constants
 ;; =============================================================================
 
-(def INTERP_DELAY_MS 100.0)       ; How far behind server time to render (float)
+(def INTERP_DELAY_MS 35.0)        ; How far behind server time to render (minimum safe buffer)
 (def SNAPSHOT_BUFFER_SIZE 32)     ; Max pending snapshots
 
 ;; =============================================================================
@@ -91,11 +91,7 @@
         ;; Keep only last N snapshots - drop from front if too many
         new-pending (if (> (count inserted) SNAPSHOT_BUFFER_SIZE)
                       (vec (drop (- (count inserted) SNAPSHOT_BUFFER_SIZE) inserted))
-                      inserted)
-        entity-count (count (:entities snapshot))]
-    ;; Debug: print when we add a snapshot with entities
-    (when (> entity-count 1)
-      (println "Interp: Added snapshot with" entity-count "entities, pending count:" (count new-pending)))
+                      inserted)]
     (assoc interp-state :pending new-pending)))
 
 (defn init-render-time
@@ -138,8 +134,6 @@
       (let [first-snap (first pending)
             rest-pending (vec (rest pending))
             next (find-next-pending rest-pending (:server-time first-snap))]
-        (println "Interp: First snapshot! entities:" (count (:entities first-snap))
-                 "server-time:" (:server-time first-snap))
         (-> interp-state
             (assoc :snap first-snap)
             (assoc :next-snap next)
@@ -203,32 +197,55 @@
   "Interpolate a single entity between snapshot states."
   [current-state next-state lerp-factor]
   (if (and next-state (should-interpolate-entity? current-state next-state))
-    {:current-state current-state
-     :next-state next-state
-     :lerp-origin (vec3-lerp (:position current-state)
-                             (:position next-state)
-                             lerp-factor)
-     :lerp-angles [(lerp-angle (:pitch current-state)
-                               (:pitch next-state)
+    (let [curr-anim-index (or (:animation-index current-state) 0)
+          next-anim-index (or (:animation-index next-state) 0)
+          curr-anim-time (or (:animation-time current-state) 0.0)
+          next-anim-time (or (:animation-time next-state) 0.0)
+          ;; Interpolate animation time if same animation index
+          ;; Handle animation looping: if next < curr, animation wrapped
+          interp-anim-time (if (= curr-anim-index next-anim-index)
+                             (if (< next-anim-time curr-anim-time)
+                               ;; Animation wrapped - don't interpolate backwards
+                               ;; Use lerp but pretend next is ahead (add duration estimate ~0.8s)
+                               (let [duration-estimate 0.8
+                                     adjusted-next (+ next-anim-time duration-estimate)
+                                     raw-lerp (lerp curr-anim-time adjusted-next lerp-factor)]
+                                 (mod raw-lerp duration-estimate))
+                               ;; Normal interpolation
+                               (lerp curr-anim-time next-anim-time lerp-factor))
+                             curr-anim-time)]
+      {:current-state current-state
+       :next-state next-state
+       :lerp-origin (vec3-lerp (:position current-state)
+                               (:position next-state)
                                lerp-factor)
-                   (lerp-angle (:yaw current-state)
-                               (:yaw next-state)
-                               lerp-factor)]
-     ;; Preserve animation state for remote player rendering
-     :animation-index (:animation-index current-state)
-     :animation-time (:animation-time current-state)
-     :interpolate? true}
+       :lerp-angles [(lerp-angle (:pitch current-state)
+                                 (:pitch next-state)
+                                 lerp-factor)
+                     (lerp-angle (:yaw current-state)
+                                 (:yaw next-state)
+                                 lerp-factor)]
+       ;; Interpolate velocity for smooth client-side animation
+       :velocity (vec3-lerp (or (:velocity current-state) [0.0 0.0 0.0])
+                            (or (:velocity next-state) [0.0 0.0 0.0])
+                            lerp-factor)
+       :grounded? (or (:grounded? current-state) true)
+       ;; Interpolate animation state for smooth remote player rendering
+       :animation-index curr-anim-index
+       :animation-time interp-anim-time
+       :interpolate? true})
     ;; Can't interpolate - use current state directly
     {:current-state current-state
      :next-state next-state
      :lerp-origin (:position current-state)
      :lerp-angles [(:pitch current-state) (:yaw current-state)]
+     ;; Include velocity and grounded for client-side animation
+     :velocity (or (:velocity current-state) [0.0 0.0 0.0])
+     :grounded? (or (:grounded? current-state) true)
      ;; Preserve animation state for remote player rendering
-     :animation-index (:animation-index current-state)
-     :animation-time (:animation-time current-state)
+     :animation-index (or (:animation-index current-state) 0)
+     :animation-time (or (:animation-time current-state) 0.0)
      :interpolate? false}))
-
-(def ^:dynamic *interp-debug-counter* (atom 0))
 
 (defn interpolate-all-entities
   "Interpolate all entities between current snapshots."
@@ -246,10 +263,6 @@
                                                                next-state
                                                                lerp-factor)])))
                               (into {}))]
-        ;; Debug: every 60 calls, print entity count
-        (swap! *interp-debug-counter* inc)
-        (when (and (> (count interpolated) 1) (= 0 (mod @*interp-debug-counter* 60)))
-          (println "Interp: interpolated" (count interpolated) "entities, lerp:" lerp-factor))
         (assoc interp-state :entities interpolated))
       interp-state)))
 
