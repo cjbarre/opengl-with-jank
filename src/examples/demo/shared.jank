@@ -1,0 +1,242 @@
+(ns examples.demo.shared
+  "Shared game logic for the demo, used by server, client, and solo mode.
+
+   Contains:
+   - Physics constants
+   - Physics simulation functions
+   - Entity state manipulation")
+
+(require '[engine.3d.collision.interface :as collision])
+
+(cpp/raw "#include <math.h>")
+
+;; =============================================================================
+;; Physics Constants (JKA-style)
+;; =============================================================================
+
+(def GRAVITY 25.6)
+(def JUMP_VELOCITY 7.2)
+(def FORCE_JUMP_STRENGTH 26.88)  ; Level 3 force jump
+(def FORCE_JUMP_HEIGHT 12.3)     ; Level 3 max height
+(def GROUND_ACCEL 10.0)
+(def AIR_ACCEL 1.0)              ; 10:1 ratio for JKA feel
+(def FRICTION 6.0)
+(def STOP_SPEED 2.5)
+(def MAX_SPEED 8.0)
+(def GROUND_HEIGHT 0.1)
+
+;; =============================================================================
+;; Low-Level Physics Functions
+;; =============================================================================
+
+(defn pm-friction
+  "JKA-style friction - reduces horizontal velocity.
+   Returns [new-vx new-vz]."
+  [vx vz friction stopspeed dt]
+  (let [vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        speed (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f))))]
+    (if (cpp/< speed (cpp/float 0.1))
+      [0.0 0.0]
+      (let [stopspeed-f (cpp/float stopspeed)
+            control (if (cpp/< speed stopspeed-f) stopspeed-f speed)
+            drop (cpp/* control (cpp/* (cpp/float friction) (cpp/float dt)))
+            newspeed-raw (cpp/- speed drop)
+            newspeed (if (cpp/< newspeed-raw (cpp/float 0.0)) (cpp/float 0.0) newspeed-raw)
+            scale (cpp// newspeed speed)]
+        [(double (cpp/* vx-f scale))
+         (double (cpp/* vz-f scale))]))))
+
+(defn pm-accelerate
+  "JKA-style acceleration toward wish direction.
+   Returns [new-vx new-vz]."
+  [vx vz dx dz wishspeed accel dt]
+  (let [dx-f (cpp/float dx)
+        dz-f (cpp/float dz)
+        vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        wish-len (cpp/float (cpp/sqrt (cpp/+ (cpp/* dx-f dx-f) (cpp/* dz-f dz-f))))]
+    (if (cpp/< wish-len (cpp/float 0.001))
+      [(double vx-f) (double vz-f)]
+      (let [dx-norm (cpp// dx-f wish-len)
+            dz-norm (cpp// dz-f wish-len)
+            currentspeed (cpp/+ (cpp/* vx-f dx-norm) (cpp/* vz-f dz-norm))
+            addspeed (cpp/- (cpp/float wishspeed) currentspeed)]
+        (if (cpp/<= addspeed (cpp/float 0.0))
+          [(double vx-f) (double vz-f)]
+          (let [accelspeed (cpp/* (cpp/float accel)
+                                  (cpp/* (cpp/float dt) (cpp/float wishspeed)))
+                accelspeed (if (cpp/> accelspeed addspeed) addspeed accelspeed)]
+            [(double (cpp/+ vx-f (cpp/* accelspeed dx-norm)))
+             (double (cpp/+ vz-f (cpp/* accelspeed dz-norm)))]))))))
+
+;; =============================================================================
+;; Wish Direction Calculation
+;; =============================================================================
+
+(defn calc-wish-direction
+  "Calculate wish direction from input and yaw angle.
+   Returns [wish-x wish-z]."
+  [{:keys [forward backward left right yaw]}]
+  (let [yaw-radians (cpp/glm.radians (cpp/float yaw))
+        front-x (double (cpp/cos yaw-radians))
+        front-z (double (cpp/sin yaw-radians))
+        right-x (double (cpp/sin yaw-radians))
+        right-z (double (cpp/- (cpp/float 0.0) (cpp/cos yaw-radians)))
+
+        wish-x (cond-> 0.0
+                 forward (+ front-x)
+                 backward (- front-x)
+                 left (+ right-x)
+                 right (- right-x))
+        wish-z (cond-> 0.0
+                 forward (+ front-z)
+                 backward (- front-z)
+                 left (+ right-z)
+                 right (- right-z))]
+    [wish-x wish-z]))
+
+;; =============================================================================
+;; Physics Simulation
+;; =============================================================================
+
+(defn simulate-physics
+  "Run one physics tick for an entity.
+
+   entity-state: Map with :position, :velocity, :grounded?, :jump-z-start
+   input: Map with :forward, :backward, :left, :right, :jump-held, :yaw, :pitch
+   delta-time: Time step in seconds
+   collision-mesh: Optional collision mesh for ground detection
+
+   Returns updated entity state."
+  [entity-state input delta-time collision-mesh]
+  (let [{:keys [position velocity grounded? jump-z-start]} entity-state
+        {:keys [jump-held pitch yaw]} input
+        [px py pz] position
+        [vx vy vz] velocity
+
+        ;; Ground detection via raycast
+        ground-y (when collision-mesh
+                   (collision/raycast-ground collision-mesh [px py pz]))
+        is-grounded (and ground-y (<= py (+ ground-y 0.2)))
+
+        ;; Calculate wish direction from input
+        [wish-x wish-z] (calc-wish-direction input)
+
+        ;; Apply friction (only when grounded)
+        [vx vz] (if is-grounded
+                  (pm-friction vx vz FRICTION STOP_SPEED delta-time)
+                  [vx vz])
+
+        ;; Accelerate (different rates for ground vs air)
+        accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
+        [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
+
+        ;; Clear jump-z-start when not holding jump
+        jump-z-start (if (not jump-held) nil jump-z-start)
+
+        ;; Initial jump (grounded + button pressed + not already jumping)
+        [vy is-grounded jump-z-start]
+        (if (and is-grounded jump-held (nil? jump-z-start))
+          [JUMP_VELOCITY false py]
+          [vy is-grounded jump-z-start])
+
+        ;; Force Jump thrust (JKA Metroid-style)
+        vy (if (and (not is-grounded)
+                    jump-held
+                    jump-z-start
+                    (> vy 0))
+             (let [cur-height (- py jump-z-start)]
+               (if (< cur-height FORCE_JUMP_HEIGHT)
+                 (+ (/ (* (/ (- FORCE_JUMP_HEIGHT cur-height) FORCE_JUMP_HEIGHT)
+                          FORCE_JUMP_STRENGTH)
+                       10.0)
+                    JUMP_VELOCITY)
+                 (min vy JUMP_VELOCITY)))
+             vy)
+
+        ;; Apply gravity (always when airborne)
+        vy (if (not is-grounded)
+             (- vy (* GRAVITY delta-time))
+             vy)
+
+        ;; Integrate velocity to position
+        new-px (+ px (* vx delta-time))
+        new-py (+ py (* vy delta-time))
+        new-pz (+ pz (* vz delta-time))
+
+        ;; Clamp to ground (raycast collision)
+        ground-y-at-new-pos (when collision-mesh
+                              (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
+        [new-py vy is-grounded] (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
+                                  [ground-y-at-new-pos 0.0 true]
+                                  [new-py vy is-grounded])]
+
+    ;; Return updated entity state
+    {:position [new-px new-py new-pz]
+     :velocity [vx vy vz]
+     :grounded? is-grounded
+     :jump-z-start jump-z-start
+     :pitch pitch
+     :yaw yaw}))
+
+;; =============================================================================
+;; Entity State Conversion
+;; =============================================================================
+
+(defn entity->physics-state
+  "Extract physics state from a full game entity."
+  [entity]
+  {:position (:transform/position entity)
+   :velocity (:physics/velocity entity [0.0 0.0 0.0])
+   :grounded? (:physics/grounded entity true)
+   :jump-z-start (:physics/jump-z-start entity)
+   :pitch (:transform/pitch entity 0.0)
+   :yaw (:transform/yaw entity 0.0)})
+
+(defn physics-state->entity-updates
+  "Convert physics state to entity update map."
+  [physics-state]
+  {:transform/position (:position physics-state)
+   :physics/velocity (:velocity physics-state)
+   :physics/grounded (:grounded? physics-state)
+   :physics/jump-z-start (:jump-z-start physics-state)
+   :transform/pitch (:pitch physics-state)
+   :transform/yaw (:yaw physics-state)})
+
+(defn command->input
+  "Convert a network command to input format."
+  [command]
+  {:forward (:forward command false)
+   :backward (:backward command false)
+   :left (:left command false)
+   :right (:right command false)
+   :jump-held (:jump-held command false)
+   :pitch (:pitch command 0.0)
+   :yaw (:yaw command 0.0)})
+
+;; =============================================================================
+;; Network Entity State
+;; =============================================================================
+
+(defn physics-state->network-state
+  "Convert physics state to network transmission format."
+  [physics-state entity-id]
+  {:id entity-id
+   :position (:position physics-state)
+   :velocity (:velocity physics-state)
+   :pitch (:pitch physics-state)
+   :yaw (:yaw physics-state)
+   :grounded? (:grounded? physics-state)
+   :animation-index 0  ; TODO: derive from state
+   :animation-time 0.0})
+
+(defn network-state->physics-state
+  "Convert network state to physics state format."
+  [network-state]
+  {:position (:position network-state)
+   :velocity (:velocity network-state)
+   :grounded? (:grounded? network-state)
+   :jump-z-start nil  ; Not transmitted, reconstructed locally
+   :pitch (:pitch network-state)
+   :yaw (:yaw network-state)})

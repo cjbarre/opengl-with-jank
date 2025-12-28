@@ -1,0 +1,159 @@
+(ns engine.networking.snapshot
+  "Snapshot data structures for network synchronization.
+
+   A snapshot represents the authoritative game state at a point in time,
+   sent from server to clients for interpolation and reconciliation.")
+
+;; =============================================================================
+;; Entity State (network transmission format)
+;; =============================================================================
+
+(defn make-entity-state
+  "Create a network-transmittable entity state.
+
+   Contains only the data needed for rendering and physics reconciliation."
+  [{:keys [id position velocity pitch yaw grounded?
+           animation-index animation-time]}]
+  {:id id
+   :position position         ; [x y z]
+   :velocity velocity         ; [x y z]
+   :pitch pitch               ; camera/look pitch
+   :yaw yaw                   ; camera/look yaw
+   :grounded? grounded?       ; on ground?
+   :animation-index animation-index
+   :animation-time animation-time})
+
+(defn entity->network-state
+  "Extract network state from a full game entity."
+  [entity]
+  (make-entity-state
+   {:id (:id entity)
+    :position (:transform/position entity)
+    :velocity (:physics/velocity entity)
+    :pitch (:transform/pitch entity)
+    :yaw (:transform/yaw entity)
+    :grounded? (:physics/grounded entity)
+    :animation-index (:animation/current-index entity)
+    :animation-time (:animation/time entity)}))
+
+;; =============================================================================
+;; Snapshot (server -> client)
+;; =============================================================================
+
+(defn make-snapshot
+  "Create a snapshot of the game state.
+
+   server-time: Authoritative server time in milliseconds
+   sequence: Incrementing sequence number for ordering
+   last-processed-commands: Map of client-id -> last processed command sequence
+   entities: Map of entity-id -> entity-state"
+  [{:keys [server-time sequence last-processed-commands entities]}]
+  {:type :snapshot
+   :server-time server-time
+   :sequence sequence
+   :last-processed-commands (or last-processed-commands {})
+   :entities entities})
+
+(defn build-snapshot
+  "Build a snapshot from the current game state.
+
+   state: Game state with :entities map
+   server-time: Current server time in ms
+   sequence: Snapshot sequence number
+   last-commands: Map of client-id -> last processed command sequence"
+  [state server-time sequence last-commands]
+  (let [entities (->> (:entities state)
+                      (filter (fn [[_id entity]]
+                                (contains? (:tags entity) :networked)))
+                      (map (fn [[id entity]]
+                             [id (entity->network-state entity)]))
+                      (into {}))]
+    (make-snapshot {:server-time server-time
+                    :sequence sequence
+                    :last-processed-commands last-commands
+                    :entities entities})))
+
+;; =============================================================================
+;; Client Entity (for interpolation)
+;; =============================================================================
+
+(defn make-client-entity
+  "Create a client-side entity for interpolation.
+
+   current-state: Entity state from current snapshot
+   next-state: Entity state from next snapshot (may be nil)
+   interpolate?: Whether to interpolate (false if teleported)"
+  [{:keys [current-state next-state interpolate?]}]
+  {:current-state current-state
+   :next-state next-state
+   :lerp-origin (:position current-state)
+   :lerp-angles [(:pitch current-state) (:yaw current-state)]
+   :interpolate? (if (nil? interpolate?) true interpolate?)})
+
+(defn should-interpolate?
+  "Determine if entity should interpolate between states.
+   Returns false if entity teleported or is new."
+  [current-state next-state]
+  (when (and current-state next-state)
+    (let [pos-current (:position current-state)
+          pos-next (:position next-state)
+          dx (- (nth pos-next 0) (nth pos-current 0))
+          dy (- (nth pos-next 1) (nth pos-current 1))
+          dz (- (nth pos-next 2) (nth pos-current 2))
+          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))
+          ;; If moved more than 10 units, probably teleported
+          teleport-threshold-sq 100.0]
+      (< dist-sq teleport-threshold-sq))))
+
+;; =============================================================================
+;; Command (client -> server)
+;; =============================================================================
+
+(defn make-input-command
+  "Create an input command to send to the server.
+
+   client-id: UUID of the client
+   sequence: Command sequence number (for acknowledgment)
+   input: Input state map"
+  [{:keys [client-id sequence forward backward left right
+           jump-held pitch yaw delta-time]}]
+  {:type :command
+   :command/name :player/input
+   :client-id client-id
+   :sequence sequence
+   :forward (or forward false)
+   :backward (or backward false)
+   :left (or left false)
+   :right (or right false)
+   :jump-held (or jump-held false)
+   :pitch (or pitch 0.0)
+   :yaw (or yaw 0.0)
+   :delta-time (or delta-time 0.016)})
+
+;; =============================================================================
+;; Network Events (reliable messages)
+;; =============================================================================
+
+(defn make-player-spawned-event
+  "Create a reliable event for player spawn."
+  [player-id client-id]
+  {:type :event
+   :event/type :player/spawned
+   :player-id player-id
+   :client-id client-id})
+
+(defn make-player-disconnected-event
+  "Create a reliable event for player disconnect."
+  [player-id client-id]
+  {:type :event
+   :event/type :player/disconnected
+   :player-id player-id
+   :client-id client-id})
+
+(defn make-welcome-event
+  "Create a welcome event sent to newly connected clients."
+  [player-id server-time]
+  {:type :event
+   :event/type :client/welcome
+   :your-player-id player-id
+   :server-time server-time})

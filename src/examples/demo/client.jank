@@ -1,0 +1,544 @@
+(ns examples.demo.client
+  "Networked game client for the demo.
+
+   Features:
+   - Client-side prediction for local player (instant response)
+   - Snapshot interpolation for remote players (smooth motion)
+   - Server reconciliation (correct prediction errors)"
+  (:require [engine.networking.protocol :as net]
+            [engine.networking.snapshot :as snapshot]
+            [engine.networking.interpolation :as interp]
+            [engine.networking.prediction :as pred]
+            [examples.demo.shared :as shared]
+            [engine.io.interface :as io]
+            [engine.shaders.interface :as shaders]
+            [engine.math.interface :as math]
+            [engine.3d.gltf.interface :as gltf]
+            [engine.3d.collision.interface :as collision]
+            [engine.2d.text.interface :as text]
+            [engine.2d.graphics.interface :as gfx2d]
+            [engine.3d.animation.interface :as anim]
+            [examples.demo.strafehelper.interface :as strafehelper]))
+
+(cpp/raw "#include <GLFW/glfw3.h>")
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+(cpp/raw "#include <math.h>")
+
+(cpp/raw
+ "void framebuffer_size_callback_client(GLFWwindow* window, int width, int height) {
+      (void) window;
+      glViewport(0, 0, width, height);
+    }")
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def GLFW_PRESS (cpp/value "GLFW_PRESS"))
+(def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
+(def GLFW_KEY_W (cpp/value "GLFW_KEY_W"))
+(def GLFW_KEY_S (cpp/value "GLFW_KEY_S"))
+(def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
+(def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
+(def GLFW_KEY_F3 (cpp/value "GLFW_KEY_F3"))
+(def GLFW_KEY_F4 (cpp/value "GLFW_KEY_F4"))
+(def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
+
+(def DEFAULT_SERVER_ADDRESS "127.0.0.1")
+(def DEFAULT_SERVER_PORT 7777)
+
+;; =============================================================================
+;; Client State
+;; =============================================================================
+
+(defn make-client-state
+  "Create initial client state."
+  []
+  {:my-player-id nil               ; Our player ID (assigned by server)
+   :connected? false
+   :interp-state (interp/make-interp-state)
+   :pred-state (pred/make-prediction-state)
+   :remote-players {}              ; player-id -> animation data
+   :level-collision nil
+   :debug/overlay-visible true
+   :strafehelper/visible false
+   :f3-was-pressed false
+   :f4-was-pressed false})
+
+;; =============================================================================
+;; Window Setup
+;; =============================================================================
+
+(defn setup-window
+  [{:keys [width height name]}]
+  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
+  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
+  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
+                      (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
+  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
+                      (cpp/value "GL_TRUE"))
+
+  (let [window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
+    (when (cpp/! window)
+      (println "Window creation failed")
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
+    (cpp/glfwSwapInterval 0)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_client)
+    (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+    (cpp/box window)))
+
+;; =============================================================================
+;; Input Processing
+;; =============================================================================
+
+(defn process-input
+  "Get current input state."
+  [{:keys [window delta-time cursor/pitch cursor/yaw]}]
+  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+    (cond-> {:delta-time (float (math/*-> :float delta-time))
+             :pitch (float (math/*-> :float pitch))
+             :yaw (float (math/*-> :float yaw))}
+      (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE) GLFW_PRESS)
+      (assoc :exit true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_W) GLFW_PRESS)
+      (assoc :forward true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_S) GLFW_PRESS)
+      (assoc :backward true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_A) GLFW_PRESS)
+      (assoc :left true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
+      (assoc :right true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
+      (assoc :jump-held true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_F3) GLFW_PRESS)
+      (assoc :f3-pressed true)
+
+      (= (cpp/glfwGetKey window GLFW_KEY_F4) GLFW_PRESS)
+      (assoc :f4-pressed true))))
+
+;; =============================================================================
+;; Cursor / Time Updates
+;; =============================================================================
+
+(defn update-cursor
+  [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
+    :keys [window]}]
+  (let [cursor-x (cpp/double)
+        cursor-y (cpp/double)
+        _ (cpp/glfwGetCursorPos (cpp/unbox cpp/GLFWwindow* window)
+                                (cpp/& cursor-x)
+                                (cpp/& cursor-y))
+        cursor-last-x (math/*-> :float last-x)
+        cursor-last-y (math/*-> :float last-y)
+        _ (when-not @initialized?
+            (cpp/= cursor-last-x cursor-x)
+            (cpp/= cursor-last-y cursor-y)
+            (reset! initialized? true))
+        cursor-sensitivity (math/*-> :float sensitivity)
+        x-offset (cpp/* (cpp/- cursor-x cursor-last-x) cursor-sensitivity)
+        y-offset (cpp/* (cpp/- cursor-last-y cursor-y) cursor-sensitivity)
+        cursor-yaw (math/*-> :float yaw)
+        cursor-pitch (math/*-> :float pitch)]
+    (cpp/= cursor-yaw (cpp/+ cursor-yaw x-offset))
+    (cpp/= cursor-pitch (cpp/- cursor-pitch y-offset))
+    (cpp/= cursor-last-x cursor-x)
+    (cpp/= cursor-last-y cursor-y)
+    (when (cpp/> cursor-pitch (cpp/float 60.0))
+      (cpp/= cursor-pitch (cpp/float 60.0)))
+    (when (cpp/< cursor-pitch (cpp/float -30.0))
+      (cpp/= cursor-pitch (cpp/float -30.0)))))
+
+(defn update-time
+  [{:keys [delta-time last-frame]}]
+  (let [current-frame (cpp/glfwGetTime)
+        delta-time (math/*-> :float delta-time)
+        last-frame (math/*-> :float last-frame)]
+    (cpp/= delta-time (cpp/- current-frame last-frame))
+    (cpp/= last-frame current-frame)))
+
+;; =============================================================================
+;; Network Message Handling
+;; =============================================================================
+
+(defn handle-welcome
+  "Handle welcome message from server."
+  [client-state msg]
+  (println "Received welcome! My player ID:" (:your-player-id msg))
+  (-> client-state
+      (assoc :my-player-id (:your-player-id msg))
+      (assoc :connected? true)))
+
+(defn handle-snapshot
+  "Handle snapshot from server."
+  [client-state snapshot collision-mesh]
+  (let [{:keys [my-player-id pred-state interp-state]} client-state]
+    (if my-player-id
+      (let [;; Create physics-fn for prediction reconciliation
+            physics-fn (fn [state input dt]
+                        (shared/simulate-physics state input dt collision-mesh))
+            ;; Reconcile our prediction
+            new-pred-state (pred/reconcile pred-state snapshot my-player-id physics-fn)
+            ;; Add snapshot to interpolation buffer (for remote players)
+            new-interp-state (interp/add-snapshot interp-state snapshot)]
+        (-> client-state
+            (assoc :pred-state new-pred-state)
+            (assoc :interp-state new-interp-state)))
+      ;; Not yet assigned a player ID
+      (update client-state :interp-state interp/add-snapshot snapshot))))
+
+(defn handle-player-spawned
+  "Handle player spawn event."
+  [client-state msg]
+  (println "Player spawned:" (:player-id msg))
+  client-state)
+
+(defn handle-player-disconnected
+  "Handle player disconnect event."
+  [client-state msg]
+  (println "Player disconnected:" (:player-id msg))
+  (update client-state :remote-players dissoc (:player-id msg)))
+
+(defn handle-network-message
+  "Handle a network message."
+  [client-state msg collision-mesh]
+  (case (:type msg)
+    :event
+    (case (:event/type msg)
+      :client/welcome (handle-welcome client-state msg)
+      :player/spawned (handle-player-spawned client-state msg)
+      :player/disconnected (handle-player-disconnected client-state msg)
+      client-state)
+
+    :snapshot
+    (handle-snapshot client-state msg collision-mesh)
+
+    client-state))
+
+;; =============================================================================
+;; Rendering
+;; =============================================================================
+
+(defn render-entity-at-position
+  "Render an entity at a given position/angles."
+  [shader position yaw model]
+  (let [[px py pz] position
+        model-m (-> (cpp/identity_matrix)
+                    (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
+                    (cpp/glm.rotate (cpp/glm.radians (cpp/float (- yaw)))
+                                    (math/gimmie :vec3 [0.0 1.0 0.0])))
+        model-m-loc (cpp/glGetUniformLocation shader "model")]
+    (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+                            (cpp/glm.value_ptr model-m))
+    (when model
+      ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
+
+(defn render-camera
+  "Set up camera view based on player position."
+  [shader position yaw pitch]
+  (let [[px py pz] position
+        distance 2.5
+        height 1.0
+        look-offset 1.2
+        yaw-rad (cpp/glm.radians (cpp/float yaw))
+        pitch-rad (cpp/glm.radians (cpp/float pitch))
+        offset-x (cpp/* (cpp/- (cpp/float 0.0) (cpp/cos yaw-rad))
+                        (cpp/* (cpp/float distance) (cpp/cos pitch-rad)))
+        offset-z (cpp/* (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad))
+                        (cpp/* (cpp/float distance) (cpp/cos pitch-rad)))
+        offset-y (cpp/+ (cpp/float height)
+                        (cpp/* (cpp/float distance) (cpp/sin pitch-rad)))
+        camera-pos (cpp/glm.vec3
+                    (cpp/+ (cpp/float px) offset-x)
+                    (cpp/+ (cpp/float py) offset-y)
+                    (cpp/+ (cpp/float pz) offset-z))
+        look-target (cpp/glm.vec3 (cpp/float px)
+                                  (cpp/+ (cpp/float py) (cpp/float look-offset))
+                                  (cpp/float pz))
+        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
+        view-m (cpp/glm.lookAt camera-pos look-target camera-up)
+        view-m-loc (cpp/glGetUniformLocation shader "view")]
+    (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE")
+                            (cpp/glm.value_ptr view-m))))
+
+(def ^:dynamic *frame-count* (atom 0))
+
+(defn draw-world
+  "Draw the game world."
+  [{:keys [shader level-model player-model client-state] :as context}]
+  (swap! *frame-count* inc)
+  (cpp/glClearColor 0.2 0.3 0.3 1.0)
+  (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT")
+                      (cpp/value "GL_DEPTH_BUFFER_BIT")))
+
+  (let [projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
+                                          (cpp// (cpp/float 1280.0) (cpp/float 720.0))
+                                          (cpp/float 0.1)
+                                          (cpp/float 100.0))]
+    (cpp/glUseProgram shader)
+    (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
+      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE")
+                              (cpp/glm.value_ptr projection-m)))
+
+    ;; Get local player state for camera
+    (let [state @client-state
+          pred-state (:pred-state state)
+          my-id (:my-player-id state)
+          render-state (pred/get-render-state pred-state)
+          local-pos (or (:position render-state) [0.0 50.0 0.0])
+          local-yaw (or (:yaw render-state) 0.0)
+          local-pitch (or (:pitch render-state) 0.0)]
+
+      ;; Set up camera from local player
+      (render-camera shader local-pos local-yaw local-pitch)
+
+      ;; Render level
+      (when level-model
+        (let [model-m-loc (cpp/glGetUniformLocation shader "model")]
+          (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+                                  (cpp/glm.value_ptr (cpp/identity_matrix))))
+        ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"}))
+
+      ;; Render local player
+      (when player-model
+        (render-entity-at-position shader local-pos local-yaw player-model))
+
+      ;; Render remote players (interpolated)
+      (let [interp-state (:interp-state state)
+            remote-entities (interp/get-all-entity-render-states interp-state)]
+        (doseq [[entity-id entity-state] remote-entities]
+          (when (not= entity-id my-id)
+            (let [pos (:lerp-origin entity-state)
+                  [_pitch yaw] (:lerp-angles entity-state)]
+              (when (and player-model pos)
+                (render-entity-at-position shader pos (or yaw 0.0) player-model)))))))))
+
+;; =============================================================================
+;; Main Client Loop
+;; =============================================================================
+
+(defn run-client-loop
+  [{:keys [window network client-state delta-time gfx2d] :as context}]
+  (println "Entering client loop")
+  (while (and (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
+              (net/connected? network))
+
+    (let [_ (update-time context)
+          _ (update-cursor context)
+          dt (math/*-> :float delta-time)
+          dt-ms (* dt 1000.0)]
+
+      ;; Process network events
+      (let [events (net/poll-events! network 0)]
+        (when (pos? (count events))
+          (println "Got" (count events) "events"))
+        (doseq [event events]
+          (case (:type event)
+            :message
+            (do
+              (println "Received:" (:type (:message event)))
+              (swap! client-state handle-network-message
+                     (:message event) (:level-collision @client-state)))
+
+            :disconnect
+            (do (println "Disconnected from server")
+                (swap! client-state assoc :connected? false))
+
+            nil)))
+
+      ;; Get input
+      (let [input (process-input context)
+            state @client-state]
+
+        ;; Handle exit
+        (when (:exit input)
+          (cpp/glfwSetWindowShouldClose
+           (cpp/unbox cpp/GLFWwindow* window) 1))
+
+        ;; Handle debug toggles
+        (when (and (:f3-pressed input) (not (:f3-was-pressed state)))
+          (swap! client-state update :debug/overlay-visible not))
+        (swap! client-state assoc :f3-was-pressed (:f3-pressed input))
+
+        (when (and (:f4-pressed input) (not (:f4-was-pressed state)))
+          (swap! client-state update :strafehelper/visible not))
+        (swap! client-state assoc :f4-was-pressed (:f4-pressed input))
+
+        ;; If connected and have player ID, predict and send commands
+        (when (and (:connected? state) (:my-player-id state))
+          (let [physics-fn (fn [phys-state inp dt-val]
+                             (shared/simulate-physics phys-state inp dt-val
+                                                      (:level-collision state)))
+                cmd-input (shared/command->input input)
+                cmd-input (assoc cmd-input
+                                 :pitch (:pitch input)
+                                 :yaw (:yaw input))]
+            ;; Run prediction
+            (swap! client-state update :pred-state
+                   pred/predict cmd-input physics-fn dt)
+
+            ;; Send command to server
+            (let [new-state @client-state
+                  seq-num (dec (:next-sequence (:pred-state new-state)))]
+              (net/send! network
+                         {:message {:type :command
+                                    :command (snapshot/make-input-command
+                                              {:client-id (:my-player-id state)
+                                               :sequence seq-num
+                                               :forward (:forward input)
+                                               :backward (:backward input)
+                                               :left (:left input)
+                                               :right (:right input)
+                                               :jump-held (:jump-held input)
+                                               :pitch (:pitch input)
+                                               :yaw (:yaw input)
+                                               :delta-time dt})}
+                          :reliable false}))))
+
+        ;; Update interpolation for remote players
+        (swap! client-state update :interp-state interp/update-interpolation dt-ms)
+
+        ;; Update prediction error smoothing
+        (swap! client-state update :pred-state pred/update-error-smoothing dt-ms))
+
+      ;; Render
+      (draw-world context)
+
+      ;; Render debug overlay
+      (when (:debug/overlay-visible @client-state)
+        (let [state @client-state
+              pred-state (:pred-state state)
+              render-state (pred/get-render-state pred-state)
+              [px py pz] (or (:position render-state) [0.0 0.0 0.0])
+              [vx vy vz] (or (:velocity render-state) [0.0 0.0 0.0])
+              grounded (or (:grounded? render-state) false)
+              dt (math/*-> :float delta-time)
+              fps (if (> dt 0.0) (/ 1.0 dt) 0.0)
+              speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                     (cpp/* (cpp/float vz) (cpp/float vz))))]
+          (text/render-text (str "FPS: " (int fps)) 10.0 30.0 [1.0 1.0 1.0] 1280 720)
+          (text/render-text (str "Pos: " (int px) ", " (int py) ", " (int pz))
+                            10.0 55.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Vel: " (int vx) ", " (int vy) ", " (int vz))
+                            10.0 80.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Speed: " (int speed)) 10.0 105.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Grounded: " grounded) 10.0 130.0
+                            (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)
+          (text/render-text "[NETWORKED]" 10.0 155.0 [0.5 0.8 1.0] 1280 720)))
+
+      ;; Render strafehelper
+      (when (:strafehelper/visible @client-state)
+        (let [state @client-state
+              pred-state (:pred-state state)
+              render-state (pred/get-render-state pred-state)
+              velocity (or (:velocity render-state) [0.0 0.0 0.0])
+              yaw (or (:yaw render-state) 0.0)
+              grounded (or (:grounded? render-state) false)]
+          (strafehelper/render-strafehelper gfx2d velocity yaw grounded 1280 720)))
+
+      (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
+      (cpp/glfwPollEvents))))
+
+;; =============================================================================
+;; Entry Point
+;; =============================================================================
+
+(defn run-client
+  "Run the game client."
+  ([] (run-client DEFAULT_SERVER_ADDRESS))
+  ([server-address]
+   (println "Starting demo client, connecting to" server-address ":" DEFAULT_SERVER_PORT "...")
+
+   (let [_ (cpp/glfwInit)
+         window (setup-window {:width 1280 :height 720 :name "Demo - Client"})
+         _ (cpp/glfwSetInputMode
+            (cpp/unbox cpp/GLFWwindow* window)
+            (cpp/value "GLFW_CURSOR")
+            (cpp/value "GLFW_CURSOR_DISABLED"))
+
+         ;; Load shaders
+         shader (shaders/load-shader-program
+                 {:vertex-shader-path "shaders/basic_vertex.glsl"
+                  :fragment-shader-path "shaders/basic_fragment.glsl"})
+         _ (cpp/glUseProgram shader)
+         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
+
+         text-shader (shaders/load-shader-program
+                      {:vertex-shader-path "shaders/text_vertex.glsl"
+                       :fragment-shader-path "shaders/text_fragment.glsl"})
+         _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
+
+         graphics2d-shader (shaders/load-shader-program
+                            {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
+                             :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
+         gfx2d (gfx2d/init-graphics2d graphics2d-shader)
+
+         ;; Load level
+         level-loaded (gltf/load {:model (gltf/parse {:path "models/hills.gltf"})
+                                  :base-path "models/"})
+         level-collision (when-let [col (first (:collision level-loaded))]
+                          (collision/prepare-collision-mesh col))
+
+         ;; Load player model (static version for now)
+         _ (println "Loading player model...")
+         player-model (gltf/load {:model (gltf/parse {:path "models/player.gltf"})
+                                  :base-path "models/"})
+
+         ;; Create client state
+         client-state (atom (-> (make-client-state)
+                                (assoc :level-collision level-collision)))
+
+         ;; Connect to server
+         network (net/start-client {:address server-address :port DEFAULT_SERVER_PORT})]
+
+     (if (nil? network)
+       (println "ERROR: Failed to create client")
+
+       (do
+         (println "Connecting...")
+         (if (net/wait-for-connection! network 5000)
+           (do
+             (println "Connected to server!")
+
+             ;; Process any events received during connection (e.g., welcome message)
+             (let [events (net/poll-events! network 100)]
+               (println "DEBUG: Processing" (count events) "initial events")
+               (doseq [event events]
+                 (when (= :message (:type event))
+                   (println "DEBUG: Initial message:" (:type (:message event)))
+                   (swap! client-state handle-network-message
+                          (:message event) level-collision))))
+
+             (run-client-loop
+              {:window window
+               :network network
+               :client-state client-state
+               :shader shader
+               :level-model level-loaded
+               :player-model player-model
+               :gfx2d gfx2d
+               :delta-time (math/gimmie :boxed :float 0.0)
+               :last-frame (math/gimmie :boxed :float 0.0)
+               :cursor/initialized? (atom false)
+               :cursor/last-x (math/gimmie :boxed :float 400.0)
+               :cursor/last-y (math/gimmie :boxed :float 300.0)
+               :cursor/sensitivity (math/gimmie :boxed :float 0.05)
+               :cursor/pitch (math/gimmie :boxed :float 0.0)
+               :cursor/yaw (math/gimmie :boxed :float -90.0)})
+
+             (net/stop network))
+
+           (do
+             (println "ERROR: Connection timed out")
+             (net/stop network)))))
+
+     (cpp/glfwTerminate)
+     (println "Client finished."))))

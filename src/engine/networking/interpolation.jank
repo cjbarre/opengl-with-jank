@@ -1,0 +1,263 @@
+(ns engine.networking.interpolation
+  "Client-side interpolation for smooth rendering of remote entities.
+
+   Based on Quake 3's double-buffered snapshot system:
+   - snap: Current snapshot (render from)
+   - next-snap: Next snapshot (render toward)
+   - render-time: Client time, runs behind server time
+
+   Remote entities are interpolated between snapshots for smooth motion.")
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def INTERP_DELAY_MS 100.0)       ; How far behind server time to render (float)
+(def SNAPSHOT_BUFFER_SIZE 32)     ; Max pending snapshots
+
+;; =============================================================================
+;; Math Helpers
+;; =============================================================================
+
+(defn lerp
+  "Linear interpolation between a and b by factor t (0.0 to 1.0)."
+  [a b t]
+  (+ a (* (- b a) t)))
+
+(defn vec3-lerp
+  "Linearly interpolate between two 3D vectors."
+  [[ax ay az] [bx by bz] t]
+  [(lerp ax bx t)
+   (lerp ay by t)
+   (lerp az bz t)])
+
+(defn lerp-angle
+  "Interpolate between two angles, handling wraparound.
+   Angles are in radians."
+  [a b t]
+  (let [pi 3.14159265359
+        two-pi (* 2.0 pi)
+        ;; Normalize difference to [-pi, pi]
+        diff (- b a)
+        diff (cond
+               (> diff pi) (- diff two-pi)
+               (< diff (- pi)) (+ diff two-pi)
+               :else diff)]
+    (+ a (* diff t))))
+
+(defn clamp
+  "Clamp value between min and max."
+  [value min-val max-val]
+  (max min-val (min max-val value)))
+
+;; =============================================================================
+;; Interpolation State
+;; =============================================================================
+
+(defn make-interp-state
+  "Create initial interpolation state."
+  []
+  {:snap nil             ; Current snapshot (render from)
+   :next-snap nil        ; Next snapshot (render toward)
+   :render-time 0.0      ; Client's interpolated time (ms) - float for math
+   :pending []           ; Received but not yet active snapshots
+   :entities {}})        ; Client entities with lerp data
+
+;; =============================================================================
+;; Snapshot Buffer Management
+;; =============================================================================
+
+(defn- insert-sorted
+  "Insert snapshot into list maintaining server-time order.
+   Assumes list is already sorted."
+  [snapshots snapshot]
+  (let [time (:server-time snapshot)]
+    (loop [before []
+           remaining snapshots]
+      (if (empty? remaining)
+        (conj before snapshot)
+        (let [head (first remaining)]
+          (if (< time (:server-time head))
+            (vec (concat before [snapshot] remaining))
+            (recur (conj before head) (rest remaining))))))))
+
+(defn add-snapshot
+  "Add a received snapshot to the pending buffer.
+   Snapshots are kept sorted by server-time."
+  [interp-state snapshot]
+  (let [pending (:pending interp-state)
+        ;; Insert in order by server-time
+        inserted (insert-sorted pending snapshot)
+        ;; Keep only last N snapshots - drop from front if too many
+        new-pending (if (> (count inserted) SNAPSHOT_BUFFER_SIZE)
+                      (vec (drop (- (count inserted) SNAPSHOT_BUFFER_SIZE) inserted))
+                      inserted)]
+    (assoc interp-state :pending new-pending)))
+
+(defn init-render-time
+  "Initialize render time from first snapshot.
+   Render time runs INTERP_DELAY_MS behind server time."
+  [interp-state snapshot]
+  (assoc interp-state :render-time (- (:server-time snapshot) INTERP_DELAY_MS)))
+
+(defn advance-render-time
+  "Advance render time by delta-ms.
+   May need to adjust if falling too far behind or ahead."
+  [interp-state delta-ms]
+  (update interp-state :render-time + delta-ms))
+
+;; =============================================================================
+;; Snapshot Transitions
+;; =============================================================================
+
+(defn find-next-pending
+  "Find the next snapshot in pending that's after render-time."
+  [pending render-time]
+  (first (filter #(> (:server-time %) render-time) pending)))
+
+(defn remove-old-pending
+  "Remove snapshots older than render-time from pending."
+  [pending render-time]
+  (vec (filter #(> (:server-time %) render-time) pending)))
+
+(defn process-snapshots
+  "Process snapshot transitions based on current render-time.
+
+   When render-time passes next-snap's time:
+   1. next-snap becomes snap
+   2. Pop new next-snap from pending"
+  [interp-state]
+  (let [{:keys [snap next-snap render-time pending]} interp-state]
+    (cond
+      ;; No snapshots yet
+      (and (nil? snap) (seq pending))
+      (let [first-snap (first pending)
+            rest-pending (vec (rest pending))
+            next (find-next-pending rest-pending (:server-time first-snap))]
+        (-> interp-state
+            (assoc :snap first-snap)
+            (assoc :next-snap next)
+            (assoc :pending (if next
+                              (remove-old-pending rest-pending (:server-time first-snap))
+                              rest-pending))
+            (init-render-time first-snap)))
+
+      ;; Time to transition: render-time >= next-snap time
+      (and next-snap (>= render-time (:server-time next-snap)))
+      (let [new-next (find-next-pending pending (:server-time next-snap))
+            new-pending (remove-old-pending pending (:server-time next-snap))]
+        (-> interp-state
+            (assoc :snap next-snap)
+            (assoc :next-snap new-next)
+            (assoc :pending new-pending)))
+
+      ;; No next-snap but we have pending
+      (and (nil? next-snap) snap (seq pending))
+      (let [new-next (find-next-pending pending (:server-time snap))]
+        (if new-next
+          (-> interp-state
+              (assoc :next-snap new-next)
+              (assoc :pending (remove-old-pending pending (:server-time snap))))
+          interp-state))
+
+      :else interp-state)))
+
+;; =============================================================================
+;; Entity Interpolation
+;; =============================================================================
+
+(defn calc-lerp-factor
+  "Calculate interpolation factor (0.0 to 1.0) between snapshots.
+   Returns 0.0 if can't interpolate."
+  [snap next-snap render-time]
+  (if (and snap next-snap)
+    (let [snap-time (:server-time snap)
+          next-time (:server-time next-snap)
+          delta (- next-time snap-time)]
+      (if (> delta 0)
+        (clamp (/ (- render-time snap-time) delta) 0.0 1.0)
+        0.0))
+    0.0))
+
+(defn should-interpolate-entity?
+  "Check if entity should interpolate or snap to new position.
+   Returns false if entity teleported (moved > 10 units)."
+  [current-state next-state]
+  (when (and current-state next-state)
+    (let [[cx cy cz] (:position current-state)
+          [nx ny nz] (:position next-state)
+          dx (- nx cx)
+          dy (- ny cy)
+          dz (- nz cz)
+          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))]
+      ;; Teleport threshold: 10 units
+      (< dist-sq 100.0))))
+
+(defn interpolate-entity
+  "Interpolate a single entity between snapshot states."
+  [current-state next-state lerp-factor]
+  (if (and next-state (should-interpolate-entity? current-state next-state))
+    {:current-state current-state
+     :next-state next-state
+     :lerp-origin (vec3-lerp (:position current-state)
+                             (:position next-state)
+                             lerp-factor)
+     :lerp-angles [(lerp-angle (:pitch current-state)
+                               (:pitch next-state)
+                               lerp-factor)
+                   (lerp-angle (:yaw current-state)
+                               (:yaw next-state)
+                               lerp-factor)]
+     :interpolate? true}
+    ;; Can't interpolate - use current state directly
+    {:current-state current-state
+     :next-state next-state
+     :lerp-origin (:position current-state)
+     :lerp-angles [(:pitch current-state) (:yaw current-state)]
+     :interpolate? false}))
+
+(defn interpolate-all-entities
+  "Interpolate all entities between current snapshots."
+  [interp-state]
+  (let [{:keys [snap next-snap render-time]} interp-state]
+    (if snap
+      (let [lerp-factor (calc-lerp-factor snap next-snap render-time)
+            snap-entities (:entities snap)
+            next-entities (when next-snap (:entities next-snap))
+            interpolated (->> snap-entities
+                              (map (fn [[id entity-state]]
+                                     (let [next-state (when next-entities
+                                                        (get next-entities id))]
+                                       [id (interpolate-entity entity-state
+                                                               next-state
+                                                               lerp-factor)])))
+                              (into {}))]
+        (assoc interp-state :entities interpolated))
+      interp-state)))
+
+;; =============================================================================
+;; Main Update Function
+;; =============================================================================
+
+(defn update-interpolation
+  "Main update function. Call each frame with delta-ms.
+
+   1. Advance render time
+   2. Process snapshot transitions
+   3. Interpolate all entities"
+  [interp-state delta-ms]
+  (-> interp-state
+      (advance-render-time delta-ms)
+      (process-snapshots)
+      (interpolate-all-entities)))
+
+(defn get-entity-render-state
+  "Get the interpolated render state for an entity.
+   Returns nil if entity not found."
+  [interp-state entity-id]
+  (get-in interp-state [:entities entity-id]))
+
+(defn get-all-entity-render-states
+  "Get all interpolated entity states for rendering."
+  [interp-state]
+  (:entities interp-state))

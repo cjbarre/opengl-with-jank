@@ -207,8 +207,11 @@
   [host timeout-ms]
   (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
         event (cpp/new (cpp/type "ENetEvent"))]
-    (loop [events []]
-      (let [result (cpp/host_service_wrapper host* event (cpp/int timeout-ms))]
+    (loop [events []
+           first-poll true]
+      ;; First iteration uses timeout-ms, subsequent use 0
+      (let [timeout (if first-poll (cpp/int timeout-ms) (cpp/int 0))
+            result (cpp/host_service_wrapper host* event timeout)]
         (if (> result 0)
           (let [event-type (cpp/get_event_type event)
                 peer-ptr (cpp/get_event_peer event)
@@ -230,7 +233,6 @@
                       (= event-type 3)
                       (let [data-copy (cpp/get_event_data_copy event)
                             _ (cpp/destroy_event_packet event)
-                            ;; Convert char* to Jank string (str coerces to string)
                             data-str (when data-copy (str data-copy))
                             _ (cpp/free_data_copy data-copy)]
                         {:type :receive
@@ -240,8 +242,8 @@
 
                       :else
                       {:type :none})]
-            ;; Continue polling with 0 timeout to drain all pending events
-            (recur (conj events evt)))
+            ;; Continue polling with 0 timeout to drain
+            (recur (conj events evt) false))
           ;; No more events
           events)))))
 

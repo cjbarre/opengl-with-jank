@@ -1,0 +1,247 @@
+(ns engine.networking.prediction
+  "Client-side prediction for the local player.
+
+   The local player runs physics locally for instant response.
+   When server snapshots arrive, we reconcile by:
+   1. Comparing our predicted state at that sequence vs server's state
+   2. If mismatch: reset to server state, replay unacknowledged commands
+   3. Smoothly interpolate any correction to avoid visual jitter")
+
+(require '[engine.networking.interpolation :as interp])
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def COMMAND_BUFFER_SIZE 64)        ; Max unacknowledged commands to store
+(def ERROR_CORRECTION_TIME 100.0)   ; ms to smooth out prediction errors (float)
+(def POSITION_ERROR_THRESHOLD 0.1)  ; Units of acceptable position difference
+
+;; =============================================================================
+;; Prediction State
+;; =============================================================================
+
+(def DEFAULT_SPAWN_POSITION [0.0 50.0 0.0])
+
+(defn make-prediction-state
+  "Create initial prediction state."
+  []
+  {:commands []                    ; [{:sequence n :input {...} :result-state {...}}]
+   :next-sequence 1                ; Next command sequence number
+   :last-ack-sequence 0            ; Last command server acknowledged
+   :predicted-state {:position DEFAULT_SPAWN_POSITION  ; Start at spawn
+                     :velocity [0.0 0.0 0.0]
+                     :grounded? true
+                     :jump-z-start nil
+                     :pitch 0.0
+                     :yaw -90.0}
+   :server-state nil               ; Last received server state
+   :error-offset [0.0 0.0 0.0]     ; Position error being smoothed out (floats)
+   :error-time-remaining 0.0})     ; Time left to smooth error (float)
+
+;; =============================================================================
+;; Command Management
+;; =============================================================================
+
+(defn create-command
+  "Create a new command with the next sequence number."
+  [pred-state input]
+  (let [seq-num (:next-sequence pred-state)]
+    {:sequence seq-num
+     :input input
+     :result-state nil}))  ; Will be filled after prediction
+
+(defn add-command
+  "Add a command to the buffer, updating sequence number."
+  [pred-state command result-state]
+  (let [cmd-with-result (assoc command :result-state result-state)
+        old-commands (:commands pred-state)
+        all-commands (conj old-commands cmd-with-result)
+        ;; Keep only recent commands - simple drop from front if too many
+        commands (if (> (count all-commands) COMMAND_BUFFER_SIZE)
+                   (vec (drop (- (count all-commands) COMMAND_BUFFER_SIZE) all-commands))
+                   all-commands)]
+    (-> pred-state
+        (assoc :commands commands)
+        (update :next-sequence inc)
+        (assoc :predicted-state result-state))))
+
+(defn remove-acknowledged-commands
+  "Remove commands that server has acknowledged."
+  [pred-state ack-sequence]
+  (let [commands (vec (filter #(> (:sequence %) ack-sequence)
+                              (:commands pred-state)))]
+    (-> pred-state
+        (assoc :commands commands)
+        (assoc :last-ack-sequence ack-sequence))))
+
+(defn get-unacknowledged-commands
+  "Get all commands not yet acknowledged by server."
+  [pred-state]
+  (vec (filter #(> (:sequence %) (:last-ack-sequence pred-state))
+               (:commands pred-state))))
+
+;; =============================================================================
+;; State Comparison
+;; =============================================================================
+
+(defn extract-comparable-state
+  "Extract fields we compare for prediction validation."
+  [entity-state]
+  {:position (:position entity-state)
+   :velocity (:velocity entity-state)
+   :grounded? (:grounded? entity-state)})
+
+(defn states-match?
+  "Check if predicted and server states match within threshold."
+  [predicted-state server-state]
+  (when (and predicted-state server-state)
+    (let [[px py pz] (:position predicted-state)
+          [sx sy sz] (:position server-state)
+          dx (- px sx)
+          dy (- py sy)
+          dz (- pz sz)
+          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))]
+      (< dist-sq (* POSITION_ERROR_THRESHOLD POSITION_ERROR_THRESHOLD)))))
+
+(defn calc-position-error
+  "Calculate position error between predicted and server state."
+  [predicted-state server-state]
+  (if (and predicted-state server-state)
+    (let [[px py pz] (:position predicted-state)
+          [sx sy sz] (:position server-state)]
+      [(- px sx) (- py sy) (- pz sz)])
+    [0.0 0.0 0.0]))
+
+;; =============================================================================
+;; Prediction and Reconciliation
+;; =============================================================================
+
+(defn predict
+  "Run local prediction for a single command.
+
+   physics-fn: (fn [state input delta-time] -> new-state)
+               The same physics function used on server."
+  [pred-state input physics-fn delta-time]
+  (let [current-state (:predicted-state pred-state)
+        command (create-command pred-state input)
+        new-state (physics-fn current-state input delta-time)]
+    (add-command pred-state command new-state)))
+
+(defn find-command-at-sequence
+  "Find the command with the given sequence number."
+  [pred-state sequence]
+  (first (filter #(= (:sequence %) sequence) (:commands pred-state))))
+
+(defn replay-commands
+  "Replay commands from a given state using physics-fn.
+
+   start-state: Server's authoritative state
+   commands: Commands to replay
+   physics-fn: Physics function"
+  [start-state commands physics-fn]
+  (reduce
+   (fn [state cmd]
+     (let [input (:input cmd)
+           dt (get input :delta-time 0.016)]
+       (physics-fn state input dt)))
+   start-state
+   commands))
+
+(defn reconcile
+  "Reconcile prediction with server snapshot.
+
+   snapshot: Server snapshot containing our entity state
+   our-entity-id: ID of local player entity
+   physics-fn: Physics function for replaying commands
+
+   Returns updated prediction state."
+  [pred-state snapshot our-entity-id physics-fn]
+  (let [server-entities (:entities snapshot)
+        server-state (get server-entities our-entity-id)
+        ack-sequence (get-in snapshot [:last-processed-commands our-entity-id] 0)]
+
+    (if (nil? server-state)
+      ;; Server doesn't have our entity yet
+      pred-state
+
+      ;; Find our predicted state at the acknowledged sequence
+      (let [cmd-at-ack (find-command-at-sequence pred-state ack-sequence)
+            predicted-at-ack (:result-state cmd-at-ack)]
+
+        (if (states-match? predicted-at-ack server-state)
+          ;; Prediction was correct, just remove acked commands
+          (-> pred-state
+              (remove-acknowledged-commands ack-sequence)
+              (assoc :server-state server-state))
+
+          ;; Prediction error - need to reconcile
+          (let [;; Calculate error for smooth correction
+                current-predicted (:predicted-state pred-state)
+                error (calc-position-error current-predicted server-state)
+
+                ;; Get unacknowledged commands to replay
+                unacked (get-unacknowledged-commands
+                         (remove-acknowledged-commands pred-state ack-sequence))
+
+                ;; Replay from server state
+                corrected-state (replay-commands server-state unacked physics-fn)]
+
+            (-> pred-state
+                (remove-acknowledged-commands ack-sequence)
+                (assoc :predicted-state corrected-state)
+                (assoc :server-state server-state)
+                (assoc :error-offset error)
+                (assoc :error-time-remaining ERROR_CORRECTION_TIME))))))))
+
+;; =============================================================================
+;; Error Smoothing
+;; =============================================================================
+
+(defn update-error-smoothing
+  "Update error smoothing over time.
+   Returns updated prediction state with reduced error offset."
+  [pred-state delta-ms]
+  (let [time-remaining (:error-time-remaining pred-state)]
+    (if (<= time-remaining 0.0)
+      (assoc pred-state :error-offset [0.0 0.0 0.0])
+      (let [;; Linear decay
+            t (/ delta-ms time-remaining)
+            t (min t 1.0)
+            [ex ey ez] (:error-offset pred-state)
+            new-offset [(* ex (- 1.0 t))
+                        (* ey (- 1.0 t))
+                        (* ez (- 1.0 t))]]
+        (-> pred-state
+            (assoc :error-offset new-offset)
+            (update :error-time-remaining - delta-ms))))))
+
+(defn get-render-position
+  "Get the render position with error smoothing applied."
+  [pred-state]
+  (let [state (:predicted-state pred-state)
+        [px py pz] (:position state)
+        [ex ey ez] (:error-offset pred-state)]
+    [(- px ex) (- py ez) (- pz ez)]))
+
+(defn get-render-state
+  "Get the predicted state adjusted for rendering (with error smoothing)."
+  [pred-state]
+  (when-let [state (:predicted-state pred-state)]
+    (let [render-pos (get-render-position pred-state)]
+      (assoc state :position render-pos))))
+
+;; =============================================================================
+;; Initialization
+;; =============================================================================
+
+(defn init-from-snapshot
+  "Initialize prediction state from a server snapshot."
+  [pred-state snapshot entity-id]
+  (let [server-state (get-in snapshot [:entities entity-id])]
+    (if server-state
+      (-> pred-state
+          (assoc :predicted-state server-state)
+          (assoc :server-state server-state)
+          (assoc :last-ack-sequence 0))
+      pred-state)))
