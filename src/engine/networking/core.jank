@@ -123,10 +123,9 @@
   "Create a server host listening on the given port.
    Returns a boxed ENetHost* or nil on failure."
   [{:keys [port max-clients] :or {max-clients 32} :as args}]
-  (clet [host (cpp/create_server_host (cpp/int port) (cpp/int max-clients))
-         :when (cpp/! host)
-         :error nil]
-    (cpp/box host)))
+  (let [host (cpp/create_server_host (cpp/int port) (cpp/int max-clients))]
+    (when-not (cpp/! host)
+      (cpp/box host))))
 
 (defn create-client
   "Create a client host (not bound to any port).

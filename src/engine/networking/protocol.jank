@@ -1,0 +1,359 @@
+(ns engine.networking.protocol
+  "High-level networking protocol layer.
+   Provides a clean Jank interface for networked games with:
+   - Automatic EDN serialization of messages
+   - Atom-based connection state management
+   - Resource cleanup macros
+   - No exposed C types"
+  (:require [engine.networking.interface :as enet]
+            [engine.macros :refer [clet]]))
+
+;; =============================================================================
+;; EDN Serialization
+;; =============================================================================
+
+(defn encode-message
+  "Serialize a Jank map to an EDN string for transmission."
+  [message]
+  (pr-str message))
+
+(defn decode-message
+  "Deserialize an EDN string back to a Jank map.
+   Returns nil if data is nil."
+  [data]
+  (when data
+    (read-string data)))
+
+;; =============================================================================
+;; Internal Helpers
+;; =============================================================================
+
+(defn- current-time-ms
+  "Returns current time in milliseconds (simplified - just returns 0 for now)."
+  []
+  ;; TODO: Implement proper time once available in Jank
+  0)
+
+(defn- make-connection
+  "Create a connection info map from a peer."
+  [peer-id peer]
+  {:id peer-id
+   :status :connected
+   :connected-at (current-time-ms)
+   :user-data {}
+   :_peer peer})
+
+(defn- connection-info
+  "Return public connection info (without internal fields)."
+  [conn]
+  (dissoc conn :_peer))
+
+;; =============================================================================
+;; Server API
+;; =============================================================================
+
+(defn start-server
+  "Start a network server.
+
+   Options:
+     :port        - Port to listen on (required)
+     :max-clients - Maximum connections (default 32)
+
+   Returns a network state atom, or nil on failure."
+  [{:keys [port max-clients] :or {max-clients 32}}]
+  (when (enet/init!)
+    (if-let [host (enet/create-server {:port port :max-clients max-clients})]
+      (atom {:role :server
+             :status :listening
+             :port port
+             :connections {}
+             :_host host
+             :_initialized true})
+      (do
+        (enet/shutdown!)
+        nil))))
+
+(defn stop
+  "Stop a network server or client and clean up all resources."
+  [network-state]
+  (when-let [state @network-state]
+    (when (:_host state)
+      ;; Disconnect all peers for server
+      (when (= :server (:role state))
+        (doseq [[_id conn] (:connections state)]
+          (when-let [peer (:_peer conn)]
+            (enet/disconnect-now peer))))
+
+      ;; Destroy host
+      (enet/destroy-host (:_host state)))
+
+    ;; Shutdown ENet if we initialized it
+    (when (:_initialized state)
+      (enet/shutdown!))
+
+    ;; Reset state
+    (reset! network-state {:role (:role state)
+                           :status :stopped
+                           :connections {}})))
+
+(defmacro with-server
+  "Run body with a server, ensuring cleanup on exit.
+
+   Usage:
+     (with-server {:port 7777} [server]
+       (loop []
+         (poll-events! server 100)
+         (recur)))"
+  [opts bindings & body]
+  `(let [~(first bindings) (start-server ~opts)]
+     (if ~(first bindings)
+       (try
+         ~@body
+         (finally
+           (stop ~(first bindings))))
+       (println "ERROR: Failed to start server"))))
+
+;; =============================================================================
+;; Client API
+;; =============================================================================
+
+(defn start-client
+  "Start a network client and initiate connection to server.
+
+   Options:
+     :address - Server hostname/IP (required)
+     :port    - Server port (required)
+
+   Returns a network state atom, or nil on failure.
+   Note: Connection is not complete until a :connect event is received."
+  [{:keys [address port]}]
+  (clet [init-ok (enet/init!)
+         :when (not init-ok)
+         :error nil
+
+         host (enet/create-client)
+         :when (nil? host)
+         :error (do (enet/shutdown!) nil)
+
+         peer (enet/connect host {:address address :port port})
+         :when (nil? peer)
+         :error (do (enet/destroy-host host)
+                    (enet/shutdown!)
+                    nil)]
+
+        (atom {:role :client
+               :status :connecting
+               :server-address address
+               :server-port port
+               :connections {}
+               :_host host
+               :_server-peer peer
+               :_initialized true})))
+
+(defmacro with-client
+  "Run body with a client connection, ensuring cleanup on exit.
+
+   Usage:
+     (with-client {:address \"127.0.0.1\" :port 7777} [client]
+       (when (wait-for-connection! client 5000)
+         (send! client {:message {:type :hello}})))"
+  [opts bindings & body]
+  `(let [~(first bindings) (start-client ~opts)]
+     (if ~(first bindings)
+       (try
+         ~@body
+         (finally
+           (stop ~(first bindings))))
+       (println "ERROR: Failed to start client"))))
+
+(defn status
+  "Returns the current connection status keyword."
+  [network-state]
+  (:status @network-state))
+
+(defn connected?
+  "Returns true if the client is connected to the server."
+  [network-state]
+  (= :connected (status network-state)))
+
+(defn connections
+  "Returns a map of connection-id -> connection info (without internal fields)."
+  [network-state]
+  (->> (:connections @network-state)
+       (map (fn [[id conn]] [id (connection-info conn)]))
+       (into {})))
+
+(defn connection-count
+  "Returns the number of active connections."
+  [network-state]
+  (count (:connections @network-state)))
+
+;; =============================================================================
+;; Messaging
+;; =============================================================================
+
+(defn send!
+  "Send structured data over the network.
+
+   For servers:
+     :to      - Connection ID to send to (required)
+     :message - Map to send (will be EDN-encoded)
+     :reliable - true (default) or false
+
+   For clients:
+     :message - Map to send (will be EDN-encoded)
+     :reliable - true (default) or false
+
+   Returns true on success, false on failure."
+  [network-state {:keys [to message reliable] :or {reliable true}}]
+  (let [state @network-state
+        encoded (encode-message message)]
+    (if (= :server (:role state))
+      ;; Server: send to specific peer
+      (if-let [conn (get-in state [:connections to])]
+        (let [peer (:_peer conn)
+              result (if reliable
+                       (enet/send-reliable peer encoded)
+                       (enet/send-unreliable peer encoded))]
+          (>= result 0))
+        false)
+      ;; Client: send to server
+      (if-let [peer (:_server-peer state)]
+        (let [result (if reliable
+                       (enet/send-reliable peer encoded)
+                       (enet/send-unreliable peer encoded))]
+          (>= result 0))
+        false))))
+
+(defn broadcast!
+  "Broadcast structured data to all connected peers (server only).
+
+   Options:
+     :message  - Map to send (will be EDN-encoded)
+     :reliable - true (default) or false
+
+   Returns true on success."
+  [network-state {:keys [message reliable] :or {reliable true}}]
+  (let [state @network-state]
+    (when (= :server (:role state))
+      (let [encoded (encode-message message)
+            host (:_host state)]
+        (if reliable
+          (enet/broadcast-reliable host encoded)
+          (enet/broadcast-unreliable host encoded))
+        true))))
+
+;; =============================================================================
+;; Event Polling
+;; =============================================================================
+
+(defn poll-events!
+  "Poll for network events and update connection state.
+
+   Returns a vector of high-level event maps:
+     {:type :connect, :connection-id id}
+     {:type :disconnect, :connection-id id}
+     {:type :message, :connection-id id, :message decoded-data}
+
+   Timeout is in milliseconds (0 for non-blocking)."
+  [network-state timeout-ms]
+  (let [state @network-state
+        host (:_host state)
+        role (:role state)]
+    (when host
+      (let [raw-events (enet/poll-events host timeout-ms)]
+        (->> raw-events
+             (map (fn [event]
+                    (case (:type event)
+                      :connect
+                      (let [peer-id (:peer-id event)
+                            peer (:peer event)
+                            conn (make-connection peer-id peer)]
+                        ;; Update state with new connection
+                        (swap! network-state assoc-in [:connections peer-id] conn)
+                        ;; For client, mark as connected
+                        (when (= :client role)
+                          (swap! network-state assoc :status :connected))
+                        {:type :connect
+                         :connection-id peer-id})
+
+                      :disconnect
+                      (let [peer-id (:peer-id event)]
+                        ;; Remove connection from state
+                        (swap! network-state update :connections dissoc peer-id)
+                        ;; For client, mark as disconnected
+                        (when (= :client role)
+                          (swap! network-state assoc :status :disconnected))
+                        {:type :disconnect
+                         :connection-id peer-id})
+
+                      :receive
+                      (let [peer-id (:peer-id event)
+                            decoded (decode-message (:data event))]
+                        {:type :message
+                         :connection-id peer-id
+                         :message decoded
+                         :raw (:data event)})
+
+                      ;; Ignore unknown event types
+                      nil)))
+             (filter some?)
+             vec)))))
+
+(defn wait-for-connection!
+  "Block until connected or timeout (client only).
+
+   Returns true if connected, false if timed out.
+   Timeout is in milliseconds."
+  [network-state timeout-ms]
+  (let [poll-interval 50
+        max-attempts (/ timeout-ms poll-interval)]
+    (loop [attempts 0]
+      (if (connected? network-state)
+        true
+        (if (< attempts max-attempts)
+          (do
+            (poll-events! network-state poll-interval)
+            (recur (inc attempts)))
+          false)))))
+
+(defn disconnect-peer!
+  "Disconnect a specific peer (server only).
+   Returns true if peer was found and disconnected."
+  [network-state connection-id]
+  (let [state @network-state]
+    (when (= :server (:role state))
+      (if-let [conn (get-in state [:connections connection-id])]
+        (do
+          (enet/disconnect (:_peer conn))
+          (swap! network-state update :connections dissoc connection-id)
+          true)
+        false))))
+
+(defn flush!
+  "Flush any pending outgoing packets."
+  [network-state]
+  (when-let [host (:_host @network-state)]
+    (enet/flush-host host)))
+
+;; =============================================================================
+;; Server Loop Helper
+;; =============================================================================
+
+(defn run-server-loop!
+  "Run a server event loop. Calls handler for each event.
+
+   Handler receives: network-state, event
+   Handler should return truthy to continue, falsy to stop.
+
+   Options:
+     :poll-timeout - Timeout for each poll in ms (default 100)"
+  [network-state handler {:keys [poll-timeout] :or {poll-timeout 100}}]
+  (loop []
+    (let [events (poll-events! network-state poll-timeout)
+          continue (reduce (fn [acc event]
+                            (and acc (handler network-state event)))
+                          true
+                          events)]
+      (when continue
+        (recur)))))

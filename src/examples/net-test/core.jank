@@ -1,130 +1,103 @@
 (ns examples.net-test.core
-  (:require [engine.networking.interface :as net]))
+  "Network test example demonstrating the high-level networking API.
+   Run with: ./run net-test server
+         or: ./run net-test client"
+  (:require [engine.networking.protocol :as net]))
 
-(cpp/raw "#include <unistd.h>
-          #include <stdlib.h>")
+(defn handle-server-event
+  "Handle a single server event. Returns true to continue, false to stop."
+  [server event]
+  (case (:type event)
+    :connect
+    (do
+      (println (str "Client " (:connection-id event) " connected"))
+      true)
 
-(defn sleep-ms
-  "Sleep for the given number of milliseconds."
-  [ms]
-  (cpp/usleep (* (cpp/int ms) 1000)))
+    :disconnect
+    (do
+      (println (str "Client " (:connection-id event) " disconnected"))
+      true)
+
+    :message
+    (let [msg (:message event)
+          conn-id (:connection-id event)]
+      (println (str "Received from client " conn-id ": " msg))
+      ;; Echo the message back with :echo type
+      (net/send! server {:to conn-id
+                         :message {:type :echo
+                                   :original msg}})
+      true)
+
+    ;; Continue on unknown events
+    true))
 
 (defn run-server
   "Run an echo server on port 7777."
   []
   (println "Starting server on port 7777...")
-  (when-not (net/init!)
-    (println "ERROR: Failed to initialize ENet")
-    (cpp/exit 1))
 
-  (let [host (net/create-server {:port 7777 :max-clients 32})]
-    (when-not host
-      (println "ERROR: Failed to create server")
-      (net/shutdown!)
-      (cpp/exit 1))
-
-    (println "Server listening. Press Ctrl+C to stop.")
-
-    ;; Main server loop
-    (loop [running true]
-      (when running
-        (let [events (net/poll-events host 100)]
-          (doseq [event events]
-            (case (:type event)
-              :connect
-              (println (str "Client " (:peer-id event) " connected"))
-
-              :disconnect
-              (println (str "Client " (:peer-id event) " disconnected"))
-
-              :receive
-              (let [data (:data event)
-                    peer (:peer event)]
-                (println (str "Received from client " (:peer-id event) ": " data))
-                ;; Echo the message back
-                (net/send-reliable peer (str "Echo: " data)))
-
-              ;; Ignore other event types
-              nil)))
-        (recur true)))
-
-    (net/destroy-host host)
-    (net/shutdown!)
-    (println "Server stopped.")))
+  (let [server (net/start-server {:port 7777 :max-clients 32})]
+    (if server
+      (do
+        (println "Server listening. Press Ctrl+C to stop.")
+        ;; Use the helper loop function
+        (net/run-server-loop! server handle-server-event {:poll-timeout 100})
+        ;; Cleanup (only reached if loop exits)
+        (net/stop server)
+        (println "Server stopped."))
+      (println "ERROR: Failed to start server"))))
 
 (defn run-client
-  "Connect to server at localhost:7777 and send a test message."
+  "Connect to server at localhost:7777 and send test messages."
   []
   (println "Starting client, connecting to localhost:7777...")
-  (when-not (net/init!)
-    (println "ERROR: Failed to initialize ENet")
-    (cpp/exit 1))
 
-  (let [host (net/create-client)]
-    (when-not host
-      (println "ERROR: Failed to create client")
-      (net/shutdown!)
-      (cpp/exit 1))
+  (let [client (net/start-client {:address "127.0.0.1" :port 7777})]
+    (if client
+      (do
+        ;; Wait for connection with 5 second timeout
+        (if (net/wait-for-connection! client 5000)
+          (do
+            (println "Connected to server!")
 
-    (let [peer (net/connect host {:address "127.0.0.1" :port 7777})]
-      (when-not peer
-        (println "ERROR: Failed to initiate connection")
-        (net/destroy-host host)
-        (net/shutdown!)
-        (cpp/exit 1))
+            ;; Send a hello message
+            (net/send! client {:message {:type :hello
+                                         :text "Hello from Jank client!"}})
+            (println "Sent: {:type :hello, :text \"Hello from Jank client!\"}")
 
-      (println "Connecting...")
+            ;; Receive loop - exchange a few messages
+            (loop [msg-count 0]
+              (when (< msg-count 5)
+                (let [events (net/poll-events! client 1000)]
+                  (doseq [event events]
+                    (case (:type event)
+                      :message
+                      (println (str "Received: " (:message event)))
 
-      ;; Wait for connection with timeout
-      (loop [attempts 0
-             connected false]
-        (if (and (not connected) (< attempts 50))
-          (let [events (net/poll-events host 100)]
-            (if (some #(= :connect (:type %)) events)
-              (do
-                (println "Connected to server!")
-                ;; Send a hello message
-                (net/send-reliable peer "Hello from Jank client!")
-                (println "Sent: Hello from Jank client!")
-                (recur attempts true))
-              (recur (inc attempts) false)))
-          (when (not connected)
-            (println "ERROR: Connection timed out")
-            (net/destroy-host host)
-            (net/shutdown!)
-            (cpp/exit 1))))
+                      :disconnect
+                      (println "Disconnected from server")
 
-      ;; Receive loop - wait for echo and a few more messages
-      (loop [msg-count 0]
-        (when (< msg-count 5)
-          (let [events (net/poll-events host 1000)]
-            (doseq [event events]
-              (case (:type event)
-                :receive
-                (println (str "Received: " (:data event)))
+                      nil))
 
-                :disconnect
-                (do
-                  (println "Disconnected from server")
-                  (net/destroy-host host)
-                  (net/shutdown!)
-                  (cpp/exit 0))
+                  ;; Send another message if no events
+                  (when (empty? events)
+                    (let [msg {:type :ping
+                               :count (inc msg-count)
+                               :text (str "Message #" (inc msg-count))}]
+                      (net/send! client {:message msg})
+                      (println (str "Sent: " msg))))
 
-                nil))
-            (when (empty? events)
-              ;; Send another message
-              (net/send-reliable peer (str "Message #" (inc msg-count)))
-              (println (str "Sent: Message #" (inc msg-count))))
-            (recur (inc msg-count)))))
+                  (recur (inc msg-count)))))
 
-      ;; Disconnect gracefully
-      (println "Disconnecting...")
-      (net/disconnect peer)
-      ;; Give time for disconnect to process
-      (net/poll-events host 500)
-      (net/destroy-host host)))
+            (println "Disconnecting..."))
 
-  (net/shutdown!)
+          ;; Connection timeout
+          (println "ERROR: Connection timed out"))
+
+        ;; Cleanup
+        (net/stop client))
+      (println "ERROR: Failed to start client")))
+
   (println "Client finished."))
 
 (defn -main
