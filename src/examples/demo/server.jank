@@ -105,21 +105,15 @@
     (println (str "Client " connection-id " connected, spawning player " player-id))
 
     ;; Send welcome message with player ID
-    (println "DEBUG: Sending welcome...")
     (let [welcome-msg (snapshot/make-welcome-event player-id (:server-time state))]
-      (println "DEBUG: Welcome msg:" welcome-msg)
       (net/send! network {:to connection-id
                           :message welcome-msg
                           :reliable true}))
-    (println "DEBUG: Welcome sent")
 
     ;; Broadcast spawn event to all clients
-    (println "DEBUG: Broadcasting spawn...")
     (net/broadcast! network {:message (snapshot/make-player-spawned-event player-id connection-id)
                              :reliable true})
-    (println "DEBUG: Spawn broadcast done")
 
-    (println "DEBUG: Updating state...")
     (-> state
         (assoc-in [:clients connection-id] {:player-id player-id
                                              :last-command-seq 0})

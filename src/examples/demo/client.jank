@@ -20,6 +20,19 @@
             [engine.3d.animation.interface :as anim]
             [examples.demo.strafehelper.interface :as strafehelper]))
 
+;; C++ helper for identity bones (same as core.jank)
+(cpp/raw
+ "void client_upload_identity_bones(GLint loc, int count) {
+    std::vector<float> identity_bones(count * 16);
+    for (int i = 0; i < count; ++i) {
+      identity_bones[i*16 + 0] = 1.0f;
+      identity_bones[i*16 + 5] = 1.0f;
+      identity_bones[i*16 + 10] = 1.0f;
+      identity_bones[i*16 + 15] = 1.0f;
+    }
+    glUniformMatrix4fv(loc, count, GL_FALSE, identity_bones.data());
+  }")
+
 (cpp/raw "#include <GLFW/glfw3.h>")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
@@ -48,6 +61,110 @@
 
 (def DEFAULT_SERVER_ADDRESS "127.0.0.1")
 (def DEFAULT_SERVER_PORT 7777)
+
+;; =============================================================================
+;; Animation System
+;; =============================================================================
+
+(defn init-player-animation
+  "Initialize player animation system with ozz assets"
+  []
+  (println "Initializing player animation...")
+  (let [ctx (anim/create-context)
+        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+                                           :context ctx})
+        run-info (anim/load-animation {:path "models/player/run.ozz"
+                                       :context ctx})
+        jump-info (anim/load-animation {:path "models/player/crouch.ozz"
+                                        :context ctx})
+        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
+        _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
+        mesh-count (:count mesh-data)
+        vaos (vec (map (fn [i]
+                         (anim/create-skinned-vao {:meshes (:meshes mesh-data)
+                                                   :mesh-index i}))
+                       (range mesh-count)))]
+    (println "  Animation loaded: skeleton=" (:num-joints skeleton-info)
+             "meshes=" mesh-count)
+    {:animation/context ctx
+     :animation/current-index 0
+     :animation/duration (:duration run-info)
+     :animation/meshes (:meshes mesh-data)
+     :animation/mesh-count mesh-count
+     :animation/vaos vaos
+     :animation/time 0.0}))
+
+(defn render-animated-entity
+  "Render an animated player entity at the given position."
+  [skinned-shader anim-data position yaw]
+  (let [[px py pz] position
+        meshes (:animation/meshes anim-data)
+        vaos (:animation/vaos anim-data)
+        ctx (:animation/context anim-data)
+        mesh-count (:animation/mesh-count anim-data)]
+    ;; Set model matrix
+    (let [model-m (-> (cpp/identity_matrix)
+                      (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
+                      (cpp/glm.rotate (cpp/glm.radians (cpp/float (- 90.0 yaw)))
+                                      (math/gimmie :vec3 [0.0 1.0 0.0])))
+          model-m-loc (cpp/glGetUniformLocation skinned-shader "model")]
+      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+                              (cpp/glm.value_ptr model-m)))
+    ;; Set base color
+    (cpp/glUniform4f (cpp/glGetUniformLocation skinned-shader "uBaseColorFactor")
+                     (cpp/float 0.8) (cpp/float 0.6) (cpp/float 0.5) (cpp/float 1.0))
+    (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uHasBaseColorTex") 0)
+    ;; Render each mesh
+    (doseq [mesh-idx (range mesh-count)]
+      (let [loc (cpp/glGetUniformLocation skinned-shader "uBoneMatrices")
+            ctx-ptr (cpp/unbox cpp/AnimationContext* ctx)
+            meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
+        (cpp/compute_and_upload_skinning_matrices ctx-ptr meshes-ptr (cpp/int mesh-idx) loc)
+        (let [vao-data (nth vaos mesh-idx)
+              index-count (:index-count vao-data)]
+          (cpp/glBindVertexArray (:vao vao-data))
+          (cpp/glDrawElements (cpp/value "GL_TRIANGLES")
+                              index-count
+                              (cpp/value "GL_UNSIGNED_SHORT")
+                              cpp/nullptr))))))
+
+(defn update-player-animation
+  "Update animation sampling based on velocity and grounded state.
+   - In air (not grounded): crouch animation (index 1), held at 30%
+   - On ground moving: run animation (index 0), speed based on velocity
+   - On ground idle: run animation at frame 0 (standing pose)"
+  [anim-data velocity grounded delta-time]
+  (let [[vx _ vz] velocity
+        horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                     (cpp/* (cpp/float vz) (cpp/float vz))))
+        is-moving (and grounded (> horiz-speed 0.5))
+        current-time (double (:animation/time anim-data 0.0))
+        run-duration (double (:animation/duration anim-data 1.0))]
+    (cond
+      ;; In air - show crouch animation held at 30%
+      (not grounded)
+      (do
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 1  ; crouch
+                      :time-ratio 0.3})
+        (assoc anim-data :animation/time 0.0))
+
+      ;; On ground and moving - play run animation
+      is-moving
+      (let [new-time (mod (+ current-time (* delta-time (/ horiz-speed 8.0))) run-duration)
+            time-ratio (/ new-time run-duration)]
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 0  ; run
+                      :time-ratio time-ratio})
+        (assoc anim-data :animation/time new-time))
+
+      ;; On ground idle - hold at run frame 0
+      :else
+      (do
+        (anim/sample {:context (:animation/context anim-data)
+                      :animation-index 0  ; run
+                      :time-ratio 0.0})
+        (assoc anim-data :animation/time 0.0)))))
 
 ;; =============================================================================
 ;; Client State
@@ -273,7 +390,7 @@
 
 (defn draw-world
   "Draw the game world."
-  [{:keys [shader level-model player-model client-state] :as context}]
+  [{:keys [shader skinned-shader level-model player-anim-data client-state] :as context}]
   (swap! *frame-count* inc)
   (cpp/glClearColor 0.2 0.3 0.3 1.0)
   (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT")
@@ -283,6 +400,7 @@
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                                           (cpp/float 0.1)
                                           (cpp/float 100.0))]
+    ;; Render level with basic shader
     (cpp/glUseProgram shader)
     (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
       (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE")
@@ -307,19 +425,28 @@
                                   (cpp/glm.value_ptr (cpp/identity_matrix))))
         ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"}))
 
-      ;; Render local player
-      (when player-model
-        (render-entity-at-position shader local-pos local-yaw player-model))
+      ;; Switch to skinned shader for player
+      (cpp/glDisable (cpp/value "GL_CULL_FACE"))
+      (cpp/glUseProgram skinned-shader)
+      (let [projection-m-loc (cpp/glGetUniformLocation skinned-shader "projection")]
+        (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE")
+                                (cpp/glm.value_ptr projection-m)))
+      ;; Set camera for skinned shader too
+      (render-camera skinned-shader local-pos local-yaw local-pitch)
 
-      ;; Render remote players (interpolated)
+      ;; Render local player (animated)
+      (when player-anim-data
+        (render-animated-entity skinned-shader @player-anim-data local-pos local-yaw))
+
+      ;; Render remote players (interpolated, animated)
       (let [interp-state (:interp-state state)
             remote-entities (interp/get-all-entity-render-states interp-state)]
         (doseq [[entity-id entity-state] remote-entities]
           (when (not= entity-id my-id)
             (let [pos (:lerp-origin entity-state)
                   [_pitch yaw] (:lerp-angles entity-state)]
-              (when (and player-model pos)
-                (render-entity-at-position shader pos (or yaw 0.0) player-model)))))))))
+              (when (and player-anim-data pos)
+                (render-animated-entity skinned-shader @player-anim-data pos (or yaw 0.0))))))))))
 
 ;; =============================================================================
 ;; Main Client Loop
@@ -338,15 +465,11 @@
 
       ;; Process network events
       (let [events (net/poll-events! network 0)]
-        (when (pos? (count events))
-          (println "Got" (count events) "events"))
         (doseq [event events]
           (case (:type event)
             :message
-            (do
-              (println "Received:" (:type (:message event)))
-              (swap! client-state handle-network-message
-                     (:message event) (:level-collision @client-state)))
+            (swap! client-state handle-network-message
+                   (:message event) (:level-collision @client-state))
 
             :disconnect
             (do (println "Disconnected from server")
@@ -407,7 +530,19 @@
         (swap! client-state update :interp-state interp/update-interpolation dt-ms)
 
         ;; Update prediction error smoothing
-        (swap! client-state update :pred-state pred/update-error-smoothing dt-ms))
+        (swap! client-state update :pred-state pred/update-error-smoothing dt-ms)
+
+        ;; Update player animation
+        (when-let [anim-data-atom (:player-anim-data context)]
+          (let [render-state (pred/get-render-state (:pred-state state))
+                velocity (or (:velocity render-state) [0.0 0.0 0.0])
+                [_ vy _] velocity
+                ;; Determine grounded: use physics state if available, otherwise infer from velocity
+                grounded (if (contains? render-state :grounded?)
+                           (:grounded? render-state)
+                           ;; If no grounded info, infer: grounded if not moving vertically
+                           (< (abs vy) 0.1))]
+            (swap! anim-data-atom update-player-animation velocity grounded dt))))
 
       ;; Render
       (draw-world context)
@@ -471,6 +606,13 @@
          _ (cpp/glUseProgram shader)
          _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
 
+         ;; Skinned shader for animated player
+         skinned-shader (shaders/load-shader-program
+                         {:vertex-shader-path "shaders/skinned_vertex.glsl"
+                          :fragment-shader-path "shaders/skinned_fragment.glsl"})
+         _ (cpp/glUseProgram skinned-shader)
+         _ (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uBaseColorTex") 0)
+
          text-shader (shaders/load-shader-program
                       {:vertex-shader-path "shaders/text_vertex.glsl"
                        :fragment-shader-path "shaders/text_fragment.glsl"})
@@ -487,10 +629,8 @@
          level-collision (when-let [col (first (:collision level-loaded))]
                           (collision/prepare-collision-mesh col))
 
-         ;; Load player model (static version for now)
-         _ (println "Loading player model...")
-         player-model (gltf/load {:model (gltf/parse {:path "models/player.gltf"})
-                                  :base-path "models/"})
+         ;; Initialize player animation
+         player-anim-data (init-player-animation)
 
          ;; Create client state
          client-state (atom (-> (make-client-state)
@@ -510,10 +650,8 @@
 
              ;; Process any events received during connection (e.g., welcome message)
              (let [events (net/poll-events! network 100)]
-               (println "DEBUG: Processing" (count events) "initial events")
                (doseq [event events]
                  (when (= :message (:type event))
-                   (println "DEBUG: Initial message:" (:type (:message event)))
                    (swap! client-state handle-network-message
                           (:message event) level-collision))))
 
@@ -522,8 +660,9 @@
                :network network
                :client-state client-state
                :shader shader
+               :skinned-shader skinned-shader
                :level-model level-loaded
-               :player-model player-model
+               :player-anim-data (atom player-anim-data)
                :gfx2d gfx2d
                :delta-time (math/gimmie :boxed :float 0.0)
                :last-frame (math/gimmie :boxed :float 0.0)
