@@ -1,0 +1,257 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      skip_cache:
+        description: 'Skip LLVM cache (force rebuild)'
+        type: boolean
+        default: false
+
+env:
+  JANK_REPO: cjbarre/jank
+  JANK_BRANCH: add-windows
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x86_64
+            arch: x64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            arch: arm64
+          - os: macos-14
+            platform: macos-arm64
+            arch: arm64
+          - os: macos-13
+            platform: macos-x86_64
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+    name: Build (${{ matrix.platform }})
+
+    steps:
+      - name: Checkout game repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build git git-lfs \
+            libssl-dev libdouble-conversion-dev pkg-config \
+            zlib1g-dev libffi-dev libbz2-dev \
+            libgl1-mesa-dev libglew-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
+            doctest-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja git-lfs openssl double-conversion pkg-config python gnupg zlib doctest
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
+
+      - name: Setup Clojure
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          cli: latest
+
+      - name: Cache LLVM build
+        id: cache-llvm
+        if: ${{ !inputs.skip_cache }}
+        uses: actions/cache@v4
+        with:
+          path: jank/compiler+runtime/build/llvm-install
+          key: llvm-${{ matrix.platform }}-${{ hashFiles('jank/compiler+runtime/bin/build-clang') }}
+          restore-keys: |
+            llvm-${{ matrix.platform }}-
+
+      - name: Clone jank
+        run: |
+          git clone --recurse-submodules --depth 1 -b ${{ env.JANK_BRANCH }} \
+            https://github.com/${{ env.JANK_REPO }}.git jank
+
+      - name: Build LLVM (if not cached)
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        working-directory: jank/compiler+runtime
+        run: |
+          export CC=clang CXX=clang++
+          ./bin/build-clang
+        timeout-minutes: 180
+
+      - name: Build jank
+        working-directory: jank/compiler+runtime
+        run: |
+          export CC=$PWD/build/llvm-install/usr/local/bin/clang
+          export CXX=$PWD/build/llvm-install/usr/local/bin/clang++
+          ./bin/configure -GNinja -DCMAKE_BUILD_TYPE=Release -Djank_local_clang=on
+          ./bin/compile
+
+      - name: Add jank to PATH
+        run: |
+          echo "${{ github.workspace }}/jank/compiler+runtime/build" >> $GITHUB_PATH
+          echo "JANK_DIR=${{ github.workspace }}/jank/compiler+runtime" >> $GITHUB_ENV
+
+      - name: Verify jank installation
+        run: |
+          jank --help
+          jank run -e '(println "jank is working!")'
+
+      - name: Build game libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          LIBS_DIR="libs/${{ matrix.platform }}"
+
+          # Build GLFW if not present
+          if [ ! -f "$LIBS_DIR/glfw/lib/libglfw.so.3" ]; then
+            git clone --depth 1 -b 3.4 https://github.com/glfw/glfw.git /tmp/glfw
+            cmake -S /tmp/glfw -B /tmp/glfw/build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=ON \
+              -DGLFW_BUILD_EXAMPLES=OFF \
+              -DGLFW_BUILD_TESTS=OFF \
+              -DGLFW_BUILD_DOCS=OFF
+            cmake --build /tmp/glfw/build -j$(nproc)
+            mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include/GLFW"
+            cp /tmp/glfw/build/src/libglfw.so.3* "$LIBS_DIR/glfw/lib/"
+            cp /tmp/glfw/include/GLFW/*.h "$LIBS_DIR/glfw/include/GLFW/"
+          fi
+
+          # Build ozz-animation
+          if [ ! -f "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.so" ]; then
+            cmake -S third_party/ozz-animation -B third_party/ozz-animation/build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=ON \
+              -Dozz_build_tools=OFF \
+              -Dozz_build_samples=OFF \
+              -Dozz_build_tests=OFF
+            cmake --build third_party/ozz-animation/build -j$(nproc)
+            mkdir -p "$LIBS_DIR/ozz-animation/lib"
+            cp third_party/ozz-animation/build/src/animation/runtime/libozz_animation_r.so "$LIBS_DIR/ozz-animation/lib/"
+            cp third_party/ozz-animation/build/src/base/libozz_base_r.so "$LIBS_DIR/ozz-animation/lib/"
+            cp third_party/ozz-animation/build/src/geometry/runtime/libozz_geometry_r.so "$LIBS_DIR/ozz-animation/lib/"
+            cp -r third_party/ozz-animation/include/ozz "$LIBS_DIR/ozz-animation/include/"
+          fi
+
+          # Build stb
+          if [ ! -f "$LIBS_DIR/stb/lib/libstb_all.so" ]; then
+            mkdir -p "$LIBS_DIR/stb/lib"
+            cat > /tmp/stb_impl.c << 'STBEOF'
+          #define STBI_NO_THREAD_LOCALS 1
+          #define STB_IMAGE_IMPLEMENTATION
+          #include "stb_image.h"
+          #define STB_TRUETYPE_IMPLEMENTATION
+          #include "stb_truetype.h"
+          STBEOF
+            gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -Iinclude -lm
+          fi
+
+          # Build enet
+          if [ ! -f "$LIBS_DIR/enet/lib/libenet.so" ]; then
+            mkdir -p "$LIBS_DIR/enet/lib"
+            cat > /tmp/enet_impl.c << 'ENETEOF'
+          #define ENET_IMPLEMENTATION
+          #include "enet.h"
+          ENETEOF
+            gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -Iinclude
+          fi
+
+          # Build cgltf
+          if [ ! -f "$LIBS_DIR/cgltf/lib/libcgltf.so" ]; then
+            mkdir -p "$LIBS_DIR/cgltf/lib"
+            cat > /tmp/cgltf_impl.c << 'CGLTFEOF'
+          #define CGLTF_IMPLEMENTATION
+          #include "cgltf.h"
+          CGLTFEOF
+            gcc -shared -fPIC -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.so" /tmp/cgltf_impl.c -Iinclude
+          fi
+
+          mkdir -p "$LIBS_DIR/opengl/lib"
+
+      - name: Compile game (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          LIBS_DIR="libs/${{ matrix.platform }}"
+          export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib"
+
+          jank \
+            -I"$LIBS_DIR/glfw/include" -I libs/glm -I include -I"$LIBS_DIR/ozz-animation/include" \
+            -L"$LIBS_DIR/glfw/lib" -lglfw \
+            -L"$LIBS_DIR/ozz-animation/lib" -lozz_animation_r -lozz_base_r -lozz_geometry_r \
+            -L"$LIBS_DIR/stb/lib" -lstb_all \
+            -L"$LIBS_DIR/enet/lib" -lenet \
+            -L"$LIBS_DIR/cgltf/lib" -lcgltf \
+            -I/usr/include -L/usr/lib -lGL -lGLEW \
+            --module-path src \
+            compile examples.demo.core -o demo
+
+      - name: Compile game (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          LIBS_DIR="libs/${{ matrix.platform }}"
+
+          jank \
+            -I"$LIBS_DIR/glfw/include" -I libs/glm -I include -I"$LIBS_DIR/ozz-animation/include" \
+            -L"$LIBS_DIR/glfw/lib" -l"lib"glfw.3.dylib \
+            -L"$LIBS_DIR/ozz-animation/lib" -l"lib"ozz_animation_r.dylib -l"lib"ozz_base_r.dylib -l"lib"ozz_geometry_r.dylib \
+            -L"$LIBS_DIR/stb/lib" -l"lib"stb_all.dylib \
+            -L"$LIBS_DIR/enet/lib" -l"lib"enet.dylib \
+            -L"$LIBS_DIR/cgltf/lib" -l"lib"cgltf.dylib \
+            --module-path src \
+            compile examples.demo.core -o demo
+
+      - name: Package distribution (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          LIBS_DIR="libs/${{ matrix.platform }}"
+          mkdir -p dist/bin dist/lib
+
+          cp demo dist/bin/
+          cp "$LIBS_DIR"/*/lib/*.so* dist/lib/ 2>/dev/null || true
+          cp -r shaders textures models fonts dist/
+
+          cat > dist/demo_run << 'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$LD_LIBRARY_PATH"
+          cd "$SCRIPT_DIR"
+          exec "./bin/demo" "$@"
+          EOF
+          chmod +x dist/demo_run
+
+      - name: Package distribution (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          LIBS_DIR="libs/${{ matrix.platform }}"
+          mkdir -p dist/bin dist/lib
+
+          cp demo dist/bin/
+          cp "$LIBS_DIR"/*/lib/*.dylib dist/lib/ 2>/dev/null || true
+          cp -r shaders textures models fonts dist/
+
+          cat > dist/demo_run << 'EOF'
+          #!/bin/bash
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
+          cd "$SCRIPT_DIR"
+          exec "./bin/demo" "$@"
+          EOF
+          chmod +x dist/demo_run
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: demo-${{ matrix.platform }}
+          path: dist/
+          retention-days: 30
