@@ -32,11 +32,22 @@ The `compile` script produces:
 - `demo_run` - Launcher script that sets DYLD_LIBRARY_PATH
 - `demo_libs/` - Bundled dynamic libraries
 
+### Initial Setup
+
+After cloning, run the setup script to build dependencies:
+
+```bash
+git clone --recursive ...
+./setup
+```
+
 ### Development Dependencies
 - **Jank**: The main language/runtime (with AOT library fix applied)
 - **GLFW**: For window management and OpenGL context
 - **Clojure**: For classpath and dependency management
 - **STB Image**: C library for texture loading (included in `include/stb_image.h`)
+- **ozz-animation**: Skeletal animation (submodule, built by `./setup`)
+- **enet**: UDP networking for multiplayer
 
 ## Architecture
 
@@ -139,9 +150,11 @@ Custom macro `clet` provides C-style error checking:
 #### Required Libraries
 - **GLFW 3.x**: Window/context management (dylib in `libs/glfw/`)
 - **OpenGL 3.3+**: Core graphics API
-- **GLM**: Math library for vectors/matrices
+- **GLM**: Math library for vectors/matrices (submodule in `libs/glm/`)
 - **STB Image**: Header-only image loading (`include/stb_image.h`)
 - **cgltf**: Header-only glTF parser (`include/cgltf.h`)
+- **ozz-animation**: Skeletal animation runtime (submodule in `third_party/ozz-animation/`)
+- **enet**: UDP networking library (dylib in `libs/enet/`)
 
 #### Build System
 - Uses Jank compiler with custom flags for includes and linking
@@ -238,6 +251,18 @@ EOF
 
 clang -dynamiclib -o libs/cgltf/lib/libcgltf.dylib cgltf_impl.c \
   -Iinclude -install_name "@rpath/libcgltf.dylib"
+```
+
+#### ozz-animation (from submodule)
+
+ozz-animation is built automatically by `./setup`. If you need to rebuild manually:
+
+```bash
+cd third_party/ozz-animation/build
+make -j8
+cp src/base/libozz_base_r.dylib ../../../libs/ozz-animation/lib/
+cp src/animation/runtime/libozz_animation_r.dylib ../../../libs/ozz-animation/lib/
+cp src/geometry/runtime/libozz_geometry_r.dylib ../../../libs/ozz-animation/lib/
 ```
 
 ### Compile Script Workflow

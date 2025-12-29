@@ -27,11 +27,13 @@ src/
 
 You may notice that the engine modules are structured as components with an interface.jank and core.jank file. This is because I'm simulating a [Polylith](https://polylith.gitbook.io/polylith/) architecture.
 
-## Cloning
+## Getting Started
 
-This repo has submodules.
-
-`git clone --recursive ...`
+```bash
+git clone --recursive ...
+./setup    # builds dependencies (ozz-animation)
+./run      # run the demo
+```
 
 ## Points of Interest
 
