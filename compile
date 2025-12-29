@@ -54,6 +54,9 @@ install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpa
 install_name_tool -change /opt/homebrew/opt/zstd/lib/libzstd.1.dylib @rpath/libzstd.1.dylib "$BUILD_DIR/$OUTPUT"
 install_name_tool -change /opt/homebrew/opt/glfw/lib/libglfw.3.dylib @rpath/libglfw.3.dylib "$BUILD_DIR/$OUTPUT"
 
+# Add rpath to find bundled libraries relative to executable
+install_name_tool -add_rpath "@executable_path/${OUTPUT}_libs" "$BUILD_DIR/$OUTPUT"
+
 # Create a launcher script
 cat > "$BUILD_DIR/${OUTPUT}_run" << EOF
 #!/usr/bin/env bash
