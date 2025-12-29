@@ -23,6 +23,14 @@ cp src/geometry/runtime/libozz_geometry_r.dylib ../../../libs/ozz-animation/lib/
 
 cd ../../..
 
+# Build OpenGL stub library (allows linking via -lOpenGL instead of -framework)
+echo "Building OpenGL stub library..."
+mkdir -p libs/opengl/lib
+clang -dynamiclib -o libs/opengl/lib/libOpenGL.dylib \
+  -framework OpenGL \
+  -install_name "@rpath/libOpenGL.dylib" \
+  -Wl,-reexport_framework,OpenGL
+
 echo ""
 echo "=== Setup complete ==="
 echo "Run with: ./run"
