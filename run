@@ -11,4 +11,7 @@ jank \
   -Ilibs/glfw/include -Ilibs/glm -Iinclude -Ilibs/ozz-animation/include \
   -Llibs/glfw/lib -llibglfw.3.dylib \
   -Llibs/ozz-animation/lib -llibozz_animation_r.dylib -llibozz_base_r.dylib -llibozz_geometry_r.dylib \
+  -Llibs/stb/lib -llibstb_all.dylib \
+  -Llibs/enet/lib -llibenet.dylib \
+  -Llibs/cgltf/lib -llibcgltf.dylib \
   --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS
