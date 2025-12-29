@@ -665,18 +665,47 @@
 ;; Entry Point
 ;; =============================================================================
 
+(cpp/raw "
+  #include <string>
+  #include <cstdlib>
+
+  inline std::string parse_host(const char* addr) {
+    std::string s(addr);
+    // Strip tcp:// prefix
+    if (s.rfind(\"tcp://\", 0) == 0) s = s.substr(6);
+    // Find last colon for port
+    auto pos = s.rfind(':');
+    if (pos != std::string::npos) {
+      return s.substr(0, pos);
+    }
+    return s;
+  }
+
+  inline int parse_port(const char* addr, int default_port) {
+    std::string s(addr);
+    if (s.rfind(\"tcp://\", 0) == 0) s = s.substr(6);
+    auto pos = s.rfind(':');
+    if (pos != std::string::npos) {
+      return std::atoi(s.substr(pos + 1).c_str());
+    }
+    return default_port;
+  }
+")
+
 (defn run-client
   "Run the game client."
   ([] (run-client DEFAULT_SERVER_ADDRESS))
   ([server-address]
-   (println "Starting demo client, connecting to" server-address ":" DEFAULT_SERVER_PORT "...")
+   (let [host (str (cpp/parse_host server-address))
+         port (cpp/parse_port server-address DEFAULT_SERVER_PORT)]
+     (println "Starting demo client, connecting to" host ":" port "...")
 
    (let [_ (cpp/glfwInit)
          window (setup-window {:width 1280 :height 720 :name "Demo - Client"})
          _ (cpp/glfwSetInputMode
             (cpp/unbox cpp/GLFWwindow* window)
             gl/GLFW_CURSOR
-            gl/GLFW_CURSOR_NORMAL)
+            gl/GLFW_CURSOR_DISABLED)
 
          ;; Load shaders
          shader (shaders/load-shader-program
@@ -716,7 +745,7 @@
                                 (assoc :level-collision level-collision)))
 
          ;; Connect to server
-         network (net/start-client {:address server-address :port DEFAULT_SERVER_PORT})]
+         network (net/start-client {:address host :port port})]
 
      (if (nil? network)
        (println "ERROR: Failed to create client")
@@ -759,4 +788,4 @@
              (net/stop network)))))
 
      (cpp/glfwTerminate)
-     (println "Client finished."))))
+     (println "Client finished.")))))

@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Package the client for distribution
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+GAME="${1:-demo}"
+OUTPUT="$DIR/dist/${GAME}-dist"
+
+echo "Packaging client to: $OUTPUT/"
+
+rm -rf "$OUTPUT"
+mkdir -p "$OUTPUT"
+
+# Copy executable and launcher from dist/
+cp "$DIR/dist/$GAME" "$OUTPUT/"
+cp "$DIR/dist/${GAME}_run" "$OUTPUT/"
+cp -r "$DIR/dist/${GAME}_libs" "$OUTPUT/"
+
+# Copy runtime assets
+cp -r "$DIR/shaders" "$OUTPUT/"
+cp -r "$DIR/models" "$OUTPUT/"
+
+# Create a simple README
+cat > "$OUTPUT/README.txt" << 'EOF'
+Demo Game Client
+
+To run:
+  ./demo_run
+
+Controls:
+  WASD - Move
+  Mouse - Look
+  Space - Jump
+  ESC - Quit
+
+Multiplayer:
+  ./demo_run              - Solo mode
+  ./demo_run client       - Connect to localhost
+  ./demo_run client <ip>  - Connect to server
+EOF
+
+# Calculate size
+SIZE=$(du -sh "$OUTPUT" | cut -f1)
+echo ""
+echo "Package created: $OUTPUT/ ($SIZE)"
+echo ""
+echo "To share: cd dist && zip -r ${GAME}-dist.zip ${GAME}-dist"

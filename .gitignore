@@ -1,13 +1,24 @@
 # Build artifacts
 *.o
 *.so
-*.dylib
 *.a
 *.lib
 *.exe
 build/
 target/
 out/
+
+# Build output directory
+dist/
+
+# Pre-compiled libraries (built locally)
+libs/*/lib/
+
+# Test compilation output
+test_compile/
+
+# External source builds
+ozz-animation-src/
 
 # Clojure/Java
 *.class

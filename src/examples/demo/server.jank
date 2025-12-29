@@ -9,7 +9,7 @@
   (:require [engine.networking.protocol :as net]
             [engine.networking.snapshot :as snapshot]
             [examples.demo.shared :as shared]
-            [engine.3d.gltf.interface :as gltf]
+            [engine.3d.gltf.headless :as gltf]
             [engine.3d.collision.interface :as collision]))
 
 (cpp/raw "#include <thread>
@@ -194,10 +194,8 @@
 (defn load-level-collision
   "Load level collision mesh."
   []
-  (let [loaded (gltf/load {:model (gltf/parse {:path "models/hills.gltf"})
-                           :base-path "models/"})]
-    (when-let [col (first (:collision loaded))]
-      (collision/prepare-collision-mesh col))))
+  (when-let [col (first (gltf/load-collision {:path "models/hills.gltf"}))]
+    (collision/prepare-collision-mesh col)))
 
 (defn run-server
   "Run the game server.
@@ -244,3 +242,8 @@
 
         (net/stop network)
         (println "Server stopped.")))))
+
+(defn -main
+  "Server entry point for standalone server builds."
+  []
+  (run-server))

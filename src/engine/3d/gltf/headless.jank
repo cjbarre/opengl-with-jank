@@ -1,0 +1,188 @@
+(ns engine.3d.gltf.headless
+  "Headless glTF loader for server-side use.
+   Only loads mesh data (positions, indices) without GPU operations.
+   Use this for collision detection, physics, etc."
+  (:refer-clojure :exclude [load])
+  (:require [engine.macros :refer [clet]]))
+
+;; cgltf implementation is in libs/cgltf/lib/libcgltf.dylib for AOT compilation
+(cpp/raw "#include \"cgltf.h\"")
+
+(cpp/raw
+ "#include <glm/glm.hpp>
+  #include <cstring>")
+
+;; =============================================================================
+;; Attribute Parsing (no GPU)
+;; =============================================================================
+
+(defmulti parse-attribute (fn [attribute] (cpp/.-type (cpp/unbox cpp/cgltf_attribute* attribute))))
+
+(defmethod parse-attribute cpp/cgltf_attribute_type_position
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+        accessor (cpp/* (cpp/.-data attribute))
+        count (cpp/.-count accessor)
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:positions
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
+                    size (cpp/cgltf_num_components (cpp/.-type accessor))
+                    v ((cpp/type "std::array<float, 3>"))
+                    result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
+                    :when (cpp/! result)
+                    :error (throw (ex-info "Could not parse position attribute" {}))]
+                   [(cpp/aget v (cpp/int 0)) (cpp/aget v (cpp/int 1)) (cpp/aget v (cpp/int 2))]))
+           (range count))}))
+
+(defmethod parse-attribute cpp/cgltf_attribute_type_normal
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+        accessor (cpp/* (cpp/.-data attribute))
+        count (cpp/.-count accessor)
+        size (cpp/cgltf_num_components (cpp/.-type accessor))
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:normals
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
+                    v ((cpp/type "std::array<float, 3>"))
+                    result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
+                    :when (cpp/! result)
+                    :error (throw (ex-info "Could not parse normal attribute" {}))]
+                   [(cpp/aget v (cpp/int 0)) (cpp/aget v (cpp/int 1)) (cpp/aget v (cpp/int 2))]))
+           (range count))}))
+
+(defmethod parse-attribute :default
+  [attribute]
+  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)]
+    {(cpp/.-type attribute) :not-implemented}))
+
+(defn parse-indices
+  [primitive]
+  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)
+        accessor (cpp/* (cpp/.-indices primitive))
+        count (cpp/.-count accessor)
+        accessor-box (cpp/box (cpp/& accessor))]
+    {:indices
+     (mapv (fn [i]
+             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)]
+                   (cpp/cgltf_accessor_read_index accessor (cpp/cgltf_size i))))
+           (range count))}))
+
+(defn parse-mesh [mesh]
+  (let [mesh (cpp/unbox cpp/cgltf_mesh* mesh)
+        primitives-box (cpp/box (cpp/.-primitives mesh))]
+    {:name (str (cpp/.-name mesh))
+     :primitives
+     (vec
+      (for [j (range (cpp/.-primitives_count mesh))
+            :let [primitives     (cpp/unbox cpp/cgltf_primitive* primitives-box)
+                  primitive      (cpp/aget primitives (cpp/int j))
+                  attributes-box (cpp/box (cpp/.-attributes primitive))]]
+        (let [attribute-data (reduce
+                              (fn [acc k]
+                                (let [attributes (cpp/unbox cpp/cgltf_attribute* attributes-box)
+                                      attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                                  (if-let [result (parse-attribute attribute)]
+                                    (merge acc result)
+                                    acc)))
+                              {}
+                              (range (cpp/.-attributes_count primitive)))
+              indices-data (parse-indices (cpp/box (cpp/& primitive)))]
+          (merge attribute-data indices-data))))}))
+
+(cpp/raw
+ "inline cgltf_float* get_node_translation_headless(cgltf_node* node) {
+    return node->translation;
+  }")
+
+(cpp/raw
+ "inline cgltf_float* get_node_scale_headless(cgltf_node* node) {
+    return node->scale;
+  }")
+
+(cpp/raw
+ "inline bool node_is_colonly_headless(cgltf_node* node) {
+    if (!node || !node->name) return false;
+    const char* str = node->name;
+    const char* suffix = \"-colonly\";
+    size_t len = strlen(str);
+    size_t slen = 8;
+    if (len < slen) return false;
+    return strcmp(str + len - slen, suffix) == 0;
+  }")
+
+(defn parse-node
+  [node]
+  (clet [node (cpp/unbox cpp/cgltf_node* node)
+         :when (cpp/> (cpp/.-children_count node) (cpp/int 0))
+         :error (throw (ex-info "Parsing node children not implemented" {}))
+         mesh (cpp/box (cpp/.-mesh node))
+         node-name (str (cpp/.-name node))
+         is-collision (cpp/node_is_colonly_headless node)]
+        (cond-> {:name node-name
+                 :mesh (parse-mesh mesh)
+                 :collision-only (cpp/!= cpp/false is-collision)}
+          (cpp/!= cpp/false (cpp/.-has_translation node))
+          (assoc :translation
+                 (let [translation (cpp/get_node_translation_headless node)]
+                   [(cpp/aget translation (cpp/int 0))
+                    (cpp/aget translation (cpp/int 1))
+                    (cpp/aget translation (cpp/int 2))]))
+
+          (cpp/!= cpp/false (cpp/.-has_scale node))
+          (assoc :scale
+                 (let [scale (cpp/get_node_scale_headless node)]
+                   [(cpp/aget scale (cpp/int 0))
+                    (cpp/aget scale (cpp/int 1))
+                    (cpp/aget scale (cpp/int 2))]))
+
+          (cpp/!= cpp/false (cpp/.-has_rotation node))
+          (assoc :rotation (throw (ex-info "Node rotation not implemented" {})))
+
+          (cpp/!= cpp/false (cpp/.-has_matrix node))
+          (assoc :matrix (throw (ex-info "Node matrix not implemented" {}))))))
+
+(defn parse-scene
+  [scene]
+  (let [scene (cpp/unbox cpp/cgltf_scene* scene)
+        nodes (cpp/box (cpp/.-nodes scene))]
+    {:name (str (cpp/.-name scene))
+     :nodes (vec
+             (for [node-i (range (cpp/.-nodes_count scene))
+                   :let [nodes (cpp/unbox cpp/cgltf_node** nodes)
+                         node (cpp/box (cpp/aget nodes (cpp/int node-i)))]]
+               (parse-node node)))}))
+
+(defn parse
+  "Parse a glTF file and return mesh data (no GPU operations).
+   Returns {:scenes [{:name ... :nodes [...]}]}"
+  [{:keys [path] :as args}]
+  (clet [options (cpp/cgltf_options)
+         data (cpp/cgltf_data* cpp/nullptr)
+         result (cpp/cgltf_parse_file (cpp/& options) path (cpp/& data))
+         :when (cpp/!= result cpp/cgltf_result_success)
+         :error (throw (ex-info "Could not parse GLTF file" (assoc args :error result)))
+         result (cpp/cgltf_load_buffers (cpp/& options) data path)
+         :when (cpp/!= result cpp/cgltf_result_success)
+         :error (throw (ex-info "Could not load GLTF buffers" (assoc args :error result)))
+         scenes (cpp/box (cpp/.-scenes data))]
+        {:scenes
+         (vec
+          (for [scene-i (range (cpp/.-scenes_count data))
+                :let [scenes (cpp/unbox cpp/cgltf_scene* scenes)
+                      scene (cpp/box (cpp/& (cpp/aget scenes (cpp/int scene-i))))]]
+            (parse-scene scene)))}))
+
+(defn load-collision
+  "Load only collision mesh data from a glTF file.
+   Returns a vector of {:name :positions :indices} for collision-only nodes."
+  [{:keys [path]}]
+  (let [model (parse {:path path})]
+    (vec (for [scene (:scenes model)
+               node (:nodes scene)
+               :when (:collision-only node)
+               {:keys [positions indices]} (-> node :mesh :primitives)]
+           {:name (:name node)
+            :positions positions
+            :indices indices}))))

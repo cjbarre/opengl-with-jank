@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+# Compile headless server
+# Excludes graphics dependencies (GLFW, OpenGL, STB textures, ozz-animation)
+
+GAME="${1:-demo}"
+NAMESPACE="examples.${GAME}.server"
+OUTPUT="${2:-${GAME}-server}"
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$DIR/dist"
+
+mkdir -p "$BUILD_DIR"
+
+# Set LIBRARY_PATH so the linker finds libraries
+export LIBRARY_PATH="$DIR/libs/enet/lib:$DIR/libs/cgltf/lib:${LIBRARY_PATH:-}"
+
+# Server only needs: enet (networking), cgltf (collision mesh loading)
+# GLM is header-only, no library needed
+jank \
+  -I"$DIR/libs/glm" -I"$DIR/include" \
+  -L"$DIR/libs/enet/lib" -L"$DIR/libs/cgltf/lib" \
+  -lenet \
+  -lcgltf \
+  --module-path $(clojure -Spath) \
+  compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
+
+# Bundle libraries for distribution
+BUNDLE_DIR="$BUILD_DIR/${OUTPUT}_libs"
+mkdir -p "$BUNDLE_DIR"
+cp "$DIR/libs/enet/lib/"*.dylib "$BUNDLE_DIR/" 2>/dev/null || \
+cp "$DIR/libs/enet/lib/"*.so "$BUNDLE_DIR/" 2>/dev/null || true
+cp "$DIR/libs/cgltf/lib/"*.dylib "$BUNDLE_DIR/" 2>/dev/null || \
+cp "$DIR/libs/cgltf/lib/"*.so "$BUNDLE_DIR/" 2>/dev/null || true
+
+# Create launcher script
+if [[ "$(uname)" == "Darwin" ]]; then
+  LDPATH_VAR="DYLD_LIBRARY_PATH"
+else
+  LDPATH_VAR="LD_LIBRARY_PATH"
+fi
+
+cat > "$BUILD_DIR/${OUTPUT}_run" << EOF
+#!/usr/bin/env bash
+DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+${LDPATH_VAR}="\$DIR/${OUTPUT}_libs:\${${LDPATH_VAR}:-}" exec "\$DIR/$OUTPUT" "\$@"
+EOF
+chmod +x "$BUILD_DIR/${OUTPUT}_run"
+
+echo ""
+echo "Compiled server to: dist/$OUTPUT"
+echo "Run with: ./dist/${OUTPUT}_run"

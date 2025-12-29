@@ -19,7 +19,10 @@
 
   inline ENetHost* create_server_host(uint16_t port, size_t max_clients) {
     ENetAddress addr;
-    addr.host = ENET_HOST_ANY;
+    memset(&addr, 0, sizeof(addr));
+    // Use IPv4-mapped IPv6 address for dual-stack support
+    // ::ffff:0.0.0.0 accepts both IPv4 and IPv6 connections
+    addr.host = in6addr_any;
     addr.port = port;
     return enet_host_create(&addr, max_clients, 2, 0, 0);
   }

@@ -293,3 +293,50 @@ See `/Users/cam/Documents/code/jank/jank-aot-library-fix.md` for details.
 
 **Large executable size (~62MB):**
 - Normal - includes LLVM/Clang for JIT capabilities embedded in jank runtime
+
+## Headless Server Build
+
+### Overview
+
+For dedicated server deployment, use `./compile-server` which builds a headless binary without graphics dependencies (GLFW, OpenGL, STB textures, ozz-animation).
+
+### Server Compilation
+
+```bash
+./compile-server              # compiles examples.demo.server
+./compile-server demo         # same as above
+./compile-server my-game      # compiles examples.my-game.server
+
+# Run the compiled server
+./demo-server_run
+```
+
+**Output:**
+- `demo-server` - 62MB headless server executable
+- `demo-server_run` - Launcher script
+- `demo-server_libs/` - Bundled libraries (enet, cgltf only)
+
+### Server Dependencies
+
+The server only requires:
+- **enet** - UDP networking
+- **cgltf** - glTF loading for collision meshes
+- **GLM** - Math library (header-only)
+
+It does NOT require:
+- GLFW (windowing)
+- OpenGL (rendering)
+- STB (texture loading)
+- ozz-animation (skeletal animation)
+
+### Headless glTF Loader
+
+The server uses `engine.3d.gltf.headless` instead of the full glTF loader:
+
+```clojure
+(require '[engine.3d.gltf.headless :as gltf])
+
+;; Load only collision mesh data (no GPU operations)
+(gltf/load-collision {:path "models/level.gltf"})
+;; => [{:name "collision-mesh" :positions [...] :indices [...]}]
+```

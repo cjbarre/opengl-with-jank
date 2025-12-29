@@ -6,6 +6,9 @@ NAMESPACE="examples.${GAME}.core"
 OUTPUT="${2:-${GAME}}"
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$DIR/dist"
+
+mkdir -p "$BUILD_DIR"
 
 # Set LIBRARY_PATH so the linker can find our libraries
 export LIBRARY_PATH="$DIR/libs/glfw/lib:$DIR/libs/ozz-animation/lib:$DIR/libs/stb/lib:$DIR/libs/enet/lib:$DIR/libs/cgltf/lib:${LIBRARY_PATH:-}"
@@ -20,11 +23,13 @@ jank \
   -lenet \
   -lcgltf \
   --module-path $(clojure -Spath) \
-  compile "$NAMESPACE" -o "$OUTPUT"
+  compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
 
 # Bundle libraries for standalone distribution
-BUNDLE_DIR="${OUTPUT}_libs"
+BUNDLE_DIR="$BUILD_DIR/${OUTPUT}_libs"
 mkdir -p "$BUNDLE_DIR"
+
+# Game libraries
 cp "$DIR/libs/glfw/lib/libglfw.3.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/ozz-animation/lib/libozz_animation_r.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/ozz-animation/lib/libozz_base_r.dylib" "$BUNDLE_DIR/"
@@ -33,13 +38,30 @@ cp "$DIR/libs/stb/lib/libstb_all.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/enet/lib/libenet.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/cgltf/lib/libcgltf.dylib" "$BUNDLE_DIR/"
 
+# Jank/LLVM runtime libraries
+JANK_LIB="/Users/cam/Documents/code/jank/compiler+runtime/build/llvm-install/usr/local/lib"
+cp "$JANK_LIB/libLLVM.dylib" "$BUNDLE_DIR/"
+cp "$JANK_LIB/libclang-cpp.dylib" "$BUNDLE_DIR/"
+cp "$JANK_LIB/libc++.1.0.dylib" "$BUNDLE_DIR/libc++.1.dylib"
+cp "$JANK_LIB/libunwind.1.0.dylib" "$BUNDLE_DIR/libunwind.1.dylib"
+
+# Homebrew dependencies
+cp /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib "$BUNDLE_DIR/"
+cp /opt/homebrew/opt/zstd/lib/libzstd.1.dylib "$BUNDLE_DIR/"
+
+# Fix library paths in the executable to use @rpath
+install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib "$BUILD_DIR/$OUTPUT"
+install_name_tool -change /opt/homebrew/opt/zstd/lib/libzstd.1.dylib @rpath/libzstd.1.dylib "$BUILD_DIR/$OUTPUT"
+install_name_tool -change /opt/homebrew/opt/glfw/lib/libglfw.3.dylib @rpath/libglfw.3.dylib "$BUILD_DIR/$OUTPUT"
+
 # Create a launcher script
-cat > "${OUTPUT}_run" << EOF
+cat > "$BUILD_DIR/${OUTPUT}_run" << EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 DYLD_LIBRARY_PATH="\$DIR/${OUTPUT}_libs:\${DYLD_LIBRARY_PATH:-}" exec "\$DIR/$OUTPUT" "\$@"
 EOF
-chmod +x "${OUTPUT}_run"
+chmod +x "$BUILD_DIR/${OUTPUT}_run"
 
-echo "Compiled to: $OUTPUT"
-echo "Run with: ./${OUTPUT}_run"
+echo ""
+echo "Compiled to: dist/$OUTPUT"
+echo "Run with: ./dist/${OUTPUT}_run"
