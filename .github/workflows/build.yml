@@ -31,9 +31,6 @@ jobs:
           - os: macos-14
             platform: macos-arm64
             arch: arm64
-          - os: macos-13
-            platform: macos-x86_64
-            arch: x64
 
     runs-on: ${{ matrix.os }}
     name: Build (${{ matrix.platform }})
