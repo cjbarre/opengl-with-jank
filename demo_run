@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-DYLD_LIBRARY_PATH="$DIR/demo_libs:${DYLD_LIBRARY_PATH:-}" exec "$DIR/demo" "$@"
