@@ -17,8 +17,23 @@ The `run` script compiles and executes a Jank game with OpenGL/GLFW support:
 - Includes headers from `libs/glfw/include` and `include/`
 - Uses Clojure classpath for module resolution
 
+### AOT Compilation (Standalone Executable)
+```bash
+./compile              # compiles demo to standalone executable
+./compile demo         # same as above
+./compile my-game      # compiles examples.my-game.core
+
+# Run the compiled executable
+./demo_run             # launcher script with library paths
+```
+
+The `compile` script produces:
+- `demo` - 62MB standalone Mach-O executable
+- `demo_run` - Launcher script that sets DYLD_LIBRARY_PATH
+- `demo_libs/` - Bundled dynamic libraries
+
 ### Development Dependencies
-- **Jank**: The main language/runtime
+- **Jank**: The main language/runtime (with AOT library fix applied)
 - **GLFW**: For window management and OpenGL context
 - **Clojure**: For classpath and dependency management
 - **STB Image**: C library for texture loading (included in `include/stb_image.h`)
@@ -151,3 +166,130 @@ Custom macro `clet` provides C-style error checking:
 - Models and their textures in `models/` directory
 - Supports common formats (JPG, PNG)
 - Alpha channel handling for RGBA textures
+
+## AOT Compilation Details
+
+### Overview
+
+Jank supports ahead-of-time (AOT) compilation to produce standalone executables. This project uses AOT compilation to create distributable game binaries that don't require the Jank runtime to be installed.
+
+### Library Setup
+
+AOT compilation requires dynamic libraries (`.dylib` on macOS) for external dependencies. These are organized under `libs/`:
+
+```
+libs/
+├── glfw/
+│   ├── include/          # GLFW headers
+│   └── lib/
+│       └── libglfw.3.dylib
+├── ozz-animation/
+│   ├── include/          # ozz headers
+│   └── lib/
+│       ├── libozz_animation_r.dylib
+│       ├── libozz_base_r.dylib
+│       └── libozz_geometry_r.dylib
+├── stb/
+│   └── lib/
+│       └── libstb_all.dylib
+├── enet/
+│   └── lib/
+│       └── libenet.dylib
+└── cgltf/
+    └── lib/
+        └── libcgltf.dylib
+```
+
+### Library Install Names
+
+macOS dynamic libraries have "install names" that get baked into executables at link time. For proper runtime loading with `@rpath`, libraries must have install names like `@rpath/libfoo.dylib`:
+
+```bash
+# Check a library's install name
+otool -D libs/stb/lib/libstb_all.dylib
+
+# Fix install name if needed
+install_name_tool -id "@rpath/libstb_all.dylib" libs/stb/lib/libstb_all.dylib
+```
+
+### Building Custom Libraries
+
+#### STB (header-only to dylib)
+
+```bash
+# Create implementation file
+cat > stb_impl.c << 'EOF'
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+EOF
+
+# Compile to dylib
+clang -dynamiclib -o libs/stb/lib/libstb_all.dylib stb_impl.c \
+  -Iinclude -install_name "@rpath/libstb_all.dylib"
+```
+
+#### cgltf (header-only to dylib)
+
+```bash
+cat > cgltf_impl.c << 'EOF'
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
+EOF
+
+clang -dynamiclib -o libs/cgltf/lib/libcgltf.dylib cgltf_impl.c \
+  -Iinclude -install_name "@rpath/libcgltf.dylib"
+```
+
+### Compile Script Workflow
+
+The `./compile` script:
+
+1. Sets `LIBRARY_PATH` so the linker finds libraries
+2. Invokes `jank compile` with:
+   - Include paths (`-I`)
+   - Library paths (`-L`)
+   - Libraries to link (`-l`)
+   - Module path from Clojure
+3. Bundles required dylibs into `{output}_libs/`
+4. Creates launcher script `{output}_run`
+
+### Distribution
+
+To distribute a compiled game:
+
+```bash
+# These files/directories are needed:
+demo              # The executable
+demo_run          # Launcher script
+demo_libs/        # Bundled libraries
+shaders/          # GLSL shaders (loaded at runtime)
+textures/         # Texture assets
+models/           # 3D models
+```
+
+The launcher script sets `DYLD_LIBRARY_PATH` to find the bundled libraries.
+
+### Jank AOT Requirements
+
+This project requires jank with the AOT library linking fix. The fix adds:
+
+1. **User library passing** - `-l` flags are passed to the linker
+2. **macOS JIT library naming** - Uses `lib{name}.dylib` format
+3. **macOS framework linking** - Links OpenGL, Cocoa, IOKit, CoreFoundation
+
+See `/Users/cam/Documents/code/jank/jank-aot-library-fix.md` for details.
+
+### Troubleshooting
+
+**"Library not loaded" errors:**
+- Check library install names: `otool -D libfoo.dylib`
+- Verify rpath in executable: `otool -l demo | grep -A2 LC_RPATH`
+- Use launcher script or set `DYLD_LIBRARY_PATH`
+
+**Undefined symbols during linking:**
+- Ensure library is in `-L` path
+- Ensure `-l` flag uses correct name (without `lib` prefix and `.dylib` suffix)
+- Check if library exports the symbol: `nm -gU libfoo.dylib | grep symbol_name`
+
+**Large executable size (~62MB):**
+- Normal - includes LLVM/Clang for JIT capabilities embedded in jank runtime

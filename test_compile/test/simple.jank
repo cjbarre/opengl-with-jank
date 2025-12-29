@@ -1,0 +1,1 @@
+(ns test.simple) (defn -main [] (println "Hello"))

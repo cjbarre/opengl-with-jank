@@ -2,8 +2,16 @@
   (:require [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]))
 
+(cpp/raw "#include <GLFW/glfw3.h>")
+
 (cpp/raw "
-#define STB_TRUETYPE_IMPLEMENTATION
+extern \"C\" {
+  void glGenVertexArrays(GLsizei n, GLuint *arrays);
+  void glBindVertexArray(GLuint array);
+}")
+
+;; stb_truetype implementation is in libs/stb/lib/libstb_all.dylib for AOT compilation
+(cpp/raw "
 #include \"stb_truetype.h\"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -21,9 +29,13 @@ struct FontData {
     int atlas_height;
 };
 
-FontData* g_font = nullptr;
+inline FontData*& get_g_font() {
+    static FontData* ptr = nullptr;
+    return ptr;
+}
+#define g_font (get_g_font())
 
-bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
+inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
     // Read font file
     FILE* f = fopen(font_path, \"rb\");
     if (!f) return false;
@@ -84,7 +96,7 @@ bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
     return true;
 }
 
-void render_text_cpp(const char* text, float x, float y, float r, float g, float b, int screen_w, int screen_h) {
+inline void render_text_cpp(const char* text, float x, float y, float r, float g, float b, int screen_w, int screen_h) {
     if (!g_font) return;
 
     glEnable(GL_BLEND);

@@ -7,14 +7,14 @@
 (cpp/raw "
 
 // Normalize angle to -PI to PI range
-float normalize_angle(float a) {
+inline float normalize_angle(float a) {
     while (a > 3.14159f) a -= 6.28318f;
     while (a < -3.14159f) a += 6.28318f;
     return a;
 }
 
 // Calculate the velocity angle in XZ plane (returns radians)
-float calc_velocity_angle_cpp(float vx, float vz) {
+inline float calc_velocity_angle_cpp(float vx, float vz) {
     if (fabs(vx) < 0.001f && fabs(vz) < 0.001f) {
         return 0.0f;
     }
@@ -22,12 +22,12 @@ float calc_velocity_angle_cpp(float vx, float vz) {
 }
 
 // Normalize yaw to match atan2 range
-float normalize_yaw_cpp(float yaw_rad) {
+inline float normalize_yaw_cpp(float yaw_rad) {
     return normalize_angle(yaw_rad);
 }
 
 // Calculate horizontal speed
-float calc_speed_cpp(float vx, float vz) {
+inline float calc_speed_cpp(float vx, float vz) {
     return sqrt(vx * vx + vz * vz);
 }
 
@@ -35,7 +35,7 @@ float calc_speed_cpp(float vx, float vz) {
 // Returns angle in radians (0 to PI/2)
 // When speed > max_speed, optimal angle = acos(max_speed / speed)
 // When speed <= max_speed, any angle works (return PI/4 as default)
-float calc_optimal_angle_cpp(float speed, float max_speed) {
+inline float calc_optimal_angle_cpp(float speed, float max_speed) {
     if (speed <= max_speed || speed < 0.001f) {
         return 0.785398f; // PI/4 = 45 degrees
     }
@@ -48,7 +48,7 @@ float calc_optimal_angle_cpp(float speed, float max_speed) {
 // This is where velocity_component_in_wish_dir = max_speed
 // angle = acos(max_speed / speed) - same as optimal for Q3 physics
 // But for visual range, we want the full acceleration zone
-float calc_min_accel_angle_cpp(float speed, float max_speed) {
+inline float calc_min_accel_angle_cpp(float speed, float max_speed) {
     if (speed <= 0.001f) return 0.0f;
     if (speed <= max_speed) return 0.0f;
     return acos(max_speed / speed);
@@ -58,7 +58,7 @@ float calc_min_accel_angle_cpp(float speed, float max_speed) {
 // This is PI/2 (90 degrees) - you can strafe perpendicular and still gain
 // Actually in Q3 physics, max angle is where speed * cos(angle) = 0
 // which is PI/2, but effective max is limited by how much you can turn
-float calc_max_accel_angle_cpp(float speed, float max_speed) {
+inline float calc_max_accel_angle_cpp(float speed, float max_speed) {
     (void)max_speed;
     if (speed <= 0.001f) return 1.5708f; // PI/2
     // The max angle where you gain speed is where speed * cos(angle) = max_speed

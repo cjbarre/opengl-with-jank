@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+GAME="${1:-demo}"
+NAMESPACE="examples.${GAME}.core"
+OUTPUT="${2:-${GAME}}"
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Set LIBRARY_PATH so the linker can find our libraries
+export LIBRARY_PATH="$DIR/libs/glfw/lib:$DIR/libs/ozz-animation/lib:$DIR/libs/stb/lib:$DIR/libs/enet/lib:$DIR/libs/cgltf/lib:${LIBRARY_PATH:-}"
+
+# Pass libraries to jank - it handles both JIT loading and passing to linker
+jank \
+  -I"$DIR/libs/glfw/include" -I"$DIR/libs/glm" -I"$DIR/include" -I"$DIR/libs/ozz-animation/include" \
+  -L"$DIR/libs/glfw/lib" -L"$DIR/libs/ozz-animation/lib" -L"$DIR/libs/stb/lib" -L"$DIR/libs/enet/lib" -L"$DIR/libs/cgltf/lib" \
+  -lglfw.3 \
+  -lozz_animation_r -lozz_base_r -lozz_geometry_r \
+  -lstb_all \
+  -lenet \
+  -lcgltf \
+  --module-path $(clojure -Spath) \
+  compile "$NAMESPACE" -o "$OUTPUT"
+
+# Bundle libraries for standalone distribution
+BUNDLE_DIR="${OUTPUT}_libs"
+mkdir -p "$BUNDLE_DIR"
+cp "$DIR/libs/glfw/lib/libglfw.3.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/ozz-animation/lib/libozz_animation_r.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/ozz-animation/lib/libozz_base_r.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/ozz-animation/lib/libozz_geometry_r.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/stb/lib/libstb_all.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/enet/lib/libenet.dylib" "$BUNDLE_DIR/"
+cp "$DIR/libs/cgltf/lib/libcgltf.dylib" "$BUNDLE_DIR/"
+
+# Create a launcher script
+cat > "${OUTPUT}_run" << EOF
+#!/usr/bin/env bash
+DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+DYLD_LIBRARY_PATH="\$DIR/${OUTPUT}_libs:\${DYLD_LIBRARY_PATH:-}" exec "\$DIR/$OUTPUT" "\$@"
+EOF
+chmod +x "${OUTPUT}_run"
+
+echo "Compiled to: $OUTPUT"
+echo "Run with: ./${OUTPUT}_run"

@@ -18,11 +18,24 @@
             [engine.2d.text.interface :as text]
             [engine.2d.graphics.interface :as gfx2d]
             [engine.3d.animation.interface :as anim]
-            [examples.demo.strafehelper.interface :as strafehelper]))
+            [examples.demo.strafehelper.interface :as strafehelper]
+            [engine.gl.constants :as gl]))
+
+(cpp/raw "#include <GLFW/glfw3.h>
+          extern \"C\" { void glBindVertexArray(GLuint array); }")
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+(cpp/raw "#include <math.h>")
+(cpp/raw "#include <vector>")
+
+;; Shared animation types header for AOT
+(cpp/raw "#include \"animation_types.h\"")
+(cpp/raw "#include \"gl_utils.h\"")
 
 ;; C++ helper for identity bones (same as core.jank)
 (cpp/raw
- "void client_upload_identity_bones(GLint loc, int count) {
+ "inline void client_upload_identity_bones(GLint loc, int count) {
     std::vector<float> identity_bones(count * 16);
     for (int i = 0; i < count; ++i) {
       identity_bones[i*16 + 0] = 1.0f;
@@ -33,31 +46,15 @@
     glUniformMatrix4fv(loc, count, GL_FALSE, identity_bones.data());
   }")
 
-(cpp/raw "#include <GLFW/glfw3.h>")
-(cpp/raw "#include <glm/glm.hpp>
-          #include <glm/gtc/matrix_transform.hpp>
-          #include <glm/gtc/type_ptr.hpp>")
-(cpp/raw "#include <math.h>")
-
 (cpp/raw
- "void framebuffer_size_callback_client(GLFWwindow* window, int width, int height) {
+ "inline void framebuffer_size_callback_client(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
     }")
 
 ;; =============================================================================
-;; Constants
+;; Constants (GLFW constants from engine.gl.constants)
 ;; =============================================================================
-
-(def GLFW_PRESS (cpp/value "GLFW_PRESS"))
-(def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
-(def GLFW_KEY_W (cpp/value "GLFW_KEY_W"))
-(def GLFW_KEY_S (cpp/value "GLFW_KEY_S"))
-(def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
-(def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
-(def GLFW_KEY_F3 (cpp/value "GLFW_KEY_F3"))
-(def GLFW_KEY_F4 (cpp/value "GLFW_KEY_F4"))
-(def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
 
 (def DEFAULT_SERVER_ADDRESS "127.0.0.1")
 (def DEFAULT_SERVER_PORT 7777)
@@ -179,7 +176,7 @@
                       (cpp/glm.rotate (cpp/glm.radians (cpp/float (- 90.0 yaw)))
                                       (math/gimmie :vec3 [0.0 1.0 0.0])))
           model-m-loc (cpp/glGetUniformLocation skinned-shader "model")]
-      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+      (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
                               (cpp/glm.value_ptr model-m)))
     ;; Set base color
     (cpp/glUniform4f (cpp/glGetUniformLocation skinned-shader "uBaseColorFactor")
@@ -194,9 +191,9 @@
         (let [vao-data (nth vaos mesh-idx)
               index-count (:index-count vao-data)]
           (cpp/glBindVertexArray (:vao vao-data))
-          (cpp/glDrawElements (cpp/value "GL_TRIANGLES")
+          (cpp/glDrawElements gl/GL_TRIANGLES
                               index-count
-                              (cpp/value "GL_UNSIGNED_SHORT")
+                              gl/GL_UNSIGNED_SHORT
                               cpp/nullptr))))))
 
 (defn update-player-animation
@@ -261,12 +258,12 @@
 
 (defn setup-window
   [{:keys [width height name]}]
-  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
-  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
-  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
-                      (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
-  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
-                      (cpp/value "GL_TRUE"))
+  (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+  (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+  (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE
+                      gl/GLFW_OPENGL_CORE_PROFILE)
+  (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT
+                      gl/GL_TRUE)
 
   (let [window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
     (when (cpp/! window)
@@ -275,7 +272,7 @@
     (cpp/glfwMakeContextCurrent window)
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_client)
-    (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+    (cpp/glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 ;; =============================================================================
@@ -289,28 +286,28 @@
     (cond-> {:delta-time (float (math/*-> :float delta-time))
              :pitch (float (math/*-> :float pitch))
              :yaw (float (math/*-> :float yaw))}
-      (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
       (assoc :exit true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_W) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_W) gl/GLFW_PRESS)
       (assoc :forward true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_S) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_S) gl/GLFW_PRESS)
       (assoc :backward true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_A) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_A) gl/GLFW_PRESS)
       (assoc :left true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_D) gl/GLFW_PRESS)
       (assoc :right true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
       (assoc :jump-held true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_F3) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_F3) gl/GLFW_PRESS)
       (assoc :f3-pressed true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_F4) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_F4) gl/GLFW_PRESS)
       (assoc :f4-pressed true))))
 
 ;; =============================================================================
@@ -425,7 +422,7 @@
                     (cpp/glm.rotate (cpp/glm.radians (cpp/float (- yaw)))
                                     (math/gimmie :vec3 [0.0 1.0 0.0])))
         model-m-loc (cpp/glGetUniformLocation shader "model")]
-    (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+    (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
                             (cpp/glm.value_ptr model-m))
     (when model
       ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
@@ -455,15 +452,14 @@
         camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
         view-m (cpp/glm.lookAt camera-pos look-target camera-up)
         view-m-loc (cpp/glGetUniformLocation shader "view")]
-    (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE")
+    (cpp/glUniformMatrix4fv view-m-loc 1 gl/GL_FALSE
                             (cpp/glm.value_ptr view-m))))
 
 (defn draw-world
   "Draw the game world."
   [{:keys [shader skinned-shader level-model player-anim-data client-state delta-time] :as context}]
   (cpp/glClearColor 0.2 0.3 0.3 1.0)
-  (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT")
-                      (cpp/value "GL_DEPTH_BUFFER_BIT")))
+  (cpp/glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
   (let [projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
@@ -472,7 +468,7 @@
     ;; Render level with basic shader
     (cpp/glUseProgram shader)
     (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
-      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE")
+      (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE
                               (cpp/glm.value_ptr projection-m)))
 
     ;; Get local player state for camera
@@ -490,15 +486,15 @@
       ;; Render level
       (when level-model
         (let [model-m-loc (cpp/glGetUniformLocation shader "model")]
-          (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE")
+          (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
                                   (cpp/glm.value_ptr (cpp/identity_matrix))))
         ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"}))
 
       ;; Switch to skinned shader for player
-      (cpp/glDisable (cpp/value "GL_CULL_FACE"))
+      (cpp/glDisable gl/GL_CULL_FACE)
       (cpp/glUseProgram skinned-shader)
       (let [projection-m-loc (cpp/glGetUniformLocation skinned-shader "projection")]
-        (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE")
+        (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE
                                 (cpp/glm.value_ptr projection-m)))
       ;; Set camera for skinned shader too
       (render-camera skinned-shader local-pos local-yaw local-pitch)
@@ -679,8 +675,8 @@
          window (setup-window {:width 1280 :height 720 :name "Demo - Client"})
          _ (cpp/glfwSetInputMode
             (cpp/unbox cpp/GLFWwindow* window)
-            (cpp/value "GLFW_CURSOR")
-            (cpp/value "GLFW_CURSOR_NORMAL"))
+            gl/GLFW_CURSOR
+            gl/GLFW_CURSOR_NORMAL)
 
          ;; Load shaders
          shader (shaders/load-shader-program

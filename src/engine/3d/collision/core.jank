@@ -7,7 +7,7 @@
 
 // Raycast down from position, find highest ground below
 // Returns ground Y coordinate, or -99999.0f if no ground found
-float raycast_ground_cpp(
+inline float raycast_ground_cpp(
     std::vector<glm::vec3>* positions,
     std::vector<unsigned int>* indices,
     float px, float py, float pz

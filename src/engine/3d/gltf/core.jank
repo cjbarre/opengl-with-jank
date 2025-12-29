@@ -3,11 +3,19 @@
   (:require [engine.shaders.interface :as shaders]
             [engine.3d.textures.interface :as textures]
             [engine.math.interface :as math]
-            [engine.macros :refer [clet]]))
+            [engine.macros :refer [clet]]
+            [engine.gl.constants :as gl]))
+
+(cpp/raw "#include <GLFW/glfw3.h>")
 
 (cpp/raw
- "#define CGLTF_IMPLEMENTATION
-  #include \"cgltf.h\"")
+ "#include <glm/glm.hpp>
+  #include <glm/gtc/matrix_transform.hpp>
+  #include <glm/gtc/type_ptr.hpp>")
+
+;; cgltf implementation is in libs/cgltf/lib/libcgltf.dylib for AOT compilation
+(cpp/raw "#include \"cgltf.h\"")
+(cpp/raw "#include \"gl_utils.h\"")
 
 (defmulti parse-attribute (fn [attribute] (cpp/.-type (cpp/unbox cpp/cgltf_attribute* attribute))))
 
@@ -80,7 +88,7 @@
            (range count))}))
 
 (cpp/raw
- "bool cgltf_primitive_has_material(cgltf_primitive* prim) {
+ "inline bool cgltf_primitive_has_material(cgltf_primitive* prim) {
       return (prim->material != nullptr);
  }")
 
@@ -134,17 +142,17 @@
           (merge attribute-data indices-data material-data))))}))
 
 (cpp/raw
- "cgltf_float* get_node_translation (cgltf_node* node) {
+ "inline cgltf_float* get_node_translation (cgltf_node* node) {
   return node->translation;
   }")
 
 (cpp/raw
- "cgltf_float* get_node_scale (cgltf_node* node) {
+ "inline cgltf_float* get_node_scale (cgltf_node* node) {
   return node->scale;
   }")
 
 (cpp/raw
- "bool node_is_colonly(cgltf_node* node) {
+ "inline bool node_is_colonly(cgltf_node* node) {
     if (!node || !node->name) return false;
     const char* str = node->name;
     const char* suffix = \"-colonly\";
@@ -236,16 +244,13 @@
     }
   };
 
-  size_t int_size = sizeof(int);
+  inline size_t int_size_fn() { return sizeof(int); }
+  #define int_size (int_size_fn())
 
-  size_t vertex_size = sizeof(Vertex);")
+  inline size_t vertex_size_fn() { return sizeof(Vertex); }
+  #define vertex_size (vertex_size_fn())")
 
-(def GL_ARRAY_BUFFER (cpp/value "GL_ARRAY_BUFFER"))
-(def GL_ELEMENT_ARRAY_BUFFER (cpp/value "GL_ELEMENT_ARRAY_BUFFER"))
-(def GL_STATIC_DRAW (cpp/value "GL_STATIC_DRAW"))
-(def GL_FLOAT (cpp/value "GL_FLOAT"))
-(def GL_FALSE (cpp/value "GL_FALSE"))
-(def GL_TRIANGLES (cpp/value "GL_TRIANGLES"))
+;; Using centralized GL constants from engine.gl.constants
 
 (defn load
   [{:keys [model base-path]
@@ -295,48 +300,48 @@
                 ;;
                 vbo ((cpp/type "unsigned int"))
                 _ (cpp/glGenBuffers (cpp/int 1) (cpp/& vbo))
-                _ (cpp/glBindBuffer GL_ARRAY_BUFFER vbo)
-                _ (cpp/glBufferData GL_ARRAY_BUFFER
+                _ (cpp/glBindBuffer gl/GL_ARRAY_BUFFER vbo)
+                _ (cpp/glBufferData gl/GL_ARRAY_BUFFER
                                     (cpp/* (cpp/.size vertices) cpp/vertex_size)
                                     (cpp/cast (cpp/type "void*")
                                               (cpp/.data vertices))
-                                    GL_STATIC_DRAW)
+                                    gl/GL_STATIC_DRAW)
 
                 ;;
                 ;; EBO
                 ;;
                 ebo ((cpp/type "unsigned int"))
                 _ (cpp/glGenBuffers (cpp/int 1) (cpp/& ebo))
-                _ (cpp/glBindBuffer GL_ELEMENT_ARRAY_BUFFER ebo)
-                _ (cpp/glBufferData GL_ELEMENT_ARRAY_BUFFER
+                _ (cpp/glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
+                _ (cpp/glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
                                     (cpp/* indices-size cpp/int_size)
                                     (cpp/cast (cpp/type "void*")
                                               (cpp/.data indices))
-                                    GL_STATIC_DRAW)
+                                    gl/GL_STATIC_DRAW)
 
                 ;;
                 ;; Vertex Attributes
                 ;;
                 _ (cpp/glVertexAttribPointer 0
                                              3
-                                             GL_FLOAT
-                                             GL_FALSE
+                                             gl/GL_FLOAT
+                                             gl/GL_FALSE
                                              cpp/vertex_size
                                              (cpp/voidify_int 0))
                 _ (cpp/glEnableVertexAttribArray 0)
 
                 _ (cpp/glVertexAttribPointer 1
                                              3
-                                             GL_FLOAT
-                                             GL_FALSE
+                                             gl/GL_FLOAT
+                                             gl/GL_FALSE
                                              cpp/vertex_size
                                              (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
                 _ (cpp/glEnableVertexAttribArray 1)
 
                 _ (cpp/glVertexAttribPointer 2
                                              2
-                                             GL_FLOAT
-                                             GL_FALSE
+                                             gl/GL_FLOAT
+                                             gl/GL_FALSE
                                              cpp/vertex_size
                                              (cpp/voidify_int (cpp/* (cpp/int 6) cpp/float_size)))
                 _ (cpp/glEnableVertexAttribArray 2)
@@ -361,19 +366,19 @@
                      _ (shaders/bind-vertex-array-object
                         {:vertex-array-object-id vao})
                      _ (when texture-id
-                         (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
-                         (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") texture-id)
+                         (cpp/glActiveTexture gl/GL_TEXTURE0)
+                         (cpp/glBindTexture gl/GL_TEXTURE_2D texture-id)
                          (cpp/glUniform1i (cpp/glGetUniformLocation shader "uHasBaseColorTex") 1)
                          (cpp/glUniform4f (cpp/glGetUniformLocation shader "uBaseColorFactor") r g b a))
-                     _ (cpp/glUniformMatrix4fv (cpp/glGetUniformLocation shader model-m-loc) 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr local-model-m))
+                     _ (cpp/glUniformMatrix4fv (cpp/glGetUniformLocation shader model-m-loc) 1 gl/GL_FALSE (cpp/glm.value_ptr local-model-m))
                      _ (cpp/glDrawElements
-                        GL_TRIANGLES
+                        gl/GL_TRIANGLES
                         (count (:indices primitive))
-                        (cpp/value "GL_UNSIGNED_INT")
+                        gl/GL_UNSIGNED_INT
                         (cpp/voidify_int (cpp/int 0)))
                      _ (when texture-id
-                         (cpp/glActiveTexture (cpp/value "GL_TEXTURE0"))
-                         (cpp/glBindTexture (cpp/value "GL_TEXTURE_2D") 0))]))}))]
+                         (cpp/glActiveTexture gl/GL_TEXTURE0)
+                         (cpp/glBindTexture gl/GL_TEXTURE_2D 0))]))}))]
 
     {:draw
      (fn draw-model [context]

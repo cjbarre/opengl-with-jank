@@ -8,7 +8,11 @@
 
 (require '[engine.3d.collision.interface :as collision])
 
-(cpp/raw "#include <math.h>")
+(cpp/raw "
+#include <math.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+")
 
 ;; =============================================================================
 ;; Physics Constants (JKA-style)

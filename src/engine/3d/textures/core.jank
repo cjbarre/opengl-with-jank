@@ -1,10 +1,13 @@
 (ns engine.3d.textures.core
   (:require [engine.io.interface :as io]
-            [engine.macros :refer [clet]]))
+            [engine.macros :refer [clet]]
+            [engine.gl.constants :as gl]))
 
+(cpp/raw "#include <GLFW/glfw3.h>")
+
+;; STB Image implementation is in libs/stb/lib/libstb_image.a for AOT compilation
 (cpp/raw
  "#define STBI_NO_THREAD_LOCALS 1
-  #define STB_IMAGE_IMPLEMENTATION
   #include \"stb_image.h\"")
 
 (cpp/raw
@@ -13,20 +16,11 @@
  }")
 
 (cpp/raw
- "void* voidify_stbi_uc (stbi_uc*  x) {
+ "inline void* voidify_stbi_uc (stbi_uc*  x) {
     return (void*) x;
   }")
 
-(def GL_TEXTURE_2D (cpp/value "GL_TEXTURE_2D"))
-(def GL_TEXTURE_WRAP_S (cpp/value "GL_TEXTURE_WRAP_S"))
-(def GL_TEXTURE_WRAP_T (cpp/value "GL_TEXTURE_WRAP_T"))
-(def GL_TEXTURE_MIN_FILTER (cpp/value "GL_TEXTURE_MIN_FILTER"))
-(def GL_TEXTURE_MAG_FILTER (cpp/value "GL_TEXTURE_MAG_FILTER"))
-(def GL_REPEAT (cpp/value "GL_REPEAT"))
-(def GL_LINEAR (cpp/value "GL_LINEAR"))
-(def GL_RGBA (cpp/value "GL_RGBA"))
-(def GL_RGB (cpp/value "GL_RGB"))
-(def GL_UNSIGNED_BYTE (cpp/value "GL_UNSIGNED_BYTE"))
+;; Using centralized GL constants from engine.gl.constants
 
 
 (defn load-texture
@@ -34,10 +28,10 @@
            wrap-s wrap-t
            min-filter mag-filter
            flip-vertically?]
-    :or {wrap-s GL_REPEAT
-         wrap-t GL_REPEAT
-         min-filter GL_LINEAR
-         mag-filter GL_LINEAR
+    :or {wrap-s gl/GL_REPEAT
+         wrap-t gl/GL_REPEAT
+         min-filter gl/GL_LINEAR
+         mag-filter gl/GL_LINEAR
          flip-vertically? false}
     :as args}]
   (clet [width (cpp/int)
@@ -54,22 +48,22 @@
                                 args))
          texture ((cpp/type "unsigned int"))
          _ (cpp/glGenTextures 1 (cpp/& texture))
-         _ (cpp/glBindTexture GL_TEXTURE_2D texture)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_S wrap-s)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_WRAP_T wrap-t)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MIN_FILTER min-filter)
-         _ (cpp/glTexParameteri GL_TEXTURE_2D GL_TEXTURE_MAG_FILTER mag-filter)
+         _ (cpp/glBindTexture gl/GL_TEXTURE_2D texture)
+         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_S wrap-s)
+         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_T wrap-t)
+         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MIN_FILTER min-filter)
+         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MAG_FILTER mag-filter)
          _ (cpp/glTexImage2D
-            GL_TEXTURE_2D
+            gl/GL_TEXTURE_2D
             0
-            (if alpha-channel? GL_RGBA GL_RGB)
+            (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
             width
             height
             0
-            (if alpha-channel? GL_RGBA GL_RGB)
-            GL_UNSIGNED_BYTE
+            (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
+            gl/GL_UNSIGNED_BYTE
             (cpp/voidify_stbi_uc data))
-         _ (cpp/glGenerateMipmap GL_TEXTURE_2D)
+         _ (cpp/glGenerateMipmap gl/GL_TEXTURE_2D)
          _ (cpp/stbi_image_free (cpp/voidify_stbi_uc data))]
 
         texture))

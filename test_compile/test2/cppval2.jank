@@ -1,0 +1,12 @@
+(ns test2.cppval2)
+
+(cpp/raw "#include <iostream>
+
+int get_my_const() { return 42; }
+int get_my_const2() { return 43; }")
+
+(def MY_CONST (cpp/get_my_const))
+(def MY_CONST2 (cpp/get_my_const2))
+
+(defn -main []
+  (println "Val:" MY_CONST MY_CONST2))

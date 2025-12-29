@@ -15,7 +15,7 @@
 (cpp/raw "#include <thread>
           #include <chrono>
 
-          void server_sleep_ms(int ms) {
+          inline void server_sleep_ms(int ms) {
             std::this_thread::sleep_for(std::chrono::milliseconds(ms));
           }")
 

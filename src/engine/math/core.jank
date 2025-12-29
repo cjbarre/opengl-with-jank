@@ -3,11 +3,7 @@
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
-
-(cpp/raw
- "glm::mat4 identity_matrix () {
-    return glm::mat4(1.0f);
-  }")
+(cpp/raw "#include \"gl_utils.h\"")
 
 (defmacro *->
   "Unboxes a boxed pointer based on type keyword.

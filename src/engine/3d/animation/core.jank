@@ -2,13 +2,9 @@
   (:require [engine.macros :refer [clet]]))
 
 ;; Include ozz-animation headers and define C++ helper structures
+(cpp/raw "#include \"animation_types.h\"")
 (cpp/raw
- "#ifdef __APPLE__
-  #include <OpenGL/gl3.h>
-  #else
-  #include <GL/glew.h>
-  #endif
-  #include <iostream>
+ "#include <iostream>
   #include \"ozz/animation/runtime/animation.h\"
   #include \"ozz/animation/runtime/skeleton.h\"
   #include \"ozz/animation/runtime/sampling_job.h\"
@@ -30,7 +26,7 @@
   namespace ozz {
   namespace io {
 
-  void Extern<sample::Mesh::Part>::Save(OArchive& _archive,
+  inline void Extern<sample::Mesh::Part>::Save(OArchive& _archive,
                                         const sample::Mesh::Part* _parts,
                                         size_t _count) {
     for (size_t i = 0; i < _count; ++i) {
@@ -45,7 +41,7 @@
     }
   }
 
-  void Extern<sample::Mesh::Part>::Load(IArchive& _archive,
+  inline void Extern<sample::Mesh::Part>::Load(IArchive& _archive,
                                         sample::Mesh::Part* _parts, size_t _count,
                                         uint32_t _version) {
     (void)_version;
@@ -61,7 +57,7 @@
     }
   }
 
-  void Extern<sample::Mesh>::Save(OArchive& _archive, const sample::Mesh* _meshes,
+  inline void Extern<sample::Mesh>::Save(OArchive& _archive, const sample::Mesh* _meshes,
                                   size_t _count) {
     for (size_t i = 0; i < _count; ++i) {
       const sample::Mesh& mesh = _meshes[i];
@@ -72,7 +68,7 @@
     }
   }
 
-  void Extern<sample::Mesh>::Load(IArchive& _archive, sample::Mesh* _meshes,
+  inline void Extern<sample::Mesh>::Load(IArchive& _archive, sample::Mesh* _meshes,
                                   size_t _count, uint32_t _version) {
     (void)_version;
     for (size_t i = 0; i < _count; ++i) {
@@ -86,35 +82,10 @@
   }  // namespace io
   }  // namespace ozz
 
-  // Animation context holds all runtime buffers needed for animation
-  struct AnimationContext {
-    ozz::animation::Skeleton* skeleton;
-    ozz::vector<ozz::animation::Animation*> animations;
-
-    // Runtime buffers
-    ozz::vector<ozz::math::SoaTransform> locals;  // Local space transforms
-    ozz::vector<ozz::math::Float4x4> models;       // Model space matrices
-    ozz::animation::SamplingJob::Context context;  // Sampling context
-
-    AnimationContext() : skeleton(nullptr) {}
-
-    ~AnimationContext() {
-      delete skeleton;
-      for (auto* anim : animations) {
-        delete anim;
-      }
-    }
-
-    bool init(int num_soa_joints, int num_joints) {
-      locals.resize(num_soa_joints);
-      models.resize(num_joints);
-      context.Resize(num_joints);
-      return true;
-    }
-  };
+  // AnimationContext is defined in animation_types.h
 
   // Load skeleton from .ozz file
-  ozz::animation::Skeleton* load_skeleton_ozz(const char* path) {
+  inline ozz::animation::Skeleton* load_skeleton_ozz(const char* path) {
     ozz::io::File file(path, \"rb\");
     if (!file.opened()) {
       return nullptr;
@@ -129,7 +100,7 @@
   }
 
   // Load animation from .ozz file
-  ozz::animation::Animation* load_animation_ozz(const char* path) {
+  inline ozz::animation::Animation* load_animation_ozz(const char* path) {
     ozz::io::File file(path, \"rb\");
     if (!file.opened()) {
       return nullptr;
@@ -144,7 +115,7 @@
   }
 
   // Sample animation at a given time ratio (0.0 to 1.0)
-  bool sample_animation_ozz(AnimationContext* ctx, ozz::animation::Animation* anim, float time_ratio) {
+  inline bool sample_animation_ozz(AnimationContext* ctx, ozz::animation::Animation* anim, float time_ratio) {
     if (!ctx || !anim || !ctx->skeleton) {
       return false;
     }
@@ -172,12 +143,12 @@
   }
 
   // Get number of model matrices
-  int get_num_joints(AnimationContext* ctx) {
+  inline int get_num_joints(AnimationContext* ctx) {
     return ctx ? static_cast<int>(ctx->models.size()) : 0;
   }
 
   // Get model matrix at index - returns pointer to 16 floats
-  const float* get_model_matrix(AnimationContext* ctx, int index) {
+  inline const float* get_model_matrix(AnimationContext* ctx, int index) {
     if (!ctx || index < 0 || index >= static_cast<int>(ctx->models.size())) {
       return nullptr;
     }
@@ -185,40 +156,40 @@
   }
 
   // Get animation duration in seconds
-  float get_animation_duration(ozz::animation::Animation* anim) {
+  inline float get_animation_duration(ozz::animation::Animation* anim) {
     return anim ? anim->duration() : 0.0f;
   }
 
   // Get number of tracks (should match skeleton joints)
-  int get_animation_num_tracks(ozz::animation::Animation* anim) {
+  inline int get_animation_num_tracks(ozz::animation::Animation* anim) {
     return anim ? anim->num_tracks() : 0;
   }
 
   // Get skeleton joint count
-  int get_skeleton_num_joints(ozz::animation::Skeleton* skel) {
+  inline int get_skeleton_num_joints(ozz::animation::Skeleton* skel) {
     return skel ? skel->num_joints() : 0;
   }
 
-  int get_skeleton_num_soa_joints(ozz::animation::Skeleton* skel) {
+  inline int get_skeleton_num_soa_joints(ozz::animation::Skeleton* skel) {
     return skel ? skel->num_soa_joints() : 0;
   }
 
   // Set skeleton in context
-  void set_context_skeleton(AnimationContext* ctx, ozz::animation::Skeleton* skel) {
+  inline void set_context_skeleton(AnimationContext* ctx, ozz::animation::Skeleton* skel) {
     if (ctx) {
       ctx->skeleton = skel;
     }
   }
 
   // Add animation to context
-  void add_context_animation(AnimationContext* ctx, ozz::animation::Animation* anim) {
+  inline void add_context_animation(AnimationContext* ctx, ozz::animation::Animation* anim) {
     if (ctx && anim) {
       ctx->animations.push_back(anim);
     }
   }
 
   // Get animation from context
-  ozz::animation::Animation* get_context_animation(AnimationContext* ctx, size_t index) {
+  inline ozz::animation::Animation* get_context_animation(AnimationContext* ctx, size_t index) {
     if (ctx && index < ctx->animations.size()) {
       return ctx->animations[index];
     }
@@ -228,7 +199,7 @@
   // ============ MESH LOADING ============
 
   // Load meshes from .ozz file
-  ozz::vector<ozz::sample::Mesh>* load_meshes_ozz(const char* path) {
+  inline ozz::vector<ozz::sample::Mesh>* load_meshes_ozz(const char* path) {
     ozz::io::File file(path, \"rb\");
     if (!file.opened()) {
       return nullptr;
@@ -249,12 +220,12 @@
   }
 
   // Get mesh count
-  int get_mesh_count(ozz::vector<ozz::sample::Mesh>* meshes) {
+  inline int get_mesh_count(ozz::vector<ozz::sample::Mesh>* meshes) {
     return meshes ? static_cast<int>(meshes->size()) : 0;
   }
 
   // Get mesh vertex count for a specific mesh
-  int get_mesh_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline int get_mesh_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -262,7 +233,7 @@
   }
 
   // Get mesh triangle index count
-  int get_mesh_index_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline int get_mesh_index_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -270,7 +241,7 @@
   }
 
   // Get number of joint remaps (for skinning matrix count)
-  int get_mesh_joint_remap_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline int get_mesh_joint_remap_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -278,7 +249,7 @@
   }
 
   // Get highest joint index used by mesh
-  int get_mesh_highest_joint(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline int get_mesh_highest_joint(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -286,7 +257,7 @@
   }
 
   // Check if mesh is skinned
-  bool is_mesh_skinned(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline bool is_mesh_skinned(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return false;
     }
@@ -294,7 +265,7 @@
   }
 
   // Get pointer to triangle indices
-  const uint16_t* get_mesh_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline const uint16_t* get_mesh_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -302,7 +273,7 @@
   }
 
   // Get joint remaps for skinning matrix ordering
-  const uint16_t* get_mesh_joint_remaps(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline const uint16_t* get_mesh_joint_remaps(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -310,7 +281,7 @@
   }
 
   // Get inverse bind poses for skinning
-  const float* get_mesh_inverse_bind_poses(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline const float* get_mesh_inverse_bind_poses(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -318,7 +289,7 @@
   }
 
   // Get mesh part count
-  int get_mesh_part_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline int get_mesh_part_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -326,7 +297,7 @@
   }
 
   // Get part vertex count
-  int get_part_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline int get_part_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -338,7 +309,7 @@
   }
 
   // Get part positions pointer
-  const float* get_part_positions(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline const float* get_part_positions(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -350,7 +321,7 @@
   }
 
   // Get part normals pointer
-  const float* get_part_normals(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline const float* get_part_normals(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -362,7 +333,7 @@
   }
 
   // Get part UVs pointer
-  const float* get_part_uvs(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline const float* get_part_uvs(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -374,7 +345,7 @@
   }
 
   // Get part joint indices pointer
-  const uint16_t* get_part_joint_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline const uint16_t* get_part_joint_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -386,7 +357,7 @@
   }
 
   // Get part joint weights pointer
-  const float* get_part_joint_weights(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline const float* get_part_joint_weights(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -398,7 +369,7 @@
   }
 
   // Get influences count (number of joints per vertex)
-  int get_part_influences_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
+  inline int get_part_influences_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return 0;
     }
@@ -410,7 +381,7 @@
   }
 
   // Compute skinning matrices from model matrices and mesh
-  void compute_skinning_matrices(
+  inline void compute_skinning_matrices(
     AnimationContext* ctx,
     ozz::vector<ozz::sample::Mesh>* meshes,
     int mesh_index,
@@ -427,35 +398,7 @@
     }
   }
 
-  // Compute and upload skinning matrices directly to shader
-  void compute_and_upload_skinning_matrices(
-    AnimationContext* ctx,
-    ozz::vector<ozz::sample::Mesh>* meshes,
-    int mesh_index,
-    GLint uniform_location
-  ) {
-    if (!ctx || !meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    size_t joint_count = mesh.joint_remaps.size();
-
-    // Allocate temp buffer
-    std::vector<float> matrices(joint_count * 16);
-
-    for (size_t i = 0; i < joint_count; ++i) {
-      ozz::math::Float4x4 skinning_matrix =
-          ctx->models[mesh.joint_remaps[i]] * mesh.inverse_bind_poses[i];
-      // Float4x4 has 4 SimdFloat4 columns - need to store each column properly
-      float* out = matrices.data() + i * 16;
-      ozz::math::StorePtrU(skinning_matrix.cols[0], out + 0);
-      ozz::math::StorePtrU(skinning_matrix.cols[1], out + 4);
-      ozz::math::StorePtrU(skinning_matrix.cols[2], out + 8);
-      ozz::math::StorePtrU(skinning_matrix.cols[3], out + 12);
-    }
-
-    glUniformMatrix4fv(uniform_location, static_cast<GLsizei>(joint_count), GL_FALSE, matrices.data());
-  }
+  // compute_and_upload_skinning_matrices is defined in animation_types.h
   ")
 
 ;; Create a new animation context

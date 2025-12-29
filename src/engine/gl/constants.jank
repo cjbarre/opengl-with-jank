@@ -1,0 +1,109 @@
+(ns engine.gl.constants
+  "Centralized OpenGL and GLFW constants for AOT compilation compatibility.
+   Using inline functions instead of cpp/value to avoid symbol redefinition.")
+
+(cpp/raw
+ "#include <GLFW/glfw3.h>
+
+  // OpenGL constants as inline functions
+  inline int gl_array_buffer() { return GL_ARRAY_BUFFER; }
+  inline int gl_element_array_buffer() { return GL_ELEMENT_ARRAY_BUFFER; }
+  inline int gl_static_draw() { return GL_STATIC_DRAW; }
+  inline int gl_dynamic_draw() { return GL_DYNAMIC_DRAW; }
+  inline int gl_float() { return GL_FLOAT; }
+  inline int gl_false() { return GL_FALSE; }
+  inline int gl_triangles() { return GL_TRIANGLES; }
+  inline int gl_unsigned_byte() { return GL_UNSIGNED_BYTE; }
+  inline int gl_unsigned_short() { return GL_UNSIGNED_SHORT; }
+  inline int gl_texture_2d() { return GL_TEXTURE_2D; }
+  inline int gl_texture_wrap_s() { return GL_TEXTURE_WRAP_S; }
+  inline int gl_texture_wrap_t() { return GL_TEXTURE_WRAP_T; }
+  inline int gl_texture_min_filter() { return GL_TEXTURE_MIN_FILTER; }
+  inline int gl_texture_mag_filter() { return GL_TEXTURE_MAG_FILTER; }
+  inline int gl_repeat() { return GL_REPEAT; }
+  inline int gl_linear() { return GL_LINEAR; }
+  inline int gl_rgba() { return GL_RGBA; }
+  inline int gl_rgb() { return GL_RGB; }
+  inline int gl_fragment_shader() { return GL_FRAGMENT_SHADER; }
+  inline int gl_vertex_shader() { return GL_VERTEX_SHADER; }
+  inline int gl_compile_status() { return GL_COMPILE_STATUS; }
+  inline int gl_link_status() { return GL_LINK_STATUS; }
+  inline int gl_true() { return GL_TRUE; }
+  inline int gl_depth_test() { return GL_DEPTH_TEST; }
+  inline int gl_color_buffer_bit() { return GL_COLOR_BUFFER_BIT; }
+  inline int gl_depth_buffer_bit() { return GL_DEPTH_BUFFER_BIT; }
+  inline int gl_color_depth_buffer_bits() { return GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT; }
+  inline int gl_cull_face() { return GL_CULL_FACE; }
+  inline int gl_texture0() { return GL_TEXTURE0; }
+  inline int gl_unsigned_int() { return GL_UNSIGNED_INT; }
+
+  // GLFW constants
+  inline int glfw_press() { return GLFW_PRESS; }
+  inline int glfw_key_escape() { return GLFW_KEY_ESCAPE; }
+  inline int glfw_key_w() { return GLFW_KEY_W; }
+  inline int glfw_key_s() { return GLFW_KEY_S; }
+  inline int glfw_key_a() { return GLFW_KEY_A; }
+  inline int glfw_key_d() { return GLFW_KEY_D; }
+  inline int glfw_key_f3() { return GLFW_KEY_F3; }
+  inline int glfw_key_f4() { return GLFW_KEY_F4; }
+  inline int glfw_key_space() { return GLFW_KEY_SPACE; }
+  inline int glfw_context_version_major() { return GLFW_CONTEXT_VERSION_MAJOR; }
+  inline int glfw_context_version_minor() { return GLFW_CONTEXT_VERSION_MINOR; }
+  inline int glfw_opengl_profile() { return GLFW_OPENGL_PROFILE; }
+  inline int glfw_opengl_core_profile() { return GLFW_OPENGL_CORE_PROFILE; }
+  inline int glfw_opengl_forward_compat() { return GLFW_OPENGL_FORWARD_COMPAT; }
+  inline int glfw_cursor() { return GLFW_CURSOR; }
+  inline int glfw_cursor_normal() { return GLFW_CURSOR_NORMAL; }
+  inline int glfw_cursor_disabled() { return GLFW_CURSOR_DISABLED; }
+  ")
+
+;; OpenGL constants
+(def GL_ARRAY_BUFFER (cpp/gl_array_buffer))
+(def GL_ELEMENT_ARRAY_BUFFER (cpp/gl_element_array_buffer))
+(def GL_STATIC_DRAW (cpp/gl_static_draw))
+(def GL_DYNAMIC_DRAW (cpp/gl_dynamic_draw))
+(def GL_FLOAT (cpp/gl_float))
+(def GL_FALSE (cpp/gl_false))
+(def GL_TRIANGLES (cpp/gl_triangles))
+(def GL_UNSIGNED_BYTE (cpp/gl_unsigned_byte))
+(def GL_UNSIGNED_SHORT (cpp/gl_unsigned_short))
+(def GL_TEXTURE_2D (cpp/gl_texture_2d))
+(def GL_TEXTURE_WRAP_S (cpp/gl_texture_wrap_s))
+(def GL_TEXTURE_WRAP_T (cpp/gl_texture_wrap_t))
+(def GL_TEXTURE_MIN_FILTER (cpp/gl_texture_min_filter))
+(def GL_TEXTURE_MAG_FILTER (cpp/gl_texture_mag_filter))
+(def GL_REPEAT (cpp/gl_repeat))
+(def GL_LINEAR (cpp/gl_linear))
+(def GL_RGBA (cpp/gl_rgba))
+(def GL_RGB (cpp/gl_rgb))
+(def GL_FRAGMENT_SHADER (cpp/gl_fragment_shader))
+(def GL_VERTEX_SHADER (cpp/gl_vertex_shader))
+(def GL_COMPILE_STATUS (cpp/gl_compile_status))
+(def GL_LINK_STATUS (cpp/gl_link_status))
+(def GL_TRUE (cpp/gl_true))
+(def GL_DEPTH_TEST (cpp/gl_depth_test))
+(def GL_COLOR_BUFFER_BIT (cpp/gl_color_buffer_bit))
+(def GL_DEPTH_BUFFER_BIT (cpp/gl_depth_buffer_bit))
+(def GL_COLOR_DEPTH_BUFFER_BITS (cpp/gl_color_depth_buffer_bits))
+(def GL_CULL_FACE (cpp/gl_cull_face))
+(def GL_TEXTURE0 (cpp/gl_texture0))
+(def GL_UNSIGNED_INT (cpp/gl_unsigned_int))
+
+;; GLFW constants
+(def GLFW_PRESS (cpp/glfw_press))
+(def GLFW_KEY_ESCAPE (cpp/glfw_key_escape))
+(def GLFW_KEY_W (cpp/glfw_key_w))
+(def GLFW_KEY_S (cpp/glfw_key_s))
+(def GLFW_KEY_A (cpp/glfw_key_a))
+(def GLFW_KEY_D (cpp/glfw_key_d))
+(def GLFW_KEY_F3 (cpp/glfw_key_f3))
+(def GLFW_KEY_F4 (cpp/glfw_key_f4))
+(def GLFW_KEY_SPACE (cpp/glfw_key_space))
+(def GLFW_CONTEXT_VERSION_MAJOR (cpp/glfw_context_version_major))
+(def GLFW_CONTEXT_VERSION_MINOR (cpp/glfw_context_version_minor))
+(def GLFW_OPENGL_PROFILE (cpp/glfw_opengl_profile))
+(def GLFW_OPENGL_CORE_PROFILE (cpp/glfw_opengl_core_profile))
+(def GLFW_OPENGL_FORWARD_COMPAT (cpp/glfw_opengl_forward_compat))
+(def GLFW_CURSOR (cpp/glfw_cursor))
+(def GLFW_CURSOR_NORMAL (cpp/glfw_cursor_normal))
+(def GLFW_CURSOR_DISABLED (cpp/glfw_cursor_disabled))

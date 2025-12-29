@@ -13,7 +13,8 @@
             [engine.3d.animation.state :as anim-state]
             [examples.demo.strafehelper.interface :as strafehelper]
             [examples.demo.server :as server]
-            [examples.demo.client :as client]))
+            [examples.demo.client :as client]
+            [engine.gl.constants :as gl]))
 
 (cpp/raw "#include <GLFW/glfw3.h>")
 
@@ -23,21 +24,16 @@
 
 (cpp/raw "#include <math.h>")
 
+(cpp/raw "#include \"animation_types.h\"")
+(cpp/raw "#include \"gl_utils.h\"")
+
 (cpp/raw
- "void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+ "inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
     }")
 
-(def GLFW_PRESS (cpp/value "GLFW_PRESS"))
-(def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
-(def GLFW_KEY_W (cpp/value "GLFW_KEY_W"))
-(def GLFW_KEY_S (cpp/value "GLFW_KEY_S"))
-(def GLFW_KEY_A (cpp/value "GLFW_KEY_A"))
-(def GLFW_KEY_D (cpp/value "GLFW_KEY_D"))
-(def GLFW_KEY_F3 (cpp/value "GLFW_KEY_F3"))
-(def GLFW_KEY_F4 (cpp/value "GLFW_KEY_F4"))
-(def GLFW_KEY_SPACE (cpp/value "GLFW_KEY_SPACE"))
+;; Using centralized GLFW constants from engine.gl.constants
 
 ;; JKA-style physics constants (scaled for game world)
 (def GRAVITY 25.6)
@@ -59,40 +55,40 @@
              :delta-time (float (math/*-> :float delta-time))
              :pitch (float (math/*-> :float pitch))
              :yaw (float (math/*-> :float yaw))}
-      (= (cpp/glfwGetKey window GLFW_KEY_ESCAPE)
-         GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE)
+         gl/GLFW_PRESS)
       (assoc :exit true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_W) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_W) gl/GLFW_PRESS)
       (assoc :forward true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_S) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_S) gl/GLFW_PRESS)
       (assoc :backward true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_A) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_A) gl/GLFW_PRESS)
       (assoc :left true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_D) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_D) gl/GLFW_PRESS)
       (assoc :right true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_SPACE) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
       (assoc :jump-held true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_F3) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_F3) gl/GLFW_PRESS)
       (assoc :f3-pressed true)
 
-      (= (cpp/glfwGetKey window GLFW_KEY_F4) GLFW_PRESS)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_F4) gl/GLFW_PRESS)
       (assoc :f4-pressed true))))
 
 (defn setup-window
   [{:keys [width height name]}]
 
-  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MAJOR") 3)
-  (cpp/glfwWindowHint (cpp/value "GLFW_CONTEXT_VERSION_MINOR") 3)
-  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_PROFILE")
-                      (cpp/value "GLFW_OPENGL_CORE_PROFILE"))
-  (cpp/glfwWindowHint (cpp/value "GLFW_OPENGL_FORWARD_COMPAT")
-                      (cpp/value "GL_TRUE"))
+  (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+  (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+  (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE
+                      gl/GLFW_OPENGL_CORE_PROFILE)
+  (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT
+                      gl/GL_TRUE)
 
   (let [window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
     (when (cpp/! window)
@@ -101,11 +97,11 @@
     (cpp/glfwMakeContextCurrent window)
     (cpp/glfwSwapInterval 0)  ;; Disable VSync
     (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
-    (cpp/glEnable (cpp/value "GL_DEPTH_TEST"))
+    (cpp/glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 (cpp/raw
- "glm::mat4* new_identity_matrix () {
+ "inline glm::mat4* new_identity_matrix () {
     return new glm::mat4(1.0f);
   }")
 
@@ -125,10 +121,10 @@
                                       (math/gimmie :vec3 [0.0 1.0 0.0]))
                       (cpp/glm.scale (math/gimmie :vec3 [model-scale model-scale model-scale])))
           model-m-loc (cpp/glGetUniformLocation shader "model")]
-      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr model-m))
+      (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE (cpp/glm.value_ptr model-m))
       :done)
     (let [model-m-loc (cpp/glGetUniformLocation shader "model")]
-      (cpp/glUniformMatrix4fv model-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr (cpp/identity_matrix)))
+      (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
       :done)))
 
 (defn render-system
@@ -179,7 +175,7 @@
           ;; Set view matrix
           view-m (cpp/glm.lookAt camera-pos look-target camera-up)
           view-m-loc (cpp/glGetUniformLocation shader "view")]
-      (cpp/glUniformMatrix4fv view-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr view-m)))))
+      (cpp/glUniformMatrix4fv view-m-loc 1 gl/GL_FALSE (cpp/glm.value_ptr view-m)))))
 
 (defn update-animations
   "Advances animation time and samples for all animated entities.
@@ -222,7 +218,7 @@
           (swap! state assoc-in [:entities id :animation/time] new-time))))))
 
 (cpp/raw
- "void upload_identity_bones(GLint loc, int count) {
+ "inline void upload_identity_bones(GLint loc, int count) {
     // Upload identity matrices for debugging
     std::vector<float> identity_bones(count * 16);
     for (int i = 0; i < count; ++i) {
@@ -264,15 +260,15 @@
           (let [vao-data (nth vaos mesh-idx)
                 index-count (:index-count vao-data)]
             (cpp/glBindVertexArray (:vao vao-data))
-            (cpp/glDrawElements (cpp/value "GL_TRIANGLES")
+            (cpp/glDrawElements gl/GL_TRIANGLES
                                 index-count
-                                (cpp/value "GL_UNSIGNED_SHORT")
+                                gl/GL_UNSIGNED_SHORT
                                 cpp/nullptr)))))))
 
 (defn draw-3D
   [{:keys [state shader skinned-shader] :as context}]
   (let [_ (cpp/glClearColor 0.2 0.3 0.3 1.0)
-        _ (cpp/glClear (cpp/| (cpp/value "GL_COLOR_BUFFER_BIT") (cpp/value "GL_DEPTH_BUFFER_BIT")))
+        _ (cpp/glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
@@ -282,7 +278,7 @@
     ;; Render non-animated entities with basic shader
     (cpp/glUseProgram shader)
     (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
-      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m)))
+      (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE (cpp/glm.value_ptr projection-m)))
     (camera-system context)
     (doseq [e (vals (:entities @state))]
       (when-not (contains? (:tags e) :animated)
@@ -290,10 +286,10 @@
         (render-system context e)))
 
     ;; Render animated entities with skinned shader
-    (cpp/glDisable (cpp/value "GL_CULL_FACE")) ;; Disable culling for animated meshes
+    (cpp/glDisable gl/GL_CULL_FACE) ;; Disable culling for animated meshes
     (cpp/glUseProgram skinned-shader)
     (let [projection-m-loc (cpp/glGetUniformLocation skinned-shader "projection")]
-      (cpp/glUniformMatrix4fv projection-m-loc 1 (cpp/value "GL_FALSE") (cpp/glm.value_ptr projection-m)))
+      (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE (cpp/glm.value_ptr projection-m)))
     (camera-system (assoc context :shader skinned-shader))
     (doseq [e (vals (:entities @state))]
       (when (contains? (:tags e) :animated)
@@ -680,8 +676,8 @@
         window (setup-window {:width 1280 :height 720 :name "Demo - Solo"})
         _ (cpp/glfwSetInputMode
            (cpp/unbox cpp/GLFWwindow* window)
-           (cpp/value "GLFW_CURSOR")
-           (cpp/value "GLFW_CURSOR_DISABLED"))
+           gl/GLFW_CURSOR
+           gl/GLFW_CURSOR_DISABLED)
         shader (shaders/load-shader-program
                 {:vertex-shader-path
                  "shaders/basic_vertex.glsl"

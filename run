@@ -10,5 +10,5 @@ ARGS="$@"
 jank \
   -Ilibs/glfw/include -Ilibs/glm -Iinclude -Ilibs/ozz-animation/include \
   -Llibs/glfw/lib -llibglfw.3.dylib \
-  -Llibs/ozz-animation/lib -llibozz_animation.dylib -llibozz_base.dylib -llibozz_geometry.dylib \
+  -Llibs/ozz-animation/lib -llibozz_animation_r.dylib -llibozz_base_r.dylib -llibozz_geometry_r.dylib \
   --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS
