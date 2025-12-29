@@ -3,7 +3,8 @@
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))
 
-(cpp/raw "#include <GLFW/glfw3.h>")
+(cpp/raw "#include \"gl_wrappers.h\"
+#include <GLFW/glfw3.h>")
 (cpp/raw "#include \"gl_utils.h\"")
 
 (cpp/raw
@@ -94,9 +95,9 @@
          ;; VBO
          ;;
          vbo ((cpp/type "unsigned int"))
-         _ (cpp/glGenBuffers (cpp/int 1) (cpp/& vbo))
-         _ (cpp/glBindBuffer gl/GL_ARRAY_BUFFER vbo)
-         _ (cpp/glBufferData gl/GL_ARRAY_BUFFER
+         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
+         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
+         _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                              cpp/textured_rectangle_2D_vertices_size
                              (cpp/cast (cpp/type "void*")
                                        cpp/textured_rectangle_2D_vertices)
@@ -105,9 +106,9 @@
          ;; EBO
          ;;
          ebo ((cpp/type "unsigned int"))
-         _ (cpp/glGenBuffers (cpp/int 1) (cpp/& ebo))
-         _ (cpp/glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
-         _ (cpp/glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
+         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& ebo))
+         _ (cpp/wrap_glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
+         _ (cpp/wrap_glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
                              cpp/textured_rectangle_2D_indices_size
                              (cpp/cast (cpp/type "void*")
                                        cpp/textured_rectangle_2D_indices)
@@ -115,32 +116,32 @@
          ;;
          ;; Vertex Attributes
          ;;
-         _ (cpp/glVertexAttribPointer 0
-                                      3
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 0)
+                                      (cpp/int 3)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 8) cpp/float_size)
                                       (cpp/voidify_int 0))
-         _ (cpp/glEnableVertexAttribArray 0)
-         _ (cpp/glVertexAttribPointer 1
-                                      3
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 1)
+                                      (cpp/int 3)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 8) cpp/float_size)
                                       (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
-         _ (cpp/glEnableVertexAttribArray 1)
-         _ (cpp/glVertexAttribPointer 2
-                                      2
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 1))
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 2)
+                                      (cpp/int 2)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 8) cpp/float_size)
                                       (cpp/voidify_int (cpp/* (cpp/int 6) cpp/float_size)))
-         _ (cpp/glEnableVertexAttribArray 2)]
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 2))]
 
         {:vao vao
          :vbo vbo
          :ebo ebo
-         :draw #(cpp/glDrawElements
+         :draw #(cpp/wrap_glDrawElements
                  gl/GL_TRIANGLES
                  cpp/textured_rectangle_2D_indices_size
                  gl/GL_UNSIGNED_INT
@@ -155,9 +156,9 @@
          ;; VBO
          ;;
          vbo ((cpp/type "unsigned int"))
-         _ (cpp/glGenBuffers (cpp/int 1) (cpp/& vbo))
-         _ (cpp/glBindBuffer gl/GL_ARRAY_BUFFER vbo)
-         _ (cpp/glBufferData gl/GL_ARRAY_BUFFER
+         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
+         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
+         _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                              cpp/textured_cube_3D_vertices_size
                              (cpp/cast (cpp/type "void*")
                                        cpp/textured_cube_3D_vertices)
@@ -166,21 +167,21 @@
          ;;
          ;; Vertex Attributes
          ;;
-         _ (cpp/glVertexAttribPointer 0
-                                      3
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 0)
+                                      (cpp/int 3)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 5) cpp/float_size)
                                       (cpp/voidify_int 0))
-         _ (cpp/glEnableVertexAttribArray 0)
-         _ (cpp/glVertexAttribPointer 1
-                                      2
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 1)
+                                      (cpp/int 2)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 5) cpp/float_size)
                                       (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
-         _ (cpp/glEnableVertexAttribArray 1)]
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 1))]
 
         {:vao vao
          :vbo vbo
-         :draw #(cpp/glDrawArrays gl/GL_TRIANGLES 0 36)}))
+         :draw #(cpp/wrap_glDrawArrays gl/GL_TRIANGLES (cpp/int 0) (cpp/int 36))}))

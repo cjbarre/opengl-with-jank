@@ -2,13 +2,21 @@
   (:require [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]))
 
-(cpp/raw "#include <GLFW/glfw3.h>")
+(cpp/raw "#ifdef __APPLE__
+#define GL_SILENCE_DEPRECATION
+#include <OpenGL/gl3.h>
+#else
+#include <GL/glew.h>
+#endif
+#include <GLFW/glfw3.h>")
 
 (cpp/raw "
+#ifdef __APPLE__
 extern \"C\" {
   void glGenVertexArrays(GLsizei n, GLuint *arrays);
   void glBindVertexArray(GLuint array);
-}")
+}
+#endif")
 
 ;; stb_truetype implementation is in libs/stb/lib/libstb_all.dylib for AOT compilation
 (cpp/raw "

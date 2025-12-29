@@ -4,14 +4,9 @@
             [engine.gl.constants :as gl]))
 
 (cpp/raw
- "#include <GLFW/glfw3.h>
+ "#include \"gl_wrappers.h\"
+  #include <GLFW/glfw3.h>
   #include <stdlib.h>")
-
-(cpp/raw
- "extern \"C\" {
-  void glGenVertexArrays(GLsizei n, GLuint *arrays);
-  void glBindVertexArray(GLuint array);
-}")
 
 (cpp/raw
  "inline char **sources(void* source) {
@@ -46,11 +41,11 @@
                         (assoc args :valid-types [:fragment :vertex])))
          source (cpp/unbox (cpp/type "void*") (io/slurp {:path path}))
          sources (cpp/sources source)
-         shader (cpp/glCreateShader shader-type)
-         _ (cpp/glShaderSource shader 1 sources cpp/nullptr)
-         _ (cpp/glCompileShader shader)
+         shader (cpp/wrap_glCreateShader shader-type)
+         _ (cpp/wrap_glShaderSource shader (cpp/int 1) sources cpp/nullptr)
+         _ (cpp/wrap_glCompileShader shader)
          success? (cpp/int)
-         _ (cpp/glGetShaderiv shader gl/GL_COMPILE_STATUS (cpp/& success?))
+         _ (cpp/wrap_glGetShaderiv shader gl/GL_COMPILE_STATUS (cpp/& success?))
          :when (cpp/! success?)
          :error (do (cpp/log_compilation_error shader)
                     (throw (ex-info "Shader compilation failed"
@@ -70,30 +65,30 @@
          fragment-shader (compile-shader
                           {:path fragment-shader-path
                            :type :fragment})
-         program (cpp/glCreateProgram)
-         _ (cpp/glAttachShader program vertex-shader)
-         _ (cpp/glAttachShader program fragment-shader)
-         _ (cpp/glLinkProgram program)
+         program (cpp/wrap_glCreateProgram)
+         _ (cpp/wrap_glAttachShader program vertex-shader)
+         _ (cpp/wrap_glAttachShader program fragment-shader)
+         _ (cpp/wrap_glLinkProgram program)
          success? (cpp/int)
-         _ (cpp/glGetProgramiv program gl/GL_LINK_STATUS (cpp/& success?))
+         _ (cpp/wrap_glGetProgramiv program gl/GL_LINK_STATUS (cpp/& success?))
          :when (cpp/! success?)
          :error (do
                   (cpp/log_link_error program)
                   (throw (ex-info "Shader program linking failed"
                                   args)))
-         _ (cpp/glDeleteShader vertex-shader)
-         _ (cpp/glDeleteShader fragment-shader)]
+         _ (cpp/wrap_glDeleteShader vertex-shader)
+         _ (cpp/wrap_glDeleteShader fragment-shader)]
 
         program))
 
 (defn create-vertex-array-object
   []
   (clet [vao ((cpp/type "unsigned int"))
-         _ (cpp/glGenVertexArrays 1 (cpp/& vao))
-         _ (cpp/glBindVertexArray vao)]
+         _ (cpp/wrap_glGenVertexArrays (cpp/int 1) (cpp/& vao))
+         _ (cpp/wrap_glBindVertexArray vao)]
 
         vao))
 
 (defn bind-vertex-array-object
   [{:keys [vertex-array-object-id]}]
-  (cpp/glBindVertexArray vertex-array-object-id))
+  (cpp/wrap_glBindVertexArray vertex-array-object-id))

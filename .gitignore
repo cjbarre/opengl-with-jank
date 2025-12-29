@@ -10,6 +10,7 @@ out/
 
 # Build output directory
 dist/
+dist-*/
 
 # Pre-compiled libraries (built locally)
 libs/*/lib/

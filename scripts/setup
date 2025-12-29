@@ -41,10 +41,79 @@ cp "src/geometry/runtime/$(format_lib_name ozz_geometry_r)" "$LIBS_DIR/ozz-anima
 
 cd "$PROJECT_DIR"
 
-# Build OpenGL stub library (platform-specific)
+# Build OpenGL stub library (platform-specific - no-op on Linux)
 echo "Building OpenGL stub library..."
 mkdir -p "$LIBS_DIR/opengl/lib"
 create_opengl_stub "$LIBS_DIR/opengl/lib/$(format_lib_name OpenGL)"
+
+# Build header-only libraries into shared libraries
+echo "Building STB library..."
+mkdir -p "$LIBS_DIR/stb/lib"
+cat > /tmp/stb_impl.c << 'EOF'
+#define STBI_NO_THREAD_LOCALS 1
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -I"$PROJECT_DIR/include" -lm
+    fix_lib_install_name "$LIBS_DIR/stb/lib/libstb_all.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/stb/lib/libstb_all.dylib" /tmp/stb_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libstb_all.dylib"
+fi
+
+echo "Building cgltf library..."
+mkdir -p "$LIBS_DIR/cgltf/lib"
+cat > /tmp/cgltf_impl.c << 'EOF'
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.so" /tmp/cgltf_impl.c -I"$PROJECT_DIR/include"
+    fix_lib_install_name "$LIBS_DIR/cgltf/lib/libcgltf.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.dylib" /tmp/cgltf_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libcgltf.dylib"
+fi
+
+echo "Building enet library..."
+mkdir -p "$LIBS_DIR/enet/lib"
+cat > /tmp/enet_impl.c << 'EOF'
+#define ENET_IMPLEMENTATION
+#include "enet.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -I"$PROJECT_DIR/include"
+    fix_lib_install_name "$LIBS_DIR/enet/lib/libenet.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/enet/lib/libenet.dylib" /tmp/enet_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libenet.dylib"
+fi
+
+# Build GLFW from source on Linux (macOS uses pre-built from Homebrew)
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    echo "Building GLFW..."
+    cd "$PROJECT_DIR/third_party"
+    if [[ ! -d glfw ]]; then
+        git clone --depth 1 --branch 3.4 https://github.com/glfw/glfw.git
+    fi
+    cd glfw
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+          -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
+    cmake --build build -j$(nproc)
+    mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include"
+    cp build/src/libglfw.so.3 "$LIBS_DIR/glfw/lib/"
+    ln -sf libglfw.so.3 "$LIBS_DIR/glfw/lib/libglfw.so"
+    cp -R include/GLFW "$LIBS_DIR/glfw/include/"
+    fix_lib_install_name "$LIBS_DIR/glfw/lib/libglfw.so.3"
+fi
+
+cd "$PROJECT_DIR"
 
 echo ""
 echo "=== Setup complete for $PLATFORM ==="

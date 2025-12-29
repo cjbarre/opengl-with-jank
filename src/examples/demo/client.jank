@@ -21,8 +21,26 @@
             [examples.demo.strafehelper.interface :as strafehelper]
             [engine.gl.constants :as gl]))
 
-(cpp/raw "#include <GLFW/glfw3.h>
-          extern \"C\" { void glBindVertexArray(GLuint array); }")
+(cpp/raw "#include \"gl_wrappers.h\"
+#include <GLFW/glfw3.h>
+#include <cstdio>
+
+// GLEW initialization for Linux - must be called after glfwMakeContextCurrent
+inline bool init_glew_client() {
+#ifndef __APPLE__
+    glewExperimental = GL_TRUE;
+    GLenum err = glewInit();
+    if (err != GLEW_OK) {
+        fprintf(stderr, \"GLEW initialization failed: %s\\n\", glewGetErrorString(err));
+        return false;
+    }
+    // Clear any GL errors from glewInit (common issue)
+    while (glGetError() != GL_NO_ERROR) {}
+    return true;
+#else
+    return true;
+#endif
+}")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
@@ -176,23 +194,23 @@
                       (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
                       (cpp/glm.rotate (cpp/glm.radians (cpp/float (- 90.0 yaw)))
                                       (math/gimmie :vec3 [0.0 1.0 0.0])))
-          model-m-loc (cpp/glGetUniformLocation skinned-shader "model")]
-      (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
+          model-m-loc (cpp/wrap_glGetUniformLocation skinned-shader "model")]
+      (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                               (cpp/glm.value_ptr model-m)))
     ;; Set base color
-    (cpp/glUniform4f (cpp/glGetUniformLocation skinned-shader "uBaseColorFactor")
+    (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorFactor")
                      (cpp/float 0.8) (cpp/float 0.6) (cpp/float 0.5) (cpp/float 1.0))
-    (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uHasBaseColorTex") 0)
+    (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uHasBaseColorTex") (cpp/int 0))
     ;; Render each mesh
     (doseq [mesh-idx (range mesh-count)]
-      (let [loc (cpp/glGetUniformLocation skinned-shader "uBoneMatrices")
+      (let [loc (cpp/wrap_glGetUniformLocation skinned-shader "uBoneMatrices")
             ctx-ptr (cpp/unbox cpp/AnimationContext* ctx)
             meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
         (cpp/compute_and_upload_skinning_matrices ctx-ptr meshes-ptr (cpp/int mesh-idx) loc)
         (let [vao-data (nth vaos mesh-idx)
               index-count (:index-count vao-data)]
-          (cpp/glBindVertexArray (:vao vao-data))
-          (cpp/glDrawElements gl/GL_TRIANGLES
+          (cpp/wrap_glBindVertexArray (:vao vao-data))
+          (cpp/wrap_glDrawElements gl/GL_TRIANGLES
                               index-count
                               gl/GL_UNSIGNED_SHORT
                               cpp/nullptr))))))
@@ -271,9 +289,13 @@
       (println "Window creation failed")
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
+    ;; Initialize GLEW for Linux (no-op on macOS)
+    (when (cpp/! (cpp/init_glew_client))
+      (println "GLEW initialization failed")
+      (cpp/exit 1))
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_client)
-    (cpp/glEnable gl/GL_DEPTH_TEST)
+    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 ;; =============================================================================
@@ -422,8 +444,8 @@
                     (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
                     (cpp/glm.rotate (cpp/glm.radians (cpp/float (- yaw)))
                                     (math/gimmie :vec3 [0.0 1.0 0.0])))
-        model-m-loc (cpp/glGetUniformLocation shader "model")]
-    (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
+        model-m-loc (cpp/wrap_glGetUniformLocation shader "model")]
+    (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                             (cpp/glm.value_ptr model-m))
     (when model
       ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
@@ -452,24 +474,24 @@
                                   (cpp/float pz))
         camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
         view-m (cpp/glm.lookAt camera-pos look-target camera-up)
-        view-m-loc (cpp/glGetUniformLocation shader "view")]
-    (cpp/glUniformMatrix4fv view-m-loc 1 gl/GL_FALSE
+        view-m-loc (cpp/wrap_glGetUniformLocation shader "view")]
+    (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) gl/GL_FALSE
                             (cpp/glm.value_ptr view-m))))
 
 (defn draw-world
   "Draw the game world."
   [{:keys [shader skinned-shader level-model player-anim-data client-state delta-time] :as context}]
-  (cpp/glClearColor 0.2 0.3 0.3 1.0)
-  (cpp/glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
+  (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
+  (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
   (let [projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                                           (cpp/float 0.1)
                                           (cpp/float 100.0))]
     ;; Render level with basic shader
-    (cpp/glUseProgram shader)
-    (let [projection-m-loc (cpp/glGetUniformLocation shader "projection")]
-      (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE
+    (cpp/wrap_glUseProgram shader)
+    (let [projection-m-loc (cpp/wrap_glGetUniformLocation shader "projection")]
+      (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE
                               (cpp/glm.value_ptr projection-m)))
 
     ;; Get local player state for camera
@@ -486,16 +508,16 @@
 
       ;; Render level
       (when level-model
-        (let [model-m-loc (cpp/glGetUniformLocation shader "model")]
-          (cpp/glUniformMatrix4fv model-m-loc 1 gl/GL_FALSE
+        (let [model-m-loc (cpp/wrap_glGetUniformLocation shader "model")]
+          (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                                   (cpp/glm.value_ptr (cpp/identity_matrix))))
         ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"}))
 
       ;; Switch to skinned shader for player
-      (cpp/glDisable gl/GL_CULL_FACE)
-      (cpp/glUseProgram skinned-shader)
-      (let [projection-m-loc (cpp/glGetUniformLocation skinned-shader "projection")]
-        (cpp/glUniformMatrix4fv projection-m-loc 1 gl/GL_FALSE
+      (cpp/wrap_glDisable gl/GL_CULL_FACE)
+      (cpp/wrap_glUseProgram skinned-shader)
+      (let [projection-m-loc (cpp/wrap_glGetUniformLocation skinned-shader "projection")]
+        (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE
                                 (cpp/glm.value_ptr projection-m)))
       ;; Set camera for skinned shader too
       (render-camera skinned-shader local-pos local-yaw local-pitch)
@@ -712,15 +734,15 @@
          shader (shaders/load-shader-program
                  {:vertex-shader-path "shaders/basic_vertex.glsl"
                   :fragment-shader-path "shaders/basic_fragment.glsl"})
-         _ (cpp/glUseProgram shader)
-         _ (cpp/glUniform1i (cpp/glGetUniformLocation shader "uBaseColorTex") 0)
+         _ (cpp/wrap_glUseProgram shader)
+         _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
          ;; Skinned shader for animated player
          skinned-shader (shaders/load-shader-program
                          {:vertex-shader-path "shaders/skinned_vertex.glsl"
                           :fragment-shader-path "shaders/skinned_fragment.glsl"})
-         _ (cpp/glUseProgram skinned-shader)
-         _ (cpp/glUniform1i (cpp/glGetUniformLocation skinned-shader "uBaseColorTex") 0)
+         _ (cpp/wrap_glUseProgram skinned-shader)
+         _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorTex") (cpp/int 0))
 
          text-shader (shaders/load-shader-program
                       {:vertex-shader-path "shaders/text_vertex.glsl"

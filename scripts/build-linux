@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build Linux ARM64 distribution from macOS via SSH to VM
+#
+# Usage: ./scripts/build-linux [options] [game]
+#   game          Game to compile (default: demo)
+#   --ip IP       VM IP address (default: auto-detect or 192.168.64.4)
+#   --user USER   SSH user (default: root)
+#   --pass PASS   SSH password (default: root)
+#   --sync-only   Only sync files, don't compile
+#   --no-sync     Skip file sync, just compile
+#   --help        Show this help
+
+# Resolve script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Defaults
+VM_IP=""
+VM_USER="root"
+VM_PASS="root"
+GAME="demo"
+SYNC_ONLY=false
+NO_SYNC=false
+REMOTE_DIR="~/opengl-with-jank"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --ip) VM_IP="$2"; shift 2 ;;
+        --user) VM_USER="$2"; shift 2 ;;
+        --pass) VM_PASS="$2"; shift 2 ;;
+        --sync-only) SYNC_ONLY=true; shift ;;
+        --no-sync) NO_SYNC=true; shift ;;
+        --help)
+            sed -n '3,14p' "$0" | sed 's/^# //'
+            exit 0
+            ;;
+        -*) echo "Unknown option: $1"; exit 1 ;;
+        *) GAME="$1"; shift ;;
+    esac
+done
+
+NAMESPACE="examples.${GAME}.core"
+
+# Check for sshpass
+if ! command -v sshpass &> /dev/null; then
+    echo "ERROR: sshpass is required. Install with: brew install sshpass"
+    exit 1
+fi
+
+# Auto-detect VM IP if not provided
+if [[ -z "$VM_IP" ]]; then
+    echo "Auto-detecting VM IP..."
+    # Try common UTM IPs
+    for ip in 192.168.64.4 192.168.64.3 192.168.64.2; do
+        if timeout 2 bash -c "echo >/dev/tcp/$ip/22" 2>/dev/null; then
+            VM_IP="$ip"
+            echo "Found VM at $VM_IP"
+            break
+        fi
+    done
+    if [[ -z "$VM_IP" ]]; then
+        echo "ERROR: Could not auto-detect VM IP. Use --ip to specify."
+        exit 1
+    fi
+fi
+
+# SSH helper
+ssh_cmd() {
+    sshpass -p "$VM_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$VM_USER@$VM_IP" "$@"
+}
+
+scp_cmd() {
+    sshpass -p "$VM_PASS" scp -o StrictHostKeyChecking=no -r "$@"
+}
+
+# Test connection
+echo "Testing connection to $VM_USER@$VM_IP..."
+if ! ssh_cmd "echo 'Connected'" &>/dev/null; then
+    echo "ERROR: Cannot connect to VM. Check IP/credentials."
+    exit 1
+fi
+echo "Connected successfully."
+
+# Sync files
+if [[ "$NO_SYNC" != true ]]; then
+    echo ""
+    echo "=== Syncing files to VM ==="
+
+    echo "Syncing src/..."
+    scp_cmd "$PROJECT_DIR/src/"* "$VM_USER@$VM_IP:$REMOTE_DIR/src/"
+
+    echo "Syncing include/..."
+    scp_cmd "$PROJECT_DIR/include/"* "$VM_USER@$VM_IP:$REMOTE_DIR/include/"
+
+    echo "Syncing scripts/..."
+    scp_cmd "$PROJECT_DIR/scripts/"* "$VM_USER@$VM_IP:$REMOTE_DIR/scripts/"
+
+    echo "Syncing assets..."
+    scp_cmd "$PROJECT_DIR/shaders" "$VM_USER@$VM_IP:$REMOTE_DIR/"
+    scp_cmd "$PROJECT_DIR/textures" "$VM_USER@$VM_IP:$REMOTE_DIR/"
+    scp_cmd "$PROJECT_DIR/models" "$VM_USER@$VM_IP:$REMOTE_DIR/"
+    scp_cmd "$PROJECT_DIR/fonts" "$VM_USER@$VM_IP:$REMOTE_DIR/"
+
+    echo "Files synced."
+fi
+
+if [[ "$SYNC_ONLY" == true ]]; then
+    echo "Sync complete (--sync-only specified)."
+    exit 0
+fi
+
+# Compile on VM
+echo ""
+echo "=== Compiling $GAME on Linux ARM64 ==="
+
+ssh_cmd bash << EOF
+set -e
+cd $REMOTE_DIR
+
+# Set library path
+export LD_LIBRARY_PATH="\$PWD/libs/linux-arm64/glfw/lib:\$PWD/libs/linux-arm64/ozz-animation/lib:\$PWD/libs/linux-arm64/stb/lib:\$PWD/libs/linux-arm64/enet/lib:\$PWD/libs/linux-arm64/cgltf/lib"
+
+echo "Running jank compile..."
+jank \\
+  -I libs/linux-arm64/glfw/include -I libs/glm -I include -I libs/linux-arm64/ozz-animation/include \\
+  -L libs/linux-arm64/glfw/lib -lglfw \\
+  -L libs/linux-arm64/ozz-animation/lib -lozz_animation_r -lozz_base_r -lozz_geometry_r \\
+  -L libs/linux-arm64/stb/lib -lstb_all \\
+  -L libs/linux-arm64/enet/lib -lenet \\
+  -L libs/linux-arm64/cgltf/lib -lcgltf \\
+  -I/usr/include -L/usr/lib -lGL -lGLEW \\
+  --module-path src compile $NAMESPACE -o $GAME
+
+echo "Compilation successful!"
+ls -lh $GAME
+EOF
+
+# Package distribution
+echo ""
+echo "=== Packaging distribution ==="
+
+ssh_cmd bash << EOF
+set -e
+cd $REMOTE_DIR
+
+# Clean and create dist structure
+rm -rf dist
+mkdir -p dist/bin dist/lib
+
+# Copy binary
+cp $GAME dist/bin/
+
+# Copy libraries
+cp libs/linux-arm64/glfw/lib/*.so dist/lib/ 2>/dev/null || true
+cp libs/linux-arm64/ozz-animation/lib/*.so dist/lib/ 2>/dev/null || true
+cp libs/linux-arm64/stb/lib/*.so dist/lib/ 2>/dev/null || true
+cp libs/linux-arm64/enet/lib/*.so dist/lib/ 2>/dev/null || true
+cp libs/linux-arm64/cgltf/lib/*.so dist/lib/ 2>/dev/null || true
+
+# Copy assets
+cp -r shaders dist/
+cp -r textures dist/
+cp -r models dist/
+cp -r fonts dist/
+
+# Create launcher script
+cat > dist/${GAME}_run << 'LAUNCHER'
+#!/bin/bash
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+export LD_LIBRARY_PATH="\$SCRIPT_DIR/lib:\$LD_LIBRARY_PATH"
+cd "\$SCRIPT_DIR"
+exec "./bin/${GAME}" "\$@"
+LAUNCHER
+sed -i "s/\\\${GAME}/$GAME/g" dist/${GAME}_run
+chmod +x dist/${GAME}_run
+
+echo "Distribution packaged:"
+du -sh dist/
+ls -la dist/
+EOF
+
+# Copy back to macOS
+echo ""
+echo "=== Copying distribution to macOS ==="
+
+LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-arm64"
+rm -rf "$LINUX_DIST_DIR"
+mkdir -p "$LINUX_DIST_DIR"
+
+scp_cmd "$VM_USER@$VM_IP:$REMOTE_DIR/dist/*" "$LINUX_DIST_DIR/"
+
+echo ""
+echo "=== Build complete! ==="
+echo "Linux ARM64 distribution: $LINUX_DIST_DIR"
+echo ""
+echo "Contents:"
+ls -la "$LINUX_DIST_DIR"
+echo ""
+echo "To run on Linux: ./${GAME}_run"

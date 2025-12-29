@@ -26,7 +26,7 @@ inline float raycast_ground_cpp(
         glm::vec3 v1 = (*positions)[(*indices)[i*3+1]];
         glm::vec3 v2 = (*positions)[(*indices)[i*3+2]];
 
-        // Möller-Trumbore
+        // Moller-Trumbore ray-triangle intersection
         glm::vec3 edge1 = v1 - v0;
         glm::vec3 edge2 = v2 - v0;
         glm::vec3 h = glm::cross(ray_dir, edge2);

@@ -23,12 +23,42 @@ NAMESPACE="examples.${GAME}.core"
 shift || true
 ARGS="$@"
 
+# Build library flags based on platform
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    # Linux uses standard -l flags (linker adds lib prefix and .so suffix)
+    GLFW_LIB="-lglfw"
+    OZZ_LIBS="-lozz_animation_r -lozz_base_r -lozz_geometry_r"
+    STB_LIB="-lstb_all"
+    ENET_LIB="-lenet"
+    CGLTF_LIB="-lcgltf"
+    OPENGL_LIB="-lGL"
+else
+    # macOS uses full library names
+    GLFW_LIB="-l\"lib\"glfw.3.$LIB_EXT"
+    OZZ_LIBS="-l\"lib\"ozz_animation_r.$LIB_EXT -l\"lib\"ozz_base_r.$LIB_EXT -l\"lib\"ozz_geometry_r.$LIB_EXT"
+    STB_LIB="-l\"lib\"stb_all.$LIB_EXT"
+    ENET_LIB="-l\"lib\"enet.$LIB_EXT"
+    CGLTF_LIB="-l\"lib\"cgltf.$LIB_EXT"
+    OPENGL_LIB=""
+fi
+
 cd "$PROJECT_DIR"
-jank \
+
+# Build OpenGL flags - Linux needs explicit library and include paths
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    OPENGL_FLAGS="-I/usr/include -L/usr/lib $OPENGL_LIB -lGLEW"
+    # Set LD_LIBRARY_PATH for runtime library loading on Linux
+    export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+else
+    OPENGL_FLAGS="$OPENGL_LIB"
+fi
+
+eval jank \
   -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" \
-  -L"$LIBS_DIR/glfw/lib" -l"lib"glfw.3.$LIB_EXT \
-  -L"$LIBS_DIR/ozz-animation/lib" -l"lib"ozz_animation_r.$LIB_EXT -l"lib"ozz_base_r.$LIB_EXT -l"lib"ozz_geometry_r.$LIB_EXT \
-  -L"$LIBS_DIR/stb/lib" -l"lib"stb_all.$LIB_EXT \
-  -L"$LIBS_DIR/enet/lib" -l"lib"enet.$LIB_EXT \
-  -L"$LIBS_DIR/cgltf/lib" -l"lib"cgltf.$LIB_EXT \
+  -L"$LIBS_DIR/glfw/lib" $GLFW_LIB \
+  -L"$LIBS_DIR/ozz-animation/lib" $OZZ_LIBS \
+  -L"$LIBS_DIR/stb/lib" $STB_LIB \
+  -L"$LIBS_DIR/enet/lib" $ENET_LIB \
+  -L"$LIBS_DIR/cgltf/lib" $CGLTF_LIB \
+  $OPENGL_FLAGS \
   --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS

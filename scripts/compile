@@ -19,6 +19,15 @@ LIBS_DIR="$(get_libs_dir)"
 LIB_EXT="$(get_lib_extension)"
 BREW_PREFIX="$(get_homebrew_prefix)"
 
+# Platform-specific settings
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    OPENGL_LIB_FLAG="-lGL"
+    RPATH_PREFIX='$ORIGIN'
+else
+    OPENGL_LIB_FLAG="-lOpenGL"
+    RPATH_PREFIX="@executable_path"
+fi
+
 GAME="${1:-demo}"
 NAMESPACE="examples.${GAME}.core"
 OUTPUT="${2:-${GAME}}"
@@ -31,15 +40,22 @@ export LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/st
 
 # Pass libraries to jank - it handles both JIT loading and passing to linker
 cd "$PROJECT_DIR"
+# Build library flags - Linux uses .so without version suffix in -l flag
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    GLFW_LIB="-lglfw"
+else
+    GLFW_LIB="-lglfw.3"
+fi
+
 jank \
   -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" \
   -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" \
-  -lglfw.3 \
+  $GLFW_LIB \
   -lozz_animation_r -lozz_base_r -lozz_geometry_r \
   -lstb_all \
   -lenet \
   -lcgltf \
-  -lOpenGL \
+  $OPENGL_LIB_FLAG \
   --module-path $(clojure -Spath) \
   compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
 
@@ -67,29 +83,52 @@ BUNDLE_DIR="$BUILD_DIR/lib/$OUTPUT"
 # -----------------------------------------------------------------------------
 # Game libraries
 # -----------------------------------------------------------------------------
-cp "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "$BUNDLE_DIR/"
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    cp "$LIBS_DIR/glfw/lib/libglfw.so.3" "$BUNDLE_DIR/"
+else
+    cp "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "$BUNDLE_DIR/"
+fi
 cp "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT" "$BUNDLE_DIR/"
 cp "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT" "$BUNDLE_DIR/"
 cp "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT" "$BUNDLE_DIR/"
 cp "$LIBS_DIR/stb/lib/libstb_all.$LIB_EXT" "$BUNDLE_DIR/"
 cp "$LIBS_DIR/enet/lib/libenet.$LIB_EXT" "$BUNDLE_DIR/"
 cp "$LIBS_DIR/cgltf/lib/libcgltf.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "$BUNDLE_DIR/"
+# OpenGL stub only exists on macOS
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    cp "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "$BUNDLE_DIR/"
+fi
 
 # -----------------------------------------------------------------------------
 # Jank/LLVM runtime libraries
 # -----------------------------------------------------------------------------
-cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
-cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
-cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    # Linux uses .so without version in filename typically
+    cp "$JANK_LLVM/lib/libLLVM.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libLLVM"*".so"* "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libclang-cpp"*".so"* "$BUNDLE_DIR/"
+    # libc++ may or may not be bundled with jank on Linux
+    cp "$JANK_LLVM/lib/libc++.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libunwind.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libc++abi.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+else
+    cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+fi
 
 # -----------------------------------------------------------------------------
 # System dependencies (platform-specific)
 # -----------------------------------------------------------------------------
-bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
-bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
+    bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    # On Linux, try to bundle from system paths (optional - may use system libs)
+    bundle_system_lib "/usr/lib/libcrypto.so.3" "$BUNDLE_DIR" 2>/dev/null || true
+    bundle_system_lib "/usr/lib/libzstd.so.1" "$BUNDLE_DIR" 2>/dev/null || true
+fi
 
 # -----------------------------------------------------------------------------
 # Clang executable (for JIT at runtime)
@@ -100,7 +139,7 @@ ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
 
 # Fix clang's rpath to find dylibs in lib/$OUTPUT/
 # From lib/jank/0.1/bin/ need to go up 3 levels to lib/, then into $OUTPUT/
-add_rpath "@executable_path/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
+add_rpath "${RPATH_PREFIX}/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
 
 # -----------------------------------------------------------------------------
 # Clang resource directory (headers for JIT compilation)
@@ -121,16 +160,18 @@ cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
 # -----------------------------------------------------------------------------
 # Fix rpaths in executable
 # -----------------------------------------------------------------------------
-# Fix library paths to use @rpath
-change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
-change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
-change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    # Fix library paths to use @rpath
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
+fi
 
 # Remove hardcoded jank build path from rpath (baked in by jank linker)
 delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
 
 # Add rpath to find bundled libraries (executable is now in bin/)
-add_rpath "@executable_path/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+add_rpath "${RPATH_PREFIX}/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
 
 # -----------------------------------------------------------------------------
 # Create launcher script
@@ -153,6 +194,11 @@ echo "  │   ├── lib/clang/22/        (clang resources)"
 echo "  │   └── src/                 (jank stdlib)"
 echo "  └── ${OUTPUT}_run            (launcher)"
 echo ""
-echo "NOTE: End users need XCode Command Line Tools installed"
-echo "      (run: xcode-select --install)"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    echo "NOTE: End users need XCode Command Line Tools installed"
+    echo "      (run: xcode-select --install)"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    echo "NOTE: End users need build-essential or equivalent installed"
+    echo "      (for JIT compilation at runtime)"
+fi
 echo "============================================================================="

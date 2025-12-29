@@ -3,17 +3,13 @@
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))
 
-(cpp/raw "#include <GLFW/glfw3.h>")
+(cpp/raw "#include \"gl_wrappers.h\"
+#include <GLFW/glfw3.h>")
 
 ;; STB Image implementation is in libs/stb/lib/libstb_image.a for AOT compilation
 (cpp/raw
  "#define STBI_NO_THREAD_LOCALS 1
   #include \"stb_image.h\"")
-
-(cpp/raw
- "extern \"C\" {
-   void glGenerateMipmap(GLenum target);
- }")
 
 (cpp/raw
  "inline void* voidify_stbi_uc (stbi_uc*  x) {
@@ -47,13 +43,13 @@
          :error (throw (ex-info "Failed to load texture image"
                                 args))
          texture ((cpp/type "unsigned int"))
-         _ (cpp/glGenTextures 1 (cpp/& texture))
-         _ (cpp/glBindTexture gl/GL_TEXTURE_2D texture)
-         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_S wrap-s)
-         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_T wrap-t)
-         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MIN_FILTER min-filter)
-         _ (cpp/glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MAG_FILTER mag-filter)
-         _ (cpp/glTexImage2D
+         _ (cpp/wrap_glGenTextures (cpp/int 1) (cpp/& texture))
+         _ (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D texture)
+         _ (cpp/wrap_glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_S wrap-s)
+         _ (cpp/wrap_glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_T wrap-t)
+         _ (cpp/wrap_glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MIN_FILTER min-filter)
+         _ (cpp/wrap_glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_MAG_FILTER mag-filter)
+         _ (cpp/wrap_glTexImage2D
             gl/GL_TEXTURE_2D
             0
             (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
@@ -63,7 +59,7 @@
             (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
             gl/GL_UNSIGNED_BYTE
             (cpp/voidify_stbi_uc data))
-         _ (cpp/glGenerateMipmap gl/GL_TEXTURE_2D)
+         _ (cpp/wrap_glGenerateMipmap gl/GL_TEXTURE_2D)
          _ (cpp/stbi_image_free (cpp/voidify_stbi_uc data))]
 
         texture))

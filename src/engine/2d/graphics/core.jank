@@ -5,11 +5,8 @@
 
 ;; C++ implementation functions with state struct
 (cpp/raw "
+#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
-
-extern \"C\" {
-  void glBindVertexArray(GLuint array);
-}
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -154,6 +151,7 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
     glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
     glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 2);
 }
+
 ")
 
 ;; Using centralized GL constants from engine.gl.constants
@@ -169,25 +167,25 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
 
          ;; Create VBO with dynamic draw hint
          vbo ((cpp/type "unsigned int"))
-         _ (cpp/glGenBuffers (cpp/int 1) (cpp/& vbo))
-         _ (cpp/glBindBuffer gl/GL_ARRAY_BUFFER vbo)
-         _ (cpp/glBufferData gl/GL_ARRAY_BUFFER
+         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
+         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
+         _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                              (cpp/* (cpp/int (* 2 max-vertices)) cpp/float_size_2d)
                              cpp/nullptr
                              gl/GL_DYNAMIC_DRAW)
 
          ;; Position attribute (vec2 at location 0)
-         _ (cpp/glVertexAttribPointer 0
-                                      2
+         _ (cpp/wrap_glVertexAttribPointer (cpp/int 0)
+                                      (cpp/int 2)
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 2) cpp/float_size_2d)
                                       (cpp/voidify_int_2d 0))
-         _ (cpp/glEnableVertexAttribArray 0)
+         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
 
          ;; Unbind
-         _ (cpp/glBindBuffer gl/GL_ARRAY_BUFFER 0)
-         _ (cpp/glBindVertexArray 0)
+         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER (cpp/int 0))
+         _ (cpp/wrap_glBindVertexArray (cpp/int 0))
 
          ;; Store state in C++ struct for reliable access from closures
          _ (cpp/init_gfx2d_state vao vbo shader)]

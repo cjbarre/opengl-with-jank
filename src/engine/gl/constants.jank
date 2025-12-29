@@ -3,7 +3,8 @@
    Using inline functions instead of cpp/value to avoid symbol redefinition.")
 
 (cpp/raw
- "#include <GLFW/glfw3.h>
+ "#include \"gl_wrappers.h\"
+  #include <GLFW/glfw3.h>
 
   // OpenGL constants as inline functions
   inline int gl_array_buffer() { return GL_ARRAY_BUFFER; }

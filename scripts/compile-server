@@ -22,6 +22,13 @@ LIBS_DIR="$(get_libs_dir)"
 LIB_EXT="$(get_lib_extension)"
 BREW_PREFIX="$(get_homebrew_prefix)"
 
+# Platform-specific settings
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    RPATH_PREFIX='$ORIGIN'
+else
+    RPATH_PREFIX="@executable_path"
+fi
+
 GAME="${1:-demo}"
 NAMESPACE="examples.${GAME}.server"
 OUTPUT="${2:-${GAME}-server}"
@@ -73,17 +80,30 @@ cp "$LIBS_DIR/cgltf/lib/libcgltf.$LIB_EXT" "$BUNDLE_DIR/"
 # -----------------------------------------------------------------------------
 # Jank/LLVM runtime libraries
 # -----------------------------------------------------------------------------
-cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
-cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
-cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    cp "$JANK_LLVM/lib/libLLVM.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libLLVM"*".so"* "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libclang-cpp"*".so"* "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libc++.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libunwind.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libc++abi.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+else
+    cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+fi
 
 # -----------------------------------------------------------------------------
 # System dependencies (platform-specific)
 # -----------------------------------------------------------------------------
-bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
-bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
+    bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    bundle_system_lib "/usr/lib/libcrypto.so.3" "$BUNDLE_DIR" 2>/dev/null || true
+    bundle_system_lib "/usr/lib/libzstd.so.1" "$BUNDLE_DIR" 2>/dev/null || true
+fi
 
 # -----------------------------------------------------------------------------
 # Clang executable (for JIT at runtime)
@@ -94,7 +114,7 @@ ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
 
 # Fix clang's rpath to find dylibs in lib/$OUTPUT/
 # From lib/jank/0.1/bin/ need to go up 3 levels to lib/, then into $OUTPUT/
-add_rpath "@executable_path/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
+add_rpath "${RPATH_PREFIX}/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
 
 # -----------------------------------------------------------------------------
 # Clang resource directory (headers for JIT compilation)
@@ -115,15 +135,17 @@ cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
 # -----------------------------------------------------------------------------
 # Fix rpaths in executable
 # -----------------------------------------------------------------------------
-# Fix library paths to use @rpath
-change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
-change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    # Fix library paths to use @rpath
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
+fi
 
 # Remove hardcoded jank build path from rpath (baked in by jank linker)
 delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
 
 # Add rpath to find bundled libraries (executable is now in bin/)
-add_rpath "@executable_path/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+add_rpath "${RPATH_PREFIX}/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
 
 # -----------------------------------------------------------------------------
 # Create launcher script
@@ -146,6 +168,11 @@ echo "  │   ├── lib/clang/22/        (clang resources)"
 echo "  │   └── src/                 (jank stdlib)"
 echo "  └── ${OUTPUT}_run            (launcher)"
 echo ""
-echo "NOTE: End users need XCode Command Line Tools installed"
-echo "      (run: xcode-select --install)"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    echo "NOTE: End users need XCode Command Line Tools installed"
+    echo "      (run: xcode-select --install)"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    echo "NOTE: End users need build-essential or equivalent installed"
+    echo "      (for JIT compilation at runtime)"
+fi
 echo "============================================================================="
