@@ -2,6 +2,8 @@
 
 A 3D game engine and demo built with [Jank](https://jank-lang.org/) (a Clojure dialect) and OpenGL. This project serves as a learning vehicle for OpenGL, Jank's C++ interop, and game development.
 
+> **Note:** JIT mode (`./bin/run`) works with standard Jank. AOT compilation (`./bin/compile`) currently requires a custom Jank build with library linking fixes not yet merged upstream.
+
 ## Quick Start
 
 ```bash
