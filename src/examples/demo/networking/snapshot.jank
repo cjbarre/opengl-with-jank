@@ -1,4 +1,4 @@
-(ns engine.networking.snapshot
+(ns examples.demo.networking.snapshot
   "Snapshot data structures for network synchronization.
 
    A snapshot represents the authoritative game state at a point in time,
@@ -92,18 +92,20 @@
 
 (defn should-interpolate?
   "Determine if entity should interpolate between states.
-   Returns false if entity teleported or is new."
-  [current-state next-state]
-  (when (and current-state next-state)
-    (let [pos-current (:position current-state)
-          pos-next (:position next-state)
-          dx (- (nth pos-next 0) (nth pos-current 0))
-          dy (- (nth pos-next 1) (nth pos-current 1))
-          dz (- (nth pos-next 2) (nth pos-current 2))
-          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))
-          ;; If moved more than 10 units, probably teleported
-          teleport-threshold-sq 100.0]
-      (< dist-sq teleport-threshold-sq))))
+   Returns false if entity teleported or is new.
+   teleport-threshold: units of movement that indicate teleport (default 10.0)"
+  ([current-state next-state]
+   (should-interpolate? current-state next-state 10.0))
+  ([current-state next-state teleport-threshold]
+   (when (and current-state next-state)
+     (let [pos-current (:position current-state)
+           pos-next (:position next-state)
+           dx (- (nth pos-next 0) (nth pos-current 0))
+           dy (- (nth pos-next 1) (nth pos-current 1))
+           dz (- (nth pos-next 2) (nth pos-current 2))
+           dist-sq (+ (* dx dx) (* dy dy) (* dz dz))
+           teleport-threshold-sq (* teleport-threshold teleport-threshold)]
+       (< dist-sq teleport-threshold-sq)))))
 
 ;; =============================================================================
 ;; Command (client -> server)

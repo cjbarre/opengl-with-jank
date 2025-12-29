@@ -10,7 +10,7 @@
             [engine.2d.text.interface :as text]
             [engine.2d.graphics.interface :as gfx2d]
             [engine.3d.animation.interface :as anim]
-            [engine.3d.animation.state :as anim-state]
+            [examples.demo.animation.state :as anim-state]
             [examples.demo.strafehelper.interface :as strafehelper]
             [examples.demo.server :as server]
             [examples.demo.client :as client]

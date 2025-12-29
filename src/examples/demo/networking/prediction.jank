@@ -1,4 +1,4 @@
-(ns engine.networking.prediction
+(ns examples.demo.networking.prediction
   "Client-side prediction for the local player.
 
    The local player runs physics locally for instant response.
@@ -7,8 +7,6 @@
    2. If mismatch: reset to server state, replay unacknowledged commands
    3. Smoothly interpolate any correction to avoid visual jitter")
 
-(require '[engine.networking.interpolation :as interp])
-
 ;; =============================================================================
 ;; Constants
 ;; =============================================================================
@@ -16,12 +14,12 @@
 (def COMMAND_BUFFER_SIZE 64)        ; Max unacknowledged commands to store
 (def ERROR_CORRECTION_TIME 100.0)   ; ms to smooth out prediction errors (float)
 (def POSITION_ERROR_THRESHOLD 0.1)  ; Units of acceptable position difference
+(def SPAWN_POSITION [0.0 50.0 0.0]) ; Default spawn position
+(def INITIAL_YAW -90.0)             ; Default camera yaw
 
 ;; =============================================================================
 ;; Prediction State
 ;; =============================================================================
-
-(def DEFAULT_SPAWN_POSITION [0.0 50.0 0.0])
 
 (defn make-prediction-state
   "Create initial prediction state."
@@ -29,12 +27,12 @@
   {:commands []                    ; [{:sequence n :input {...} :result-state {...}}]
    :next-sequence 1                ; Next command sequence number
    :last-ack-sequence 0            ; Last command server acknowledged
-   :predicted-state {:position DEFAULT_SPAWN_POSITION  ; Start at spawn
+   :predicted-state {:position SPAWN_POSITION
                      :velocity [0.0 0.0 0.0]
                      :grounded? true
                      :jump-z-start nil
                      :pitch 0.0
-                     :yaw -90.0}
+                     :yaw INITIAL_YAW}
    :server-state nil               ; Last received server state
    :error-offset [0.0 0.0 0.0]     ; Position error being smoothed out (floats)
    :error-time-remaining 0.0})     ; Time left to smooth error (float)

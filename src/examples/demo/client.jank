@@ -6,9 +6,9 @@
    - Snapshot interpolation for remote players (smooth motion)
    - Server reconciliation (correct prediction errors)"
   (:require [engine.networking.protocol :as net]
-            [engine.networking.snapshot :as snapshot]
-            [engine.networking.interpolation :as interp]
-            [engine.networking.prediction :as pred]
+            [examples.demo.networking.snapshot :as snapshot]
+            [examples.demo.networking.interpolation :as interp]
+            [examples.demo.networking.prediction :as pred]
             [examples.demo.shared :as shared]
             [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]
@@ -58,6 +58,7 @@
 
 (def DEFAULT_SERVER_ADDRESS "127.0.0.1")
 (def DEFAULT_SERVER_PORT 7777)
+
 
 ;; =============================================================================
 ;; Animation System

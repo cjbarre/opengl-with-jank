@@ -7,7 +7,7 @@
    - Broadcast game state snapshots to clients
    - Handle client connect/disconnect"
   (:require [engine.networking.protocol :as net]
-            [engine.networking.snapshot :as snapshot]
+            [examples.demo.networking.snapshot :as snapshot]
             [examples.demo.shared :as shared]
             [engine.3d.gltf.headless :as gltf]
             [engine.3d.collision.interface :as collision]))
@@ -32,6 +32,8 @@
 
 (def PLAYER_ID #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d")
 (def LEVEL_ID #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345")
+
+(def SPAWN_POSITION [0.0 50.0 0.0])
 
 ;; =============================================================================
 ;; Server State
@@ -110,7 +112,7 @@
   "Handle new client connection."
   [state network connection-id]
   (let [player-id (random-uuid)
-        spawn-pos [0.0 50.0 0.0]]
+        spawn-pos SPAWN_POSITION]
     (println (str "Client " connection-id " connected, spawning player " player-id))
 
     ;; Send welcome message with player ID

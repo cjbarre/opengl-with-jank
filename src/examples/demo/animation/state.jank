@@ -1,8 +1,19 @@
-(ns engine.3d.animation.state
+(ns examples.demo.animation.state
   "Animation state machine for managing animation transitions"
   (:require [engine.3d.animation.interface :as anim]))
 
 (cpp/raw "#include <cmath>")
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def IDLE_THRESHOLD 0.5)  ; Speed below which idle animation plays
+(def RUN_THRESHOLD 6.0)   ; Speed above which run animation plays
+
+;; =============================================================================
+;; State Management
+;; =============================================================================
 
 (defn create-state
   "Creates initial animation state.
@@ -53,9 +64,13 @@
   (when-let [anim (get animations current)]
     (:index anim)))
 
+;; =============================================================================
+;; Physics-Based Animation Selection
+;; =============================================================================
+
 (defn select-animation-from-physics
-  "Selects appropriate animation based on player physics state.
-   Returns animation keyword (:idle, :walk, :run)"
+  "Selects appropriate animation based on physics state.
+   Returns animation keyword (:idle, :walk, :run)."
   [{:keys [velocity grounded]}]
   (let [[vx _ vz] velocity
         vx-f (cpp/float vx)
@@ -63,13 +78,13 @@
         horizontal-speed (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f)))]
     (cond
       (not grounded) nil  ; Keep current animation when airborne
-      (cpp/< horizontal-speed (cpp/float 0.5)) :idle
-      (cpp/< horizontal-speed (cpp/float 6.0)) :walk
+      (cpp/< horizontal-speed (cpp/float IDLE_THRESHOLD)) :idle
+      (cpp/< horizontal-speed (cpp/float RUN_THRESHOLD)) :walk
       :else :run)))
 
 (defn update-from-physics
-  "Updates animation state based on player physics.
-   Only transitions if player is grounded."
+  "Updates animation state based on physics.
+   Only transitions if grounded."
   [state physics-state]
   (if-let [target-anim (select-animation-from-physics physics-state)]
     (transition-to state target-anim)

@@ -1,4 +1,4 @@
-(ns engine.networking.interpolation
+(ns examples.demo.networking.interpolation
   "Client-side interpolation for smooth rendering of remote entities.
 
    Based on Quake 3's double-buffered snapshot system:
@@ -12,8 +12,10 @@
 ;; Constants
 ;; =============================================================================
 
-(def INTERP_DELAY_MS 35.0)        ; How far behind server time to render (minimum safe buffer)
 (def SNAPSHOT_BUFFER_SIZE 32)     ; Max pending snapshots
+(def INTERP_DELAY_MS 35.0)        ; How far behind server time to render
+(def TELEPORT_THRESHOLD 10.0)     ; Units of movement that indicate teleport
+(def ANIMATION_DURATION_ESTIMATE 0.8) ; Assumed animation duration for wrap handling
 
 ;; =============================================================================
 ;; Math Helpers
@@ -181,7 +183,7 @@
 
 (defn should-interpolate-entity?
   "Check if entity should interpolate or snap to new position.
-   Returns false if entity teleported (moved > 10 units)."
+   Returns false if entity teleported (moved > TELEPORT_THRESHOLD units)."
   [current-state next-state]
   (when (and current-state next-state)
     (let [[cx cy cz] (:position current-state)
@@ -189,9 +191,9 @@
           dx (- nx cx)
           dy (- ny cy)
           dz (- nz cz)
-          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))]
-      ;; Teleport threshold: 10 units
-      (< dist-sq 100.0))))
+          dist-sq (+ (* dx dx) (* dy dy) (* dz dz))
+          threshold-sq (* TELEPORT_THRESHOLD TELEPORT_THRESHOLD)]
+      (< dist-sq threshold-sq))))
 
 (defn interpolate-entity
   "Interpolate a single entity between snapshot states."
@@ -206,11 +208,9 @@
           interp-anim-time (if (= curr-anim-index next-anim-index)
                              (if (< next-anim-time curr-anim-time)
                                ;; Animation wrapped - don't interpolate backwards
-                               ;; Use lerp but pretend next is ahead (add duration estimate ~0.8s)
-                               (let [duration-estimate 0.8
-                                     adjusted-next (+ next-anim-time duration-estimate)
+                               (let [adjusted-next (+ next-anim-time ANIMATION_DURATION_ESTIMATE)
                                      raw-lerp (lerp curr-anim-time adjusted-next lerp-factor)]
-                                 (mod raw-lerp duration-estimate))
+                                 (mod raw-lerp ANIMATION_DURATION_ESTIMATE))
                                ;; Normal interpolation
                                (lerp curr-anim-time next-anim-time lerp-factor))
                              curr-anim-time)]
