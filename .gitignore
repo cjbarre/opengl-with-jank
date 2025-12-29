@@ -17,9 +17,6 @@ libs/*/lib/
 # Test compilation output
 test_compile/
 
-# External source builds
-ozz-animation-src/
-
 # Clojure/Java
 *.class
 .lein-deps-sum
