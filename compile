@@ -44,10 +44,15 @@ cp "$JANK_LIB/libLLVM.dylib" "$BUNDLE_DIR/"
 cp "$JANK_LIB/libclang-cpp.dylib" "$BUNDLE_DIR/"
 cp "$JANK_LIB/libc++.1.0.dylib" "$BUNDLE_DIR/libc++.1.dylib"
 cp "$JANK_LIB/libunwind.1.0.dylib" "$BUNDLE_DIR/libunwind.1.dylib"
+cp "$JANK_LIB/libc++abi.1.0.dylib" "$BUNDLE_DIR/libc++abi.1.dylib"
 
 # Homebrew dependencies
 cp /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib "$BUNDLE_DIR/"
 cp /opt/homebrew/opt/zstd/lib/libzstd.1.dylib "$BUNDLE_DIR/"
+
+# Fix homebrew library install names to use @rpath
+install_name_tool -id "@rpath/libcrypto.3.dylib" "$BUNDLE_DIR/libcrypto.3.dylib"
+install_name_tool -id "@rpath/libzstd.1.dylib" "$BUNDLE_DIR/libzstd.1.dylib"
 
 # Fix library paths in the executable to use @rpath
 install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib "$BUILD_DIR/$OUTPUT"
@@ -56,6 +61,9 @@ install_name_tool -change /opt/homebrew/opt/glfw/lib/libglfw.3.dylib @rpath/libg
 
 # Add rpath to find bundled libraries relative to executable
 install_name_tool -add_rpath "@executable_path/${OUTPUT}_libs" "$BUILD_DIR/$OUTPUT"
+
+# Remove hardcoded jank build path from rpath (baked in by jank linker)
+install_name_tool -delete_rpath "/Users/cam/Documents/code/jank/compiler+runtime/build/llvm-install/usr/local/bin/../lib" "$BUILD_DIR/$OUTPUT" 2>/dev/null || true
 
 # Create a launcher script
 cat > "$BUILD_DIR/${OUTPUT}_run" << EOF
