@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Build and package the client distribution
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+GAME="${1:-demo}"
+
+echo "=== Building $GAME distribution ==="
+
+# Clean previous build
+rm -rf "$DIR/dist"
+
+# Compile
+echo ""
+echo "=== Compiling ==="
+"$DIR/compile" "$GAME"
+
+# Package
+echo ""
+echo "=== Packaging ==="
+"$DIR/package-client" "$GAME"
+
+# Create zip
+echo ""
+echo "=== Creating zip ==="
+cd "$DIR/dist"
+rm -f "${GAME}-dist.zip"
+zip -rq "${GAME}-dist.zip" "${GAME}-dist"
+
+# Summary
+SIZE=$(du -sh "${GAME}-dist" | cut -f1)
+ZIP_SIZE=$(ls -lh "${GAME}-dist.zip" | awk '{print $5}')
+
+echo ""
+echo "============================================================================="
+echo "Distribution built successfully!"
+echo ""
+echo "  Folder: dist/${GAME}-dist/  ($SIZE)"
+echo "  Zip:    dist/${GAME}-dist.zip  ($ZIP_SIZE)"
+echo ""
+echo "To test locally:"
+echo "  cd dist/${GAME}-dist && ./demo_run"
+echo ""
+echo "End-user requirements:"
+echo "  - macOS (Apple Silicon)"
+echo "  - XCode Command Line Tools: xcode-select --install"
+echo "  - Remove quarantine after download: xattr -cr ."
+echo "============================================================================="

@@ -8,6 +8,10 @@ OUTPUT="${2:-${GAME}}"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$DIR/dist"
 
+# Jank paths
+JANK_DIR="/Users/cam/Documents/code/jank/compiler+runtime"
+JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
+
 mkdir -p "$BUILD_DIR"
 
 # Set LIBRARY_PATH so the linker can find our libraries
@@ -26,11 +30,30 @@ jank \
   --module-path $(clojure -Spath) \
   compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
 
-# Bundle libraries for standalone distribution
-BUNDLE_DIR="$BUILD_DIR/${OUTPUT}_libs"
-mkdir -p "$BUNDLE_DIR"
+# =============================================================================
+# Bundle for standalone distribution
+# =============================================================================
+# Directory structure matches jank's expectations:
+#   JANK_RESOURCE_DIR = "../lib/jank/0.1" (relative to executable)
+#   So executable goes in bin/, resources in lib/jank/0.1/
+# =============================================================================
 
+# Create directory structure
+mkdir -p "$BUILD_DIR/bin"
+mkdir -p "$BUILD_DIR/lib/$OUTPUT"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/bin"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/include"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/lib"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/src"
+
+# Move executable to bin/
+mv "$BUILD_DIR/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+
+BUNDLE_DIR="$BUILD_DIR/lib/$OUTPUT"
+
+# -----------------------------------------------------------------------------
 # Game libraries
+# -----------------------------------------------------------------------------
 cp "$DIR/libs/glfw/lib/libglfw.3.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/ozz-animation/lib/libozz_animation_r.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/ozz-animation/lib/libozz_base_r.dylib" "$BUNDLE_DIR/"
@@ -40,15 +63,18 @@ cp "$DIR/libs/enet/lib/libenet.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/cgltf/lib/libcgltf.dylib" "$BUNDLE_DIR/"
 cp "$DIR/libs/opengl/lib/libOpenGL.dylib" "$BUNDLE_DIR/"
 
+# -----------------------------------------------------------------------------
 # Jank/LLVM runtime libraries
-JANK_LIB="/Users/cam/Documents/code/jank/compiler+runtime/build/llvm-install/usr/local/lib"
-cp "$JANK_LIB/libLLVM.dylib" "$BUNDLE_DIR/"
-cp "$JANK_LIB/libclang-cpp.dylib" "$BUNDLE_DIR/"
-cp "$JANK_LIB/libc++.1.0.dylib" "$BUNDLE_DIR/libc++.1.dylib"
-cp "$JANK_LIB/libunwind.1.0.dylib" "$BUNDLE_DIR/libunwind.1.dylib"
-cp "$JANK_LIB/libc++abi.1.0.dylib" "$BUNDLE_DIR/libc++abi.1.dylib"
+# -----------------------------------------------------------------------------
+cp "$JANK_LLVM/lib/libLLVM.dylib" "$BUNDLE_DIR/"
+cp "$JANK_LLVM/lib/libclang-cpp.dylib" "$BUNDLE_DIR/"
+cp "$JANK_LLVM/lib/libc++.1.0.dylib" "$BUNDLE_DIR/libc++.1.dylib"
+cp "$JANK_LLVM/lib/libunwind.1.0.dylib" "$BUNDLE_DIR/libunwind.1.dylib"
+cp "$JANK_LLVM/lib/libc++abi.1.0.dylib" "$BUNDLE_DIR/libc++abi.1.dylib"
 
+# -----------------------------------------------------------------------------
 # Homebrew dependencies
+# -----------------------------------------------------------------------------
 cp /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib "$BUNDLE_DIR/"
 cp /opt/homebrew/opt/zstd/lib/libzstd.1.dylib "$BUNDLE_DIR/"
 
@@ -56,25 +82,77 @@ cp /opt/homebrew/opt/zstd/lib/libzstd.1.dylib "$BUNDLE_DIR/"
 install_name_tool -id "@rpath/libcrypto.3.dylib" "$BUNDLE_DIR/libcrypto.3.dylib"
 install_name_tool -id "@rpath/libzstd.1.dylib" "$BUNDLE_DIR/libzstd.1.dylib"
 
-# Fix library paths in the executable to use @rpath
-install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib "$BUILD_DIR/$OUTPUT"
-install_name_tool -change /opt/homebrew/opt/zstd/lib/libzstd.1.dylib @rpath/libzstd.1.dylib "$BUILD_DIR/$OUTPUT"
-install_name_tool -change /opt/homebrew/opt/glfw/lib/libglfw.3.dylib @rpath/libglfw.3.dylib "$BUILD_DIR/$OUTPUT"
+# Re-sign after modifying (install_name_tool invalidates signatures)
+codesign -f -s - "$BUNDLE_DIR/libcrypto.3.dylib"
+codesign -f -s - "$BUNDLE_DIR/libzstd.1.dylib"
 
-# Add rpath to find bundled libraries relative to executable
-install_name_tool -add_rpath "@executable_path/${OUTPUT}_libs" "$BUILD_DIR/$OUTPUT"
+# -----------------------------------------------------------------------------
+# Clang executable (for JIT at runtime)
+# -----------------------------------------------------------------------------
+cp "$JANK_LLVM/bin/clang-22" "$BUILD_DIR/lib/jank/0.1/bin/"
+ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang++"
+ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
+
+# Fix clang's rpath to find dylibs in lib/$OUTPUT/
+# From lib/jank/0.1/bin/ need to go up 3 levels to lib/, then into $OUTPUT/
+install_name_tool -add_rpath "@executable_path/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
+
+# -----------------------------------------------------------------------------
+# Clang resource directory (headers for JIT compilation)
+# -----------------------------------------------------------------------------
+cp -R "$JANK_LLVM/lib/clang/22" "$BUILD_DIR/lib/jank/0.1/lib/clang/"
+
+# -----------------------------------------------------------------------------
+# libc++ headers (for JIT compilation)
+# -----------------------------------------------------------------------------
+cp -R "$JANK_LLVM/include/c++" "$BUILD_DIR/lib/jank/0.1/include/"
+
+# -----------------------------------------------------------------------------
+# jank headers and stdlib
+# -----------------------------------------------------------------------------
+cp -R "$JANK_DIR/include/cpp/jank" "$BUILD_DIR/lib/jank/0.1/include/"
+cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
+
+# -----------------------------------------------------------------------------
+# Fix rpaths in executable
+# -----------------------------------------------------------------------------
+# Fix library paths to use @rpath
+install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @rpath/libcrypto.3.dylib "$BUILD_DIR/bin/$OUTPUT"
+install_name_tool -change /opt/homebrew/opt/zstd/lib/libzstd.1.dylib @rpath/libzstd.1.dylib "$BUILD_DIR/bin/$OUTPUT"
+install_name_tool -change /opt/homebrew/opt/glfw/lib/libglfw.3.dylib @rpath/libglfw.3.dylib "$BUILD_DIR/bin/$OUTPUT"
 
 # Remove hardcoded jank build path from rpath (baked in by jank linker)
-install_name_tool -delete_rpath "/Users/cam/Documents/code/jank/compiler+runtime/build/llvm-install/usr/local/bin/../lib" "$BUILD_DIR/$OUTPUT" 2>/dev/null || true
+install_name_tool -delete_rpath "/Users/cam/Documents/code/jank/compiler+runtime/build/llvm-install/usr/local/bin/../lib" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
 
-# Create a launcher script
+# Add rpath to find bundled libraries (executable is now in bin/)
+install_name_tool -add_rpath "@executable_path/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+
+# -----------------------------------------------------------------------------
+# Create launcher script
+# -----------------------------------------------------------------------------
 cat > "$BUILD_DIR/${OUTPUT}_run" << EOF
 #!/usr/bin/env bash
 DIR="\$(cd "\$(dirname "\$0")" && pwd)"
-DYLD_LIBRARY_PATH="\$DIR/${OUTPUT}_libs:\${DYLD_LIBRARY_PATH:-}" exec "\$DIR/$OUTPUT" "\$@"
+DYLD_LIBRARY_PATH="\$DIR/lib/$OUTPUT:\${DYLD_LIBRARY_PATH:-}" exec "\$DIR/bin/$OUTPUT" "\$@"
 EOF
 chmod +x "$BUILD_DIR/${OUTPUT}_run"
 
 echo ""
-echo "Compiled to: dist/$OUTPUT"
-echo "Run with: ./dist/${OUTPUT}_run"
+echo "============================================================================="
+echo "Compiled to: dist/bin/$OUTPUT"
+echo "Run with:    ./dist/${OUTPUT}_run"
+echo ""
+echo "Distribution structure:"
+echo "  dist/"
+echo "  ├── bin/$OUTPUT              (executable)"
+echo "  ├── lib/$OUTPUT/             (dylibs)"
+echo "  ├── lib/jank/0.1/            (jank runtime resources)"
+echo "  │   ├── bin/clang++          (clang for JIT)"
+echo "  │   ├── include/             (headers for JIT)"
+echo "  │   ├── lib/clang/22/        (clang resources)"
+echo "  │   └── src/                 (jank stdlib)"
+echo "  └── ${OUTPUT}_run            (launcher)"
+echo ""
+echo "NOTE: End users need XCode Command Line Tools installed"
+echo "      (run: xcode-select --install)"
+echo "============================================================================="

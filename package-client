@@ -11,18 +11,26 @@ echo "Packaging client to: $OUTPUT/"
 rm -rf "$OUTPUT"
 mkdir -p "$OUTPUT"
 
-# Copy executable and launcher from dist/
-cp "$DIR/dist/$GAME" "$OUTPUT/"
+# Copy from new directory structure (bin/, lib/)
+cp -r "$DIR/dist/bin" "$OUTPUT/"
+cp -r "$DIR/dist/lib" "$OUTPUT/"
 cp "$DIR/dist/${GAME}_run" "$OUTPUT/"
-cp -r "$DIR/dist/${GAME}_libs" "$OUTPUT/"
 
 # Copy runtime assets
 cp -r "$DIR/shaders" "$OUTPUT/"
 cp -r "$DIR/models" "$OUTPUT/"
+cp -r "$DIR/fonts" "$OUTPUT/"
 
 # Create a simple README
 cat > "$OUTPUT/README.txt" << 'EOF'
-Demo Game Client
+Demo Game
+
+Requirements:
+  macOS (Apple Silicon) with XCode Command Line Tools installed
+  (run: xcode-select --install)
+
+First time setup (remove macOS quarantine after download):
+  xattr -cr .
 
 To run:
   ./demo_run
@@ -34,9 +42,12 @@ Controls:
   ESC - Quit
 
 Multiplayer:
-  ./demo_run              - Solo mode
-  ./demo_run client       - Connect to localhost
-  ./demo_run client <ip>  - Connect to server
+  ./demo_run                    - Solo mode (no networking)
+  ./demo_run server             - Start dedicated server
+  ./demo_run server <port>      - Start server on specific port
+  ./demo_run client             - Connect to localhost
+  ./demo_run client <ip>        - Connect to server at IP
+  ./demo_run client <ip> <port> - Connect to server at IP:port
 EOF
 
 # Calculate size
@@ -44,4 +55,4 @@ SIZE=$(du -sh "$OUTPUT" | cut -f1)
 echo ""
 echo "Package created: $OUTPUT/ ($SIZE)"
 echo ""
-echo "To share: cd dist && zip -r ${GAME}-dist.zip ${GAME}-dist"
+echo "To create zip: cd dist && zip -r ${GAME}-dist.zip ${GAME}-dist"

@@ -24,13 +24,23 @@ The `run` script compiles and executes a Jank game with OpenGL/GLFW support:
 ./compile my-game      # compiles examples.my-game.core
 
 # Run the compiled executable
-./demo_run             # launcher script with library paths
+./dist/demo_run        # launcher script with library paths
 ```
 
-The `compile` script produces:
-- `demo` - 62MB standalone Mach-O executable
-- `demo_run` - Launcher script that sets DYLD_LIBRARY_PATH
-- `demo_libs/` - Bundled dynamic libraries
+The `compile` script produces a self-contained distribution (~324MB):
+```
+dist/
+├── bin/demo                    # 62MB Mach-O executable
+├── lib/demo/                   # ~155MB bundled dylibs
+├── lib/jank/0.1/               # ~113MB jank runtime resources
+│   ├── bin/clang++             # Clang for JIT compilation
+│   ├── include/                # Headers (libc++, jank)
+│   ├── lib/clang/22/           # Clang resource directory
+│   └── src/                    # jank stdlib
+└── demo_run                    # Launcher script
+```
+
+**End-user requirement:** XCode Command Line Tools must be installed (`xcode-select --install`)
 
 ### Initial Setup
 
@@ -275,22 +285,33 @@ The `./compile` script:
    - Library paths (`-L`)
    - Libraries to link (`-l`)
    - Module path from Clojure
-3. Bundles required dylibs into `{output}_libs/`
-4. Creates launcher script `{output}_run`
+3. Creates self-contained distribution structure:
+   - Moves executable to `dist/bin/`
+   - Bundles dylibs into `dist/lib/{output}/`
+   - Bundles jank runtime resources into `dist/lib/jank/0.1/`
+   - Creates launcher script
+4. Fixes rpaths so all libraries are found relative to executable
 
 ### Distribution
 
 To distribute a compiled game:
 
 ```bash
-# These files/directories are needed:
-demo              # The executable
-demo_run          # Launcher script
-demo_libs/        # Bundled libraries
-shaders/          # GLSL shaders (loaded at runtime)
-textures/         # Texture assets
-models/           # 3D models
+# Copy the entire dist/ directory:
+dist/
+├── bin/demo                # The executable
+├── lib/demo/               # Game dylibs
+├── lib/jank/0.1/           # Jank runtime (clang, headers, stdlib)
+├── demo_run                # Launcher script
+# Plus your game assets (copy to dist/):
+├── shaders/                # GLSL shaders (loaded at runtime)
+├── textures/               # Texture assets
+└── models/                 # 3D models
 ```
+
+**End-user requirements:**
+- macOS (arm64)
+- XCode Command Line Tools (`xcode-select --install`)
 
 The launcher script sets `DYLD_LIBRARY_PATH` to find the bundled libraries.
 
@@ -308,16 +329,26 @@ See `/Users/cam/Documents/code/jank/jank-aot-library-fix.md` for details.
 
 **"Library not loaded" errors:**
 - Check library install names: `otool -D libfoo.dylib`
-- Verify rpath in executable: `otool -l demo | grep -A2 LC_RPATH`
+- Verify rpath in executable: `otool -l dist/bin/demo | grep -A2 LC_RPATH`
 - Use launcher script or set `DYLD_LIBRARY_PATH`
+
+**"Unable to find a suitable Clang 22 binary" or clang symbol errors:**
+- Ensure `dist/lib/jank/0.1/bin/clang++` exists and is executable
+- Verify clang can find dylibs: `otool -L dist/lib/jank/0.1/bin/clang-22`
+- Check that clang rpath points to dylib directory
+
+**"Unable to find 'xcrun' binary" errors:**
+- End user needs XCode Command Line Tools: `xcode-select --install`
 
 **Undefined symbols during linking:**
 - Ensure library is in `-L` path
 - Ensure `-l` flag uses correct name (without `lib` prefix and `.dylib` suffix)
 - Check if library exports the symbol: `nm -gU libfoo.dylib | grep symbol_name`
 
-**Large executable size (~62MB):**
-- Normal - includes LLVM/Clang for JIT capabilities embedded in jank runtime
+**Large distribution size (~324MB):**
+- Normal - includes bundled clang toolchain for JIT compilation at runtime
+- Executable itself is ~62MB (LLVM/Clang embedded in jank runtime)
+- Additional ~113MB for clang resource directory and headers
 
 ## Headless Server Build
 
@@ -333,13 +364,17 @@ For dedicated server deployment, use `./compile-server` which builds a headless 
 ./compile-server my-game      # compiles examples.my-game.server
 
 # Run the compiled server
-./demo-server_run
+./dist/demo-server_run
 ```
 
-**Output:**
-- `demo-server` - 62MB headless server executable
-- `demo-server_run` - Launcher script
-- `demo-server_libs/` - Bundled libraries (enet, cgltf only)
+**Output structure (same as client, with fewer dylibs):**
+```
+dist/
+├── bin/demo-server           # 62MB headless server executable
+├── lib/demo-server/          # Server dylibs (enet, cgltf, LLVM/clang)
+├── lib/jank/0.1/             # Jank runtime (shared with client)
+└── demo-server_run           # Launcher script
+```
 
 ### Server Dependencies
 
