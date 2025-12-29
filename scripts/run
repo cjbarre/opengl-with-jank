@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+
+LIBS_DIR="$(get_libs_dir)"
+LIB_EXT="$(get_lib_extension)"
+
+GAME="${1:-demo}"
+NAMESPACE="examples.${GAME}.core"
+# Pass remaining arguments to the program
+shift || true
+ARGS="$@"
+
+cd "$PROJECT_DIR"
+jank \
+  -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" \
+  -L"$LIBS_DIR/glfw/lib" -l"lib"glfw.3.$LIB_EXT \
+  -L"$LIBS_DIR/ozz-animation/lib" -l"lib"ozz_animation_r.$LIB_EXT -l"lib"ozz_base_r.$LIB_EXT -l"lib"ozz_geometry_r.$LIB_EXT \
+  -L"$LIBS_DIR/stb/lib" -l"lib"stb_all.$LIB_EXT \
+  -L"$LIBS_DIR/enet/lib" -l"lib"enet.$LIB_EXT \
+  -L"$LIBS_DIR/cgltf/lib" -l"lib"cgltf.$LIB_EXT \
+  --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS

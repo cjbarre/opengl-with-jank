@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+
+LIBS_DIR="$(get_libs_dir)"
+LIB_EXT="$(get_lib_extension)"
+
+echo "=== Setting up opengl-with-jank for $PLATFORM ==="
+
+# Initialize submodules if needed
+echo "Initializing submodules..."
+cd "$PROJECT_DIR"
+git submodule update --init --recursive
+
+# Build ozz-animation
+echo "Building ozz-animation..."
+cd "$PROJECT_DIR/third_party/ozz-animation"
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+make -j8
+
+# Copy libraries with platform-aware paths
+echo "Installing ozz-animation libraries..."
+mkdir -p "$LIBS_DIR/ozz-animation/lib"
+cp "src/base/$(format_lib_name ozz_base_r)" "$LIBS_DIR/ozz-animation/lib/"
+cp "src/animation/runtime/$(format_lib_name ozz_animation_r)" "$LIBS_DIR/ozz-animation/lib/"
+cp "src/geometry/runtime/$(format_lib_name ozz_geometry_r)" "$LIBS_DIR/ozz-animation/lib/"
+
+cd "$PROJECT_DIR"
+
+# Build OpenGL stub library (platform-specific)
+echo "Building OpenGL stub library..."
+mkdir -p "$LIBS_DIR/opengl/lib"
+create_opengl_stub "$LIBS_DIR/opengl/lib/$(format_lib_name OpenGL)"
+
+echo ""
+echo "=== Setup complete for $PLATFORM ==="
+echo "Run with: ./bin/run"
+echo "Compile with: ./bin/compile"

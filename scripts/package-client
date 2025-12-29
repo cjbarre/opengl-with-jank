@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Package the client as a distributable bundle
+set -euo pipefail
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+
+GAME="${1:-demo}"
+APP_NAME="Demo"
+OUTPUT="$PROJECT_DIR/dist/${APP_NAME}.app"
+
+echo "Packaging client to: $OUTPUT/"
+
+rm -rf "$OUTPUT"
+
+# Create .app bundle structure using platform function
+create_app_bundle "$OUTPUT" "$APP_NAME" "1.0" "com.example.demo"
+
+# Copy resources
+cp -r "$PROJECT_DIR/dist/bin" "$OUTPUT/Contents/Resources/"
+cp -r "$PROJECT_DIR/dist/lib" "$OUTPUT/Contents/Resources/"
+cp -r "$PROJECT_DIR/shaders" "$OUTPUT/Contents/Resources/"
+cp -r "$PROJECT_DIR/models" "$OUTPUT/Contents/Resources/"
+cp -r "$PROJECT_DIR/fonts" "$OUTPUT/Contents/Resources/"
+
+# Create launcher script in MacOS/ using platform function
+generate_app_launcher_script "$OUTPUT/Contents/MacOS/$APP_NAME" "bin/$GAME" "lib/$GAME"
+
+# Create README alongside the app
+cat > "$PROJECT_DIR/dist/README.txt" << 'EOF'
+Demo Game
+
+Requirements:
+  macOS 11+ (Apple Silicon) with XCode Command Line Tools installed
+  (run: xcode-select --install)
+
+First time setup (after downloading):
+  1. Right-click Demo.app and select "Open"
+  2. Click "Open" in the security dialog
+  (This is only needed once)
+
+Controls:
+  WASD - Move
+  Mouse - Look
+  Space - Jump
+  ESC - Quit
+
+Command-line options (run from Terminal):
+  ./Demo.app/Contents/MacOS/Demo              - Solo mode
+  ./Demo.app/Contents/MacOS/Demo server       - Start server
+  ./Demo.app/Contents/MacOS/Demo client <ip>  - Connect to server
+EOF
+
+# Calculate size
+SIZE=$(du -sh "$OUTPUT" | cut -f1)
+echo ""
+echo "Package created: $OUTPUT ($SIZE)"
+echo ""
+echo "To create zip: cd dist && zip -r ${APP_NAME}.zip ${APP_NAME}.app README.txt"

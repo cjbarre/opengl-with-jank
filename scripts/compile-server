@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -xeuo pipefail
+
+# Compile headless server
+# Excludes graphics dependencies (GLFW, OpenGL, STB textures, ozz-animation)
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+load_jank_paths
+
+LIBS_DIR="$(get_libs_dir)"
+LIB_EXT="$(get_lib_extension)"
+BREW_PREFIX="$(get_homebrew_prefix)"
+
+GAME="${1:-demo}"
+NAMESPACE="examples.${GAME}.server"
+OUTPUT="${2:-${GAME}-server}"
+BUILD_DIR="$PROJECT_DIR/dist"
+
+mkdir -p "$BUILD_DIR"
+
+# Set LIBRARY_PATH so the linker finds libraries
+export LIBRARY_PATH="$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:${LIBRARY_PATH:-}"
+
+# Server only needs: enet (networking), cgltf (collision mesh loading)
+# GLM is header-only, no library needed
+cd "$PROJECT_DIR"
+jank \
+  -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" \
+  -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" \
+  -lenet \
+  -lcgltf \
+  --module-path $(clojure -Spath) \
+  compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
+
+# =============================================================================
+# Bundle for standalone distribution
+# =============================================================================
+# Directory structure matches jank's expectations:
+#   JANK_RESOURCE_DIR = "../lib/jank/0.1" (relative to executable)
+#   So executable goes in bin/, resources in lib/jank/0.1/
+# =============================================================================
+
+# Create directory structure
+mkdir -p "$BUILD_DIR/bin"
+mkdir -p "$BUILD_DIR/lib/$OUTPUT"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/bin"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/include"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/lib"
+mkdir -p "$BUILD_DIR/lib/jank/0.1/src"
+
+# Move executable to bin/
+mv "$BUILD_DIR/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+
+BUNDLE_DIR="$BUILD_DIR/lib/$OUTPUT"
+
+# -----------------------------------------------------------------------------
+# Server libraries (minimal - no graphics)
+# -----------------------------------------------------------------------------
+cp "$LIBS_DIR/enet/lib/libenet.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/cgltf/lib/libcgltf.$LIB_EXT" "$BUNDLE_DIR/"
+
+# -----------------------------------------------------------------------------
+# Jank/LLVM runtime libraries
+# -----------------------------------------------------------------------------
+cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
+cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
+cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+
+# -----------------------------------------------------------------------------
+# System dependencies (platform-specific)
+# -----------------------------------------------------------------------------
+bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
+bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+
+# -----------------------------------------------------------------------------
+# Clang executable (for JIT at runtime)
+# -----------------------------------------------------------------------------
+cp "$JANK_LLVM/bin/clang-22" "$BUILD_DIR/lib/jank/0.1/bin/"
+ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang++"
+ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
+
+# Fix clang's rpath to find dylibs in lib/$OUTPUT/
+# From lib/jank/0.1/bin/ need to go up 3 levels to lib/, then into $OUTPUT/
+add_rpath "@executable_path/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
+
+# -----------------------------------------------------------------------------
+# Clang resource directory (headers for JIT compilation)
+# -----------------------------------------------------------------------------
+cp -R "$JANK_LLVM/lib/clang/22" "$BUILD_DIR/lib/jank/0.1/lib/clang/"
+
+# -----------------------------------------------------------------------------
+# libc++ headers (for JIT compilation)
+# -----------------------------------------------------------------------------
+cp -R "$JANK_LLVM/include/c++" "$BUILD_DIR/lib/jank/0.1/include/"
+
+# -----------------------------------------------------------------------------
+# jank headers and stdlib
+# -----------------------------------------------------------------------------
+cp -R "$JANK_DIR/include/cpp/jank" "$BUILD_DIR/lib/jank/0.1/include/"
+cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
+
+# -----------------------------------------------------------------------------
+# Fix rpaths in executable
+# -----------------------------------------------------------------------------
+# Fix library paths to use @rpath
+change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
+change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
+
+# Remove hardcoded jank build path from rpath (baked in by jank linker)
+delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
+
+# Add rpath to find bundled libraries (executable is now in bin/)
+add_rpath "@executable_path/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+
+# -----------------------------------------------------------------------------
+# Create launcher script
+# -----------------------------------------------------------------------------
+generate_launcher_script "$BUILD_DIR/${OUTPUT}_run" "bin/$OUTPUT" "lib/$OUTPUT"
+
+echo ""
+echo "============================================================================="
+echo "Compiled server to: dist/bin/$OUTPUT"
+echo "Run with:    ./dist/${OUTPUT}_run"
+echo ""
+echo "Distribution structure:"
+echo "  dist/"
+echo "  ├── bin/$OUTPUT              (executable)"
+echo "  ├── lib/$OUTPUT/             (dylibs)"
+echo "  ├── lib/jank/0.1/            (jank runtime resources)"
+echo "  │   ├── bin/clang++          (clang for JIT)"
+echo "  │   ├── include/             (headers for JIT)"
+echo "  │   ├── lib/clang/22/        (clang resources)"
+echo "  │   └── src/                 (jank stdlib)"
+echo "  └── ${OUTPUT}_run            (launcher)"
+echo ""
+echo "NOTE: End users need XCode Command Line Tools installed"
+echo "      (run: xcode-select --install)"
+echo "============================================================================="

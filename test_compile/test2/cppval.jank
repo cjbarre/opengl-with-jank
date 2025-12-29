@@ -1,9 +1,0 @@
-(ns test2.cppval)
-
-(cpp/raw "#include <iostream>")
-
-(def MY_CONST (cpp/value "42"))
-(def MY_CONST2 (cpp/value "42"))
-
-(defn -main []
-  (println "Val:" MY_CONST MY_CONST2))

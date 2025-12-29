@@ -6,25 +6,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Running the Application
 ```bash
-./run              # runs the default example (demo)
-./run demo         # runs examples.demo.core
-./run my-game      # runs examples.my-game.core
+./bin/run              # runs the default example (demo)
+./bin/run demo         # runs examples.demo.core
+./bin/run my-game      # runs examples.my-game.core
 ```
 
 The `run` script compiles and executes a Jank game with OpenGL/GLFW support:
 - Accepts game name as argument (defaults to `demo`)
-- Links against GLFW library (`libs/glfw/lib/libglfw.3.dylib`)
-- Includes headers from `libs/glfw/include` and `include/`
+- Uses platform abstraction layer for library paths
+- Includes headers from libs and `include/`
 - Uses Clojure classpath for module resolution
 
 ### AOT Compilation (Standalone Executable)
 ```bash
-./compile              # compiles demo to standalone executable
-./compile demo         # same as above
-./compile my-game      # compiles examples.my-game.core
+./bin/compile              # compiles demo to standalone executable
+./bin/compile demo         # same as above
+./bin/compile my-game      # compiles examples.my-game.core
 
 # Run the compiled executable
-./dist/demo_run        # launcher script with library paths
+./dist/demo_run            # launcher script with library paths
 ```
 
 The `compile` script produces a self-contained distribution (~324MB):
@@ -48,7 +48,7 @@ After cloning, run the setup script to build dependencies:
 
 ```bash
 git clone --recursive ...
-./setup
+./bin/setup
 ```
 
 ### Development Dependencies
@@ -58,6 +58,81 @@ git clone --recursive ...
 - **STB Image**: C library for texture loading (included in `include/stb_image.h`)
 - **ozz-animation**: Skeletal animation (submodule, built by `./setup`)
 - **enet**: UDP networking for multiplayer
+
+## Cross-Platform Support
+
+### Platform Abstraction Layer
+
+All build scripts use a platform abstraction layer in `scripts/platform/`:
+
+```
+scripts/
+├── platform/
+│   ├── common.sh     # Platform detection, loads platform-specific file
+│   ├── macos.sh      # Full macOS implementation
+│   ├── linux.sh      # Stub (not yet supported)
+│   └── windows.sh    # Stub (not yet supported)
+├── setup             # Build dependencies
+├── run               # Run in JIT mode
+├── compile           # AOT compile to executable
+├── compile-server    # Compile headless server
+├── package-client    # Create .app bundle
+└── build-dist        # Full distribution build
+```
+
+`bin/` contains symlinks (`run`, `compile`, `setup`, `build-dist`) pointing to `scripts/` for convenience.
+
+Scripts source the abstraction with:
+```bash
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support  # Fails if platform unsupported
+load_jank_paths            # Loads JANK_DIR, JANK_LLVM paths
+LIBS_DIR="$(get_libs_dir)" # Platform-specific libs directory
+```
+
+### Key Platform Functions
+
+| Function | Description |
+|----------|-------------|
+| `get_lib_extension()` | `dylib` (macOS), `so` (Linux), `dll` (Windows) |
+| `get_lib_prefix()` | `lib` (macOS/Linux), empty (Windows) |
+| `format_lib_name name` | Formats library name for platform |
+| `get_libs_dir()` | Returns `libs/macos-arm64/`, etc. |
+| `get_homebrew_prefix()` | `/opt/homebrew` (arm64), `/usr/local` (x86) |
+| `fix_lib_install_name lib` | Fixes library ID to use @rpath |
+| `add_rpath rpath executable` | Adds rpath to executable |
+| `delete_rpath rpath executable` | Removes rpath from executable |
+| `change_lib_path binary old new` | Changes library reference |
+| `bundle_system_lib lib dest` | Copies and fixes system library |
+| `code_sign_adhoc path` | Ad-hoc signs binary |
+| `create_app_bundle path name` | Creates .app bundle structure |
+| `generate_launcher_script path exec libs` | Creates launcher script |
+
+### Library Directory Structure
+
+Platform-specific libraries are organized under `libs/{platform}/`:
+
+```
+libs/
+├── macos-arm64/           # macOS Apple Silicon libraries
+│   ├── glfw/
+│   ├── ozz-animation/
+│   ├── stb/
+│   ├── enet/
+│   ├── cgltf/
+│   └── opengl/
+├── linux-x86_64/          # Linux libraries (placeholder)
+├── windows-x86_64/        # Windows libraries (placeholder)
+├── glm/                   # Header-only (shared across platforms)
+└── include/               # Shared headers (placeholder)
+```
+
+### Adding a New Platform
+
+1. Create `scripts/platform/{platform}.sh` implementing all functions
+2. Update `detect_platform()` in `scripts/platform/common.sh` to detect the platform
+3. Create `libs/{platform}/` and build/copy libraries
+4. Test with `./bin/setup && ./bin/run`
 
 ## Architecture
 
@@ -158,18 +233,19 @@ Custom macro `clet` provides C-style error checking:
 ### Dependencies and Libraries
 
 #### Required Libraries
-- **GLFW 3.x**: Window/context management (dylib in `libs/glfw/`)
-- **OpenGL 3.3+**: Core graphics API
-- **GLM**: Math library for vectors/matrices (submodule in `libs/glm/`)
-- **STB Image**: Header-only image loading (`include/stb_image.h`)
-- **cgltf**: Header-only glTF parser (`include/cgltf.h`)
-- **ozz-animation**: Skeletal animation runtime (submodule in `third_party/ozz-animation/`)
-- **enet**: UDP networking library (dylib in `libs/enet/`)
+- **GLFW 3.x**: Window/context management (dylib in `libs/{platform}/glfw/`)
+- **OpenGL 3.3+**: Core graphics API (stub dylib in `libs/{platform}/opengl/`)
+- **GLM**: Math library for vectors/matrices (header-only in `libs/glm/`)
+- **STB Image**: Image loading (`include/stb_image.h`, dylib in `libs/{platform}/stb/`)
+- **cgltf**: glTF parser (`include/cgltf.h`, dylib in `libs/{platform}/cgltf/`)
+- **ozz-animation**: Skeletal animation (submodule in `third_party/`, dylib in `libs/{platform}/ozz-animation/`)
+- **enet**: UDP networking library (dylib in `libs/{platform}/enet/`)
 
 #### Build System
 - Uses Jank compiler with custom flags for includes and linking
+- Platform abstraction layer (`platform/`) for cross-platform support
 - Clojure for dependency resolution (`deps.edn` with paths only)
-- Simple shell script runner with error handling
+- Shell scripts with error handling and platform detection
 
 ### Development Notes
 
@@ -198,10 +274,12 @@ Jank supports ahead-of-time (AOT) compilation to produce standalone executables.
 
 ### Library Setup
 
-AOT compilation requires dynamic libraries (`.dylib` on macOS) for external dependencies. These are organized under `libs/`:
+AOT compilation requires dynamic libraries for external dependencies. These are organized under `libs/{platform}/` (see [Cross-Platform Support](#cross-platform-support) for structure).
+
+For macOS (arm64), libraries are in `libs/macos-arm64/`:
 
 ```
-libs/
+libs/macos-arm64/
 ├── glfw/
 │   ├── include/          # GLFW headers
 │   └── lib/
@@ -218,9 +296,12 @@ libs/
 ├── enet/
 │   └── lib/
 │       └── libenet.dylib
-└── cgltf/
+├── cgltf/
+│   └── lib/
+│       └── libcgltf.dylib
+└── opengl/
     └── lib/
-        └── libcgltf.dylib
+        └── libOpenGL.dylib    # Stub library linking to OpenGL.framework
 ```
 
 ### Library Install Names
@@ -228,11 +309,12 @@ libs/
 macOS dynamic libraries have "install names" that get baked into executables at link time. For proper runtime loading with `@rpath`, libraries must have install names like `@rpath/libfoo.dylib`:
 
 ```bash
-# Check a library's install name
-otool -D libs/stb/lib/libstb_all.dylib
+# Check a library's install name (use platform functions instead when possible)
+otool -D libs/macos-arm64/stb/lib/libstb_all.dylib
 
-# Fix install name if needed
-install_name_tool -id "@rpath/libstb_all.dylib" libs/stb/lib/libstb_all.dylib
+# Fix install name using platform function
+source platform/common.sh
+fix_lib_install_name libs/macos-arm64/stb/lib/libstb_all.dylib
 ```
 
 ### Building Custom Libraries
@@ -246,8 +328,8 @@ cat > stb_impl.c << 'EOF'
 #include "stb_image.h"
 EOF
 
-# Compile to dylib
-clang -dynamiclib -o libs/stb/lib/libstb_all.dylib stb_impl.c \
+# Compile to dylib (macOS)
+clang -dynamiclib -o libs/macos-arm64/stb/lib/libstb_all.dylib stb_impl.c \
   -Iinclude -install_name "@rpath/libstb_all.dylib"
 ```
 
@@ -259,7 +341,8 @@ cat > cgltf_impl.c << 'EOF'
 #include "cgltf.h"
 EOF
 
-clang -dynamiclib -o libs/cgltf/lib/libcgltf.dylib cgltf_impl.c \
+# Compile to dylib (macOS)
+clang -dynamiclib -o libs/macos-arm64/cgltf/lib/libcgltf.dylib cgltf_impl.c \
   -Iinclude -install_name "@rpath/libcgltf.dylib"
 ```
 
@@ -270,9 +353,10 @@ ozz-animation is built automatically by `./setup`. If you need to rebuild manual
 ```bash
 cd third_party/ozz-animation/build
 make -j8
-cp src/base/libozz_base_r.dylib ../../../libs/ozz-animation/lib/
-cp src/animation/runtime/libozz_animation_r.dylib ../../../libs/ozz-animation/lib/
-cp src/geometry/runtime/libozz_geometry_r.dylib ../../../libs/ozz-animation/lib/
+# Copy to platform-specific location
+cp src/base/libozz_base_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
+cp src/animation/runtime/libozz_animation_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
+cp src/geometry/runtime/libozz_geometry_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
 ```
 
 ### Compile Script Workflow
