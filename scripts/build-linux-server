@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build Linux ARM64 headless server distribution from macOS via SSH to VM
+# Build Linux headless server distribution from macOS via SSH to VM
+# Supports both ARM64 and x86_64 architectures (auto-detected on remote)
 #
 # Usage: ./scripts/build-linux-server [options] [game]
 #   game          Game to compile (default: demo)
@@ -196,7 +197,16 @@ cp -R \$JANK_DIR/src/jank/* dist-server/lib/jank/0.1/src/
 # These are needed by clang for JIT compilation at runtime
 mkdir -p dist-server/lib/jank/0.1/include/c++
 cp -R /usr/include/c++/14 dist-server/lib/jank/0.1/include/c++/
-cp -R /usr/include/aarch64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+
+# Detect architecture and copy appropriate platform-specific headers
+ARCH=\$(uname -m)
+if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
+    mkdir -p dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++
+    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+elif [ "\$ARCH" = "x86_64" ]; then
+    mkdir -p dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++
+    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
+fi
 
 # Copy models (needed for collision mesh)
 cp -r models dist-server/
@@ -235,18 +245,26 @@ du -sh dist-server/
 ls -la dist-server/
 EOF
 
+# Detect remote architecture
+REMOTE_ARCH=$(ssh_cmd "uname -m")
+case "$REMOTE_ARCH" in
+    aarch64|arm64) LINUX_ARCH="arm64" ;;
+    x86_64|amd64) LINUX_ARCH="x86_64" ;;
+    *) LINUX_ARCH="$REMOTE_ARCH" ;;
+esac
+
 # Copy back to macOS (use tar to preserve symlinks)
 echo ""
 echo "=== Copying distribution to macOS ==="
 
-LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-arm64-server"
+LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-${LINUX_ARCH}-server"
 rm -rf "$LINUX_DIST_DIR"
 mkdir -p "$LINUX_DIST_DIR"
 
 # Use tar over ssh to preserve symlinks
 ssh_cmd "cd $REMOTE_DIR && tar -cf - dist-server" | tar -xf - -C "$PROJECT_DIR"
 mv "$PROJECT_DIR/dist-server"/* "$LINUX_DIST_DIR/"
-rmdir "$PROJECT_DIR/dist-server"
+rm -rf "$PROJECT_DIR/dist-server"
 
 # Create archive
 echo ""
@@ -254,7 +272,7 @@ echo "=== Creating archive ==="
 
 DIST_DIR="$PROJECT_DIR/dist"
 mkdir -p "$DIST_DIR"
-ARCHIVE_NAME="${OUTPUT}-linux-arm64-standalone.tar.gz"
+ARCHIVE_NAME="${OUTPUT}-linux-${LINUX_ARCH}-standalone.tar.gz"
 
 # Create archive with clean directory name
 cd "$(dirname "$LINUX_DIST_DIR")"
@@ -272,7 +290,7 @@ echo ""
 echo "This is a FULLY STANDALONE distribution - no system dependencies required."
 echo "Includes: glibc, LLVM/clang, libstdc++ headers"
 echo ""
-echo "To deploy to ANY Linux ARM64 server:"
+echo "To deploy to ANY Linux ${LINUX_ARCH} server:"
 echo "  1. Upload: scp $DIST_DIR/$ARCHIVE_NAME user@server:"
 echo "  2. Extract: tar -xzf $ARCHIVE_NAME"
-echo "  3. Run: cd dist-linux-arm64-server && ./${OUTPUT}_run"
+echo "  3. Run: cd dist-linux-${LINUX_ARCH}-server && ./${OUTPUT}_run"

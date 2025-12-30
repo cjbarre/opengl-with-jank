@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Package the client as a distributable Linux bundle
+set -euo pipefail
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+
+# Verify we're on Linux
+if [[ "$PLATFORM_OS" != "linux" ]]; then
+    echo "ERROR: This script must be run on Linux (detected: $PLATFORM)"
+    exit 1
+fi
+
+GAME="${1:-demo}"
+OUTPUT_DIR="$PROJECT_DIR/dist-$PLATFORM"
+ARCHIVE_NAME="${GAME}-${PLATFORM}.tar.gz"
+
+echo "Packaging Linux client to: $OUTPUT_DIR/"
+
+rm -rf "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR/bin" "$OUTPUT_DIR/lib"
+
+# Check that the compiled binary exists
+if [[ ! -f "$PROJECT_DIR/dist/bin/$GAME" ]]; then
+    echo "ERROR: Compiled binary not found at dist/bin/$GAME"
+    echo "Run ./scripts/compile first"
+    exit 1
+fi
+
+# Copy binary
+cp "$PROJECT_DIR/dist/bin/$GAME" "$OUTPUT_DIR/bin/"
+
+# Copy game libraries
+LIBS_DIR="$(get_libs_dir)"
+for lib_dir in "$LIBS_DIR"/*/lib; do
+    if [[ -d "$lib_dir" ]]; then
+        cp -a "$lib_dir"/*.so* "$OUTPUT_DIR/lib/" 2>/dev/null || true
+    fi
+done
+
+# Copy jank runtime if present
+if [[ -d "$PROJECT_DIR/dist/lib/jank" ]]; then
+    cp -r "$PROJECT_DIR/dist/lib/jank" "$OUTPUT_DIR/lib/"
+fi
+
+# Copy LLVM libraries if present
+for lib in libclang-cpp.so* libLLVM.so*; do
+    if [[ -f "$PROJECT_DIR/dist/lib/$lib" ]]; then
+        cp -a "$PROJECT_DIR/dist/lib/$lib" "$OUTPUT_DIR/lib/"
+    fi
+done
+
+# Copy assets
+cp -r "$PROJECT_DIR/shaders" "$OUTPUT_DIR/"
+cp -r "$PROJECT_DIR/models" "$OUTPUT_DIR/"
+cp -r "$PROJECT_DIR/textures" "$OUTPUT_DIR/"
+cp -r "$PROJECT_DIR/fonts" "$OUTPUT_DIR/"
+
+# Generate launcher script using platform function
+generate_launcher_script "$OUTPUT_DIR/${GAME}_run" "bin/$GAME" "lib"
+
+# Create README
+cat > "$OUTPUT_DIR/README.txt" << EOF
+${GAME^} Game - Linux ${PLATFORM_ARCH}
+
+QUICK START
+  ./${GAME}_run
+
+REQUIREMENTS
+  - Linux ${PLATFORM_ARCH}
+  - OpenGL 3.3+ capable GPU with drivers
+  - X11 display
+  - GLEW library (sudo apt-get install libglew2.2)
+
+CONTROLS
+  WASD  - Move
+  Mouse - Look
+  Space - Jump
+  ESC   - Quit
+
+MULTIPLAYER (from terminal)
+  Host a server:
+    ./${GAME}_run server
+
+  Join a server:
+    ./${GAME}_run client 192.168.1.100
+
+  (Replace 192.168.1.100 with the server's IP address)
+
+TROUBLESHOOTING
+  If you see "error while loading shared libraries":
+    - Make sure to run ./${GAME}_run, not bin/$GAME directly
+    - The launcher script sets up library paths automatically
+
+  If jank JIT fails to find clang:
+    - Ensure lib/jank/0.1/bin/clang++ exists
+    - Check that LLVM libraries are in lib/
+EOF
+
+# Calculate size
+SIZE=$(du -sh "$OUTPUT_DIR" | cut -f1)
+echo ""
+echo "Package created: $OUTPUT_DIR ($SIZE)"
+
+# Create archive
+echo ""
+echo "Creating archive..."
+DIST_DIR="$PROJECT_DIR/dist"
+mkdir -p "$DIST_DIR"
+cd "$(dirname "$OUTPUT_DIR")"
+tar -czhf "$DIST_DIR/$ARCHIVE_NAME" "$(basename "$OUTPUT_DIR")"
+
+echo ""
+echo "Archive: $DIST_DIR/$ARCHIVE_NAME"
+ls -lh "$DIST_DIR/$ARCHIVE_NAME"
+echo ""
+echo "To deploy:"
+echo "  1. Copy: scp $DIST_DIR/$ARCHIVE_NAME user@host:"
+echo "  2. Extract: tar -xzf $ARCHIVE_NAME"
+echo "  3. Run: cd $(basename "$OUTPUT_DIR") && ./${GAME}_run"

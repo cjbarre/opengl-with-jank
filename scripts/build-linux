@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build Linux ARM64 distribution from macOS via SSH to VM
+# Build Linux distribution from macOS via SSH to VM
+# Supports both ARM64 and x86_64 architectures (auto-detected on remote)
 #
 # Usage: ./scripts/build-linux [options] [game]
 #   game          Game to compile (default: demo)
@@ -224,9 +225,18 @@ cp -R \$JANK_DIR/include/cpp/jank dist/lib/jank/0.1/include/
 cp -R \$JANK_DIR/src/jank/* dist/lib/jank/0.1/src/
 
 # Bundle GCC libstdc++ headers for fully standalone distribution
-mkdir -p dist/lib/jank/0.1/include/c++ dist/lib/jank/0.1/include/aarch64-linux-gnu/c++
+mkdir -p dist/lib/jank/0.1/include/c++
 cp -R /usr/include/c++/14 dist/lib/jank/0.1/include/c++/
-cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+
+# Detect architecture and copy appropriate platform-specific headers
+ARCH=\$(uname -m)
+if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
+    mkdir -p dist/lib/jank/0.1/include/aarch64-linux-gnu/c++
+    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+elif [ "\$ARCH" = "x86_64" ]; then
+    mkdir -p dist/lib/jank/0.1/include/x86_64-linux-gnu/c++
+    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
+fi
 
 # Fix clang rpath
 patchelf --add-rpath '\$ORIGIN/../../../lib' dist/lib/jank/0.1/bin/clang-22 2>/dev/null || true
@@ -248,18 +258,26 @@ du -sh dist/
 ls -la dist/
 EOF
 
+# Detect remote architecture
+REMOTE_ARCH=$(ssh_cmd "uname -m")
+case "$REMOTE_ARCH" in
+    aarch64|arm64) LINUX_ARCH="arm64" ;;
+    x86_64|amd64) LINUX_ARCH="x86_64" ;;
+    *) LINUX_ARCH="$REMOTE_ARCH" ;;
+esac
+
 # Copy back to macOS
 echo ""
 echo "=== Copying distribution to macOS ==="
 
-LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-arm64"
+LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-${LINUX_ARCH}"
 rm -rf "$LINUX_DIST_DIR"
 mkdir -p "$LINUX_DIST_DIR"
 
 # Use tar over ssh to preserve symlinks
 ssh_cmd "cd $REMOTE_DIR && tar -cf - dist" | tar -xf - -C "$PROJECT_DIR"
 mv "$PROJECT_DIR/dist"/* "$LINUX_DIST_DIR/"
-rmdir "$PROJECT_DIR/dist"
+rm -rf "$PROJECT_DIR/dist"
 
 # Create archive
 echo ""
@@ -267,7 +285,7 @@ echo "=== Creating archive ==="
 
 DIST_DIR="$PROJECT_DIR/dist"
 mkdir -p "$DIST_DIR"
-ARCHIVE_NAME="${GAME}-linux-arm64-standalone.tar.gz"
+ARCHIVE_NAME="${GAME}-linux-${LINUX_ARCH}-standalone.tar.gz"
 
 cd "$(dirname "$LINUX_DIST_DIR")"
 tar -czhf "$DIST_DIR/$ARCHIVE_NAME" "$(basename "$LINUX_DIST_DIR")"
@@ -284,7 +302,7 @@ echo ""
 echo "This is a FULLY STANDALONE distribution - no system dependencies required."
 echo "Includes: glibc, LLVM/clang, libstdc++ headers"
 echo ""
-echo "To deploy to ANY Linux ARM64 system:"
+echo "To deploy to ANY Linux ${LINUX_ARCH} system:"
 echo "  1. Copy: scp $DIST_DIR/$ARCHIVE_NAME user@host:"
 echo "  2. Extract: tar -xzf $ARCHIVE_NAME"
-echo "  3. Run: cd dist-linux-arm64 && ./${GAME}_run"
+echo "  3. Run: cd dist-linux-${LINUX_ARCH} && ./${GAME}_run"

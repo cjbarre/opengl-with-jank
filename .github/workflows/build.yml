@@ -48,10 +48,18 @@ jobs:
           sudo apt-get install -y \
             build-essential cmake ninja-build git git-lfs \
             libssl-dev libdouble-conversion-dev pkg-config \
-            zlib1g-dev libffi-dev libbz2-dev \
+            zlib1g-dev libffi-dev libbz2-dev libzstd-dev \
             libgl1-mesa-dev libglew-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-            doctest-dev
+            doctest-dev patchelf \
+            gcc-14 g++-14 libstdc++-14-dev
+
+      - name: Set GCC 14 as default (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # GCC 14 required for std::chrono::parse support
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -122,6 +130,7 @@ jobs:
             cmake -S /tmp/glfw -B /tmp/glfw/build \
               -DCMAKE_BUILD_TYPE=Release \
               -DBUILD_SHARED_LIBS=ON \
+              -DGLFW_BUILD_WAYLAND=OFF \
               -DGLFW_BUILD_EXAMPLES=OFF \
               -DGLFW_BUILD_TESTS=OFF \
               -DGLFW_BUILD_DOCS=OFF
@@ -161,14 +170,14 @@ jobs:
             gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -Iinclude -lm
           fi
 
-          # Build enet
+          # Build enet (MUST use project's single-header include/enet.h for correct symbols)
           if [ ! -f "$LIBS_DIR/enet/lib/libenet.so" ]; then
             mkdir -p "$LIBS_DIR/enet/lib"
             cat > /tmp/enet_impl.c << 'ENETEOF'
           #define ENET_IMPLEMENTATION
           #include "enet.h"
           ENETEOF
-            gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -Iinclude
+            gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -Iinclude -lm
           fi
 
           # Build cgltf
@@ -227,16 +236,56 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           LIBS_DIR="libs/${{ matrix.platform }}"
-          mkdir -p dist/bin dist/lib
+          JANK_LLVM="${{ github.workspace }}/jank/compiler+runtime/build/llvm-install/usr/local"
+          JANK_SRC="${{ github.workspace }}/jank/compiler+runtime"
 
+          mkdir -p dist/bin dist/lib dist/lib/jank/0.1/{bin,include,lib/clang,src}
+
+          # Copy game binary and libraries
           cp demo dist/bin/
           cp "$LIBS_DIR"/*/lib/*.so* dist/lib/ 2>/dev/null || true
           cp -r shaders textures models fonts dist/
+
+          # Bundle LLVM shared libraries for JIT
+          cp "$JANK_LLVM/lib/libclang-cpp.so"* dist/lib/ 2>/dev/null || true
+          cp "$JANK_LLVM/lib/libLLVM.so"* dist/lib/ 2>/dev/null || true
+
+          # Bundle clang for JIT compilation
+          cp "$JANK_LLVM/bin/clang-22" dist/lib/jank/0.1/bin/
+          ln -sf clang-22 dist/lib/jank/0.1/bin/clang++
+          ln -sf clang-22 dist/lib/jank/0.1/bin/clang
+
+          # Bundle clang resources
+          cp -R "$JANK_LLVM/lib/clang/22" dist/lib/jank/0.1/lib/clang/
+
+          # Bundle libc++ headers
+          cp -R "$JANK_LLVM/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
+
+          # Bundle jank headers and stdlib
+          cp -R "$JANK_SRC/include/cpp/jank" dist/lib/jank/0.1/include/
+          cp -R "$JANK_SRC/src/jank"/* dist/lib/jank/0.1/src/
+
+          # Bundle GCC 14 libstdc++ headers for JIT
+          mkdir -p dist/lib/jank/0.1/include/c++
+          cp -R /usr/include/c++/14 dist/lib/jank/0.1/include/c++/ 2>/dev/null || true
+
+          # Architecture-specific headers
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            mkdir -p dist/lib/jank/0.1/include/aarch64-linux-gnu/c++
+            cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+          else
+            mkdir -p dist/lib/jank/0.1/include/x86_64-linux-gnu/c++
+            cp -R /usr/include/x86_64-linux-gnu/c++/14 dist/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
+          fi
+
+          # Fix clang rpath to find LLVM libs
+          patchelf --add-rpath '$ORIGIN/../../../lib' dist/lib/jank/0.1/bin/clang-22 2>/dev/null || true
 
           cat > dist/demo_run << 'EOF'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
           export LD_LIBRARY_PATH="$SCRIPT_DIR/lib:$LD_LIBRARY_PATH"
+          export PATH="$SCRIPT_DIR/lib/jank/0.1/bin:$PATH"
           cd "$SCRIPT_DIR"
           exec "./bin/demo" "$@"
           EOF
@@ -246,16 +295,45 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           LIBS_DIR="libs/${{ matrix.platform }}"
-          mkdir -p dist/bin dist/lib
+          JANK_LLVM="${{ github.workspace }}/jank/compiler+runtime/build/llvm-install/usr/local"
+          JANK_SRC="${{ github.workspace }}/jank/compiler+runtime"
 
+          mkdir -p dist/bin dist/lib dist/lib/jank/0.1/{bin,include,lib/clang,src}
+
+          # Copy game binary and libraries
           cp demo dist/bin/
           cp "$LIBS_DIR"/*/lib/*.dylib dist/lib/ 2>/dev/null || true
           cp -r shaders textures models fonts dist/
+
+          # Bundle LLVM shared libraries for JIT
+          cp "$JANK_LLVM/lib/libclang-cpp.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LLVM/lib/libLLVM.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LLVM/lib/libc++.1.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LLVM/lib/libunwind.1.dylib" dist/lib/ 2>/dev/null || true
+
+          # Bundle clang for JIT compilation
+          cp "$JANK_LLVM/bin/clang-22" dist/lib/jank/0.1/bin/
+          ln -sf clang-22 dist/lib/jank/0.1/bin/clang++
+          ln -sf clang-22 dist/lib/jank/0.1/bin/clang
+
+          # Bundle clang resources
+          cp -R "$JANK_LLVM/lib/clang/22" dist/lib/jank/0.1/lib/clang/
+
+          # Bundle libc++ headers
+          cp -R "$JANK_LLVM/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
+
+          # Bundle jank headers and stdlib
+          cp -R "$JANK_SRC/include/cpp/jank" dist/lib/jank/0.1/include/
+          cp -R "$JANK_SRC/src/jank"/* dist/lib/jank/0.1/src/
+
+          # Fix clang rpath
+          install_name_tool -add_rpath @executable_path/../../../lib dist/lib/jank/0.1/bin/clang-22 2>/dev/null || true
 
           cat > dist/demo_run << 'EOF'
           #!/bin/bash
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
           export DYLD_LIBRARY_PATH="$SCRIPT_DIR/lib:$DYLD_LIBRARY_PATH"
+          export PATH="$SCRIPT_DIR/lib/jank/0.1/bin:$PATH"
           cd "$SCRIPT_DIR"
           exec "./bin/demo" "$@"
           EOF

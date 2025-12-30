@@ -299,7 +299,16 @@ export PATH="$LIB_DIR/jank/0.1/bin:$PATH"
 
 # Set C++ include path so clang finds bundled libstdc++ headers (not system headers)
 JANK_INCLUDE="$LIB_DIR/jank/0.1/include"
-export CPLUS_INCLUDE_PATH="$JANK_INCLUDE/c++/14:$JANK_INCLUDE/aarch64-linux-gnu/c++/14:$JANK_INCLUDE"
+# Detect architecture for platform-specific headers
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ARCH_INCLUDE="$JANK_INCLUDE/aarch64-linux-gnu/c++/14"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH_INCLUDE="$JANK_INCLUDE/x86_64-linux-gnu/c++/14"
+else
+    ARCH_INCLUDE=""
+fi
+export CPLUS_INCLUDE_PATH="$JANK_INCLUDE/c++/14:$ARCH_INCLUDE:$JANK_INCLUDE"
 
 # Use the bundled dynamic loader with both lib dirs:
 # - LIB_DIR: app/LLVM libraries
