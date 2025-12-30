@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Build Linux ARM64 distribution from macOS via SSH to VM
+# Build Linux ARM64 headless server distribution from macOS via SSH to VM
 #
-# Usage: ./scripts/build-linux [options] [game]
+# Usage: ./scripts/build-linux-server [options] [game]
 #   game          Game to compile (default: demo)
 #   --ip IP       VM IP address (default: auto-detect or 192.168.64.4)
 #   --user USER   SSH user (default: root)
@@ -48,7 +48,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-NAMESPACE="examples.${GAME}.core"
+NAMESPACE="examples.${GAME}.server"
+OUTPUT="${GAME}-server"
 
 # Check for sshpass
 if ! command -v sshpass &> /dev/null; then
@@ -104,11 +105,8 @@ if [[ "$NO_SYNC" != true ]]; then
     echo "Syncing scripts/..."
     scp_cmd "$PROJECT_DIR/scripts/"* "$VM_USER@$VM_IP:$REMOTE_DIR/scripts/"
 
-    echo "Syncing assets..."
-    scp_cmd "$PROJECT_DIR/shaders" "$VM_USER@$VM_IP:$REMOTE_DIR/"
-    scp_cmd "$PROJECT_DIR/textures" "$VM_USER@$VM_IP:$REMOTE_DIR/"
+    echo "Syncing models (for collision meshes)..."
     scp_cmd "$PROJECT_DIR/models" "$VM_USER@$VM_IP:$REMOTE_DIR/"
-    scp_cmd "$PROJECT_DIR/fonts" "$VM_USER@$VM_IP:$REMOTE_DIR/"
 
     echo "Syncing libs/glm (header-only math library)..."
     ssh_cmd "mkdir -p $REMOTE_DIR/libs"
@@ -124,57 +122,84 @@ fi
 
 # Compile on VM
 echo ""
-echo "=== Compiling $GAME on Linux ARM64 ==="
+echo "=== Compiling $OUTPUT on Linux ARM64 ==="
 
 ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
-# Set library path
-export LD_LIBRARY_PATH="\$PWD/libs/linux-arm64/glfw/lib:\$PWD/libs/linux-arm64/ozz-animation/lib:\$PWD/libs/linux-arm64/stb/lib:\$PWD/libs/linux-arm64/enet/lib:\$PWD/libs/linux-arm64/cgltf/lib:/usr/lib/aarch64-linux-gnu"
+# Set library path for server dependencies
+export LD_LIBRARY_PATH="\$PWD/libs/linux-arm64/enet/lib:\$PWD/libs/linux-arm64/cgltf/lib"
 
-echo "Running jank compile..."
+echo "Running jank compile (headless server)..."
+# libenet.so is built from the bundled single-header include/enet.h
 jank \\
-  -I libs/linux-arm64/glfw/include -I libs/glm -I include -I third_party/ozz-animation/include \\
-  -L libs/linux-arm64/glfw/lib -lglfw \\
-  -L libs/linux-arm64/ozz-animation/lib -lozz_animation_r -lozz_base_r -lozz_geometry_r \\
-  -L libs/linux-arm64/stb/lib -lstb_all \\
+  -I libs/glm -I include \\
   -L libs/linux-arm64/enet/lib -lenet \\
   -L libs/linux-arm64/cgltf/lib -lcgltf \\
-  -I/usr/include -L/usr/lib/aarch64-linux-gnu -lGL -lGLEW \\
-  --module-path /opt/jank/compiler+runtime/src/jank:src compile $NAMESPACE -o $GAME
+  --module-path src compile $NAMESPACE -o $OUTPUT
 
 echo "Compilation successful!"
-ls -lh $GAME
+ls -lh $OUTPUT
 EOF
 
 # Package distribution
 echo ""
-echo "=== Packaging distribution ==="
+echo "=== Packaging server distribution ==="
 
 ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
 # Clean and create dist structure
-rm -rf dist
-mkdir -p dist/bin dist/lib
+rm -rf dist-server
+mkdir -p dist-server/bin dist-server/lib dist-server/lib/jank/0.1/bin dist-server/lib/jank/0.1/include dist-server/lib/jank/0.1/lib/clang dist-server/lib/jank/0.1/src
 
-# Copy binary
-cp $GAME dist/bin/
+# Move executable
+cp $OUTPUT dist-server/bin/
 
-# Copy game libraries (use -a to preserve symlinks)
-cp -a libs/linux-arm64/glfw/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/ozz-animation/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/stb/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/enet/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/cgltf/lib/*.so* dist/lib/ 2>/dev/null || true
+# Copy server libraries (minimal - no graphics)
+cp libs/linux-arm64/enet/lib/libenet.so dist-server/lib/
+cp libs/linux-arm64/cgltf/lib/libcgltf.so dist-server/lib/
 
-# Copy assets
-cp -r shaders dist/
-cp -r textures dist/
-cp -r models dist/
-cp -r fonts dist/
+# Copy clang for JIT
+JANK_LLVM=/opt/jank/compiler+runtime/build/llvm-install/usr/local
+cp \$JANK_LLVM/bin/clang-22 dist-server/lib/jank/0.1/bin/
+ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang++
+ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang
+
+# Copy LLVM shared libraries needed by clang
+cp \$JANK_LLVM/lib/libclang-cpp.so.22.0git dist-server/lib/
+cp \$JANK_LLVM/lib/libLLVM.so.22.0git dist-server/lib/
+ln -sf libclang-cpp.so.22.0git dist-server/lib/libclang-cpp.so
+ln -sf libLLVM.so.22.0git dist-server/lib/libLLVM.so
+
+# Copy clang resources
+cp -R \$JANK_LLVM/lib/clang/22 dist-server/lib/jank/0.1/lib/clang/
+
+# Copy libc++ headers (both generic and platform-specific)
+cp -R \$JANK_LLVM/include/c++ dist-server/lib/jank/0.1/include/
+# Copy platform-specific headers (contains __config_site)
+if [ -d "\$JANK_LLVM/include/aarch64-unknown-linux-gnu" ]; then
+    cp -R \$JANK_LLVM/include/aarch64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
+fi
+if [ -d "\$JANK_LLVM/include/x86_64-unknown-linux-gnu" ]; then
+    cp -R \$JANK_LLVM/include/x86_64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
+fi
+
+# Copy jank headers and stdlib
+JANK_DIR=/opt/jank/compiler+runtime
+cp -R \$JANK_DIR/include/cpp/jank dist-server/lib/jank/0.1/include/
+cp -R \$JANK_DIR/src/jank/* dist-server/lib/jank/0.1/src/
+
+# Bundle GCC libstdc++ headers for fully standalone distribution
+# These are needed by clang for JIT compilation at runtime
+mkdir -p dist-server/lib/jank/0.1/include/c++
+cp -R /usr/include/c++/14 dist-server/lib/jank/0.1/include/c++/
+cp -R /usr/include/aarch64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+
+# Copy models (needed for collision mesh)
+cp -r models dist-server/
 
 echo "Base distribution created, now bundling for standalone..."
 EOF
@@ -191,75 +216,37 @@ cd $REMOTE_DIR
 source scripts/platform/common.sh
 
 # Bundle all dependencies including glibc
-bundle_all_dependencies dist
+bundle_all_dependencies dist-server
 
-# Bundle jank runtime resources for JIT compilation
-JANK_LLVM=/opt/jank/compiler+runtime/build/llvm-install/usr/local
-JANK_DIR=/opt/jank/compiler+runtime
-
-mkdir -p dist/lib/jank/0.1/bin dist/lib/jank/0.1/include dist/lib/jank/0.1/lib/clang dist/lib/jank/0.1/src
-
-# Copy clang for JIT
-cp \$JANK_LLVM/bin/clang-22 dist/lib/jank/0.1/bin/
-ln -sf clang-22 dist/lib/jank/0.1/bin/clang++
-ln -sf clang-22 dist/lib/jank/0.1/bin/clang
-
-# Copy LLVM shared libraries needed by clang
-cp \$JANK_LLVM/lib/libclang-cpp.so.22.0git dist/lib/
-cp \$JANK_LLVM/lib/libLLVM.so.22.0git dist/lib/
-ln -sf libclang-cpp.so.22.0git dist/lib/libclang-cpp.so
-ln -sf libLLVM.so.22.0git dist/lib/libLLVM.so
-
-# Copy clang resources
-cp -R \$JANK_LLVM/lib/clang/22 dist/lib/jank/0.1/lib/clang/
-
-# Copy libc++ headers
-cp -R \$JANK_LLVM/include/c++ dist/lib/jank/0.1/include/
-if [ -d "\$JANK_LLVM/include/aarch64-unknown-linux-gnu" ]; then
-    cp -R \$JANK_LLVM/include/aarch64-unknown-linux-gnu dist/lib/jank/0.1/include/
-fi
-
-# Copy jank headers and stdlib
-cp -R \$JANK_DIR/include/cpp/jank dist/lib/jank/0.1/include/
-cp -R \$JANK_DIR/src/jank/* dist/lib/jank/0.1/src/
-
-# Bundle GCC libstdc++ headers for fully standalone distribution
-mkdir -p dist/lib/jank/0.1/include/c++ dist/lib/jank/0.1/include/aarch64-linux-gnu/c++
-cp -R /usr/include/c++/14 dist/lib/jank/0.1/include/c++/
-cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
-
-# Fix clang rpath
-patchelf --add-rpath '\$ORIGIN/../../../lib' dist/lib/jank/0.1/bin/clang-22 2>/dev/null || true
+# Fix clang rpath to find libs in the flat lib/ directory
+patchelf --add-rpath '\$ORIGIN/../../../lib' dist-server/lib/jank/0.1/bin/clang-22 2>/dev/null || true
 
 # Create symlink for jank resource discovery when run via bundled glibc loader
 # (The loader becomes /proc/self/exe, so jank looks for resources relative to lib/glibc/)
-mkdir -p dist/lib/lib
-ln -sf ../../jank dist/lib/lib/jank
+mkdir -p dist-server/lib/lib
+ln -sf ../../jank dist-server/lib/lib/jank
 
 # Generate standalone launcher that uses bundled ld-linux
-generate_standalone_launcher_script dist/${GAME}_standalone_run "bin/$GAME" "lib"
-
-# Also generate a regular launcher for graphical apps (uses system glibc, avoids X11 conflicts)
-generate_launcher_script dist/${GAME}_run "bin/$GAME" "lib"
+generate_standalone_launcher_script dist-server/${OUTPUT}_run "bin/$OUTPUT" "lib"
 
 echo ""
-echo "Standalone distribution ready:"
-du -sh dist/
-ls -la dist/
+echo "Standalone server distribution ready:"
+du -sh dist-server/
+ls -la dist-server/
 EOF
 
-# Copy back to macOS
+# Copy back to macOS (use tar to preserve symlinks)
 echo ""
 echo "=== Copying distribution to macOS ==="
 
-LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-arm64"
+LINUX_DIST_DIR="$PROJECT_DIR/dist-linux-arm64-server"
 rm -rf "$LINUX_DIST_DIR"
 mkdir -p "$LINUX_DIST_DIR"
 
 # Use tar over ssh to preserve symlinks
-ssh_cmd "cd $REMOTE_DIR && tar -cf - dist" | tar -xf - -C "$PROJECT_DIR"
-mv "$PROJECT_DIR/dist"/* "$LINUX_DIST_DIR/"
-rmdir "$PROJECT_DIR/dist"
+ssh_cmd "cd $REMOTE_DIR && tar -cf - dist-server" | tar -xf - -C "$PROJECT_DIR"
+mv "$PROJECT_DIR/dist-server"/* "$LINUX_DIST_DIR/"
+rmdir "$PROJECT_DIR/dist-server"
 
 # Create archive
 echo ""
@@ -267,8 +254,9 @@ echo "=== Creating archive ==="
 
 DIST_DIR="$PROJECT_DIR/dist"
 mkdir -p "$DIST_DIR"
-ARCHIVE_NAME="${GAME}-linux-arm64-standalone.tar.gz"
+ARCHIVE_NAME="${OUTPUT}-linux-arm64-standalone.tar.gz"
 
+# Create archive with clean directory name
 cd "$(dirname "$LINUX_DIST_DIR")"
 tar -czhf "$DIST_DIR/$ARCHIVE_NAME" "$(basename "$LINUX_DIST_DIR")"
 
@@ -284,7 +272,7 @@ echo ""
 echo "This is a FULLY STANDALONE distribution - no system dependencies required."
 echo "Includes: glibc, LLVM/clang, libstdc++ headers"
 echo ""
-echo "To deploy to ANY Linux ARM64 system:"
-echo "  1. Copy: scp $DIST_DIR/$ARCHIVE_NAME user@host:"
+echo "To deploy to ANY Linux ARM64 server:"
+echo "  1. Upload: scp $DIST_DIR/$ARCHIVE_NAME user@server:"
 echo "  2. Extract: tar -xzf $ARCHIVE_NAME"
-echo "  3. Run: cd dist-linux-arm64 && ./${GAME}_run"
+echo "  3. Run: cd dist-linux-arm64-server && ./${OUTPUT}_run"

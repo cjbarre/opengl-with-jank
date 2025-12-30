@@ -1,7 +1,8 @@
 (ns engine.networking.core
   (:require [engine.macros :refer [clet]]))
 
-;; enet implementation is in libs/enet/lib/libenet.dylib for AOT compilation
+;; enet implementation is in libs/{platform}/enet/lib/libenet.{dylib,so}
+;; On Linux, libenet.so is built from the bundled single-header include/enet.h
 (cpp/raw
  "#include \"enet.h\"
   #include <cstring>

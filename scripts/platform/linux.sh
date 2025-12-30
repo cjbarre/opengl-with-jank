@@ -242,3 +242,233 @@ generate_app_launcher_script() {
     # Same as regular launcher on Linux (no .app bundle concept)
     generate_launcher_script "$output_path" "$executable_rel_path" "$lib_rel_path"
 }
+
+# ============================================================================
+# Standalone Distribution (Bundled glibc)
+# ============================================================================
+
+# Generate a standalone launcher that uses bundled ld-linux loader
+# This makes the distribution completely independent of system glibc
+generate_standalone_launcher_script() {
+    local output_path="$1"
+    local executable_rel_path="$2"
+    local lib_rel_path="$3"
+
+    cat > "$output_path" << 'LAUNCHER'
+#!/bin/bash
+# Standalone launcher - uses bundled glibc/loader for maximum portability
+# This distribution does not depend on system glibc version
+
+# Get the directory where this script lives (resolve symlinks)
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do
+    DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+    SOURCE="$(readlink "$SOURCE")"
+    [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+
+LAUNCHER
+
+    # Add the exec line with the bundled loader
+    cat >> "$output_path" << 'LAUNCHER_BODY'
+LIB_DIR="$DIR/lib"
+LAUNCHER_BODY
+    echo "BIN=\"\$DIR/$executable_rel_path\"" >> "$output_path"
+    cat >> "$output_path" << 'LAUNCHER_EXEC'
+
+GLIBC_DIR="$LIB_DIR/glibc"
+
+# Detect loader name based on architecture
+if [[ -f "$GLIBC_DIR/ld-linux-aarch64.so.1" ]]; then
+    LOADER="$GLIBC_DIR/ld-linux-aarch64.so.1"
+elif [[ -f "$GLIBC_DIR/ld-linux-x86-64.so.2" ]]; then
+    LOADER="$GLIBC_DIR/ld-linux-x86-64.so.2"
+else
+    echo "ERROR: Cannot find bundled dynamic loader in $GLIBC_DIR" >&2
+    exit 1
+fi
+
+# Set LD_LIBRARY_PATH for child processes (e.g., clang spawned by jank for JIT)
+# IMPORTANT: Only include app/LLVM libs, NOT glibc libs!
+# Child processes must use system glibc to avoid version conflicts.
+export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
+
+# Add jank's bundled clang to PATH so jank can find it for JIT
+export PATH="$LIB_DIR/jank/0.1/bin:$PATH"
+
+# Set C++ include path so clang finds bundled libstdc++ headers (not system headers)
+JANK_INCLUDE="$LIB_DIR/jank/0.1/include"
+export CPLUS_INCLUDE_PATH="$JANK_INCLUDE/c++/14:$JANK_INCLUDE/aarch64-linux-gnu/c++/14:$JANK_INCLUDE"
+
+# Use the bundled dynamic loader with both lib dirs:
+# - LIB_DIR: app/LLVM libraries
+# - GLIBC_DIR: bundled glibc (only for main process, not inherited by children)
+exec "$LOADER" --library-path "$LIB_DIR:$GLIBC_DIR" "$BIN" "$@"
+LAUNCHER_EXEC
+
+    chmod +x "$output_path"
+}
+
+# Bundle all shared library dependencies for standalone distribution
+# This copies glibc, libstdc++, and all transitive dependencies
+#
+# Structure:
+#   lib/         - LLVM and app libraries (exported via LD_LIBRARY_PATH for child processes)
+#   lib/glibc/   - Core glibc libraries (only used by bundled loader, NOT in LD_LIBRARY_PATH)
+#
+# This separation is critical: child processes (like clang spawned by jank) must use
+# system glibc, not bundled glibc, to avoid version mismatches.
+bundle_all_dependencies() {
+    local dist_dir="$1"
+    local lib_dir="$dist_dir/lib"
+    local glibc_dir="$dist_dir/lib/glibc"
+    local bin_dir="$dist_dir/bin"
+
+    echo "=== Bundling system libraries for standalone distribution ==="
+
+    # Ensure directories exist
+    mkdir -p "$lib_dir"
+    mkdir -p "$glibc_dir"
+
+    # Helper to get library dependencies
+    get_deps() {
+        ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}' | sort -u
+    }
+
+    # Libraries that are part of glibc and must NOT be in LD_LIBRARY_PATH
+    # Child processes must use system glibc to avoid version conflicts
+    is_glibc_lib() {
+        local name="$1"
+        case "$name" in
+            libc.so*|libm.so*|libpthread.so*|libdl.so*|librt.so*|libresolv.so*|\
+            libnss_*.so*|libnsl.so*|libcrypt.so*|libutil.so*|libBrokenLocale.so*|\
+            libthread_db.so*|libanl.so*|libmvec.so*|ld-linux*.so*)
+                return 0 ;;
+            *)
+                return 1 ;;
+        esac
+    }
+
+    # Find the main executable
+    local executable
+    executable="$(find "$bin_dir" -type f -executable | head -1)"
+    if [[ -z "$executable" ]]; then
+        echo "ERROR: No executable found in $bin_dir" >&2
+        return 1
+    fi
+
+    echo "Analyzing: $executable"
+
+    # Copy the dynamic loader to glibc dir
+    echo "Copying dynamic loader..."
+    if [[ -f /lib/ld-linux-aarch64.so.1 ]]; then
+        cp -L /lib/ld-linux-aarch64.so.1 "$glibc_dir/"
+    elif [[ -f /lib64/ld-linux-x86-64.so.2 ]]; then
+        cp -L /lib64/ld-linux-x86-64.so.2 "$glibc_dir/"
+    else
+        echo "ERROR: Cannot find dynamic loader" >&2
+        return 1
+    fi
+    chmod 755 "$glibc_dir"/ld-linux*.so.*
+
+    # Collect dependencies from executable
+    echo "Copying libraries from executable..."
+    for lib in $(get_deps "$executable"); do
+        if [[ -f "$lib" ]]; then
+            libname="$(basename "$lib")"
+            if is_glibc_lib "$libname"; then
+                if [[ ! -f "$glibc_dir/$libname" ]]; then
+                    echo "  Copying (glibc): $libname"
+                    cp -L "$lib" "$glibc_dir/" 2>/dev/null || true
+                fi
+            else
+                if [[ ! -f "$lib_dir/$libname" ]]; then
+                    echo "  Copying: $libname"
+                    cp -L "$lib" "$lib_dir/" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+
+    # Copy LLVM libraries if jank is installed
+    if [[ -d "${JANK_LLVM_LIB:-}" ]]; then
+        echo "Copying LLVM libraries..."
+        for lib in "$JANK_LLVM_LIB"/*.so*; do
+            if [[ -f "$lib" ]]; then
+                libname="$(basename "$lib")"
+                if [[ ! -f "$lib_dir/$libname" ]]; then
+                    echo "  Copying: $libname"
+                    cp -L "$lib" "$lib_dir/" 2>/dev/null || true
+                fi
+            fi
+        done
+    fi
+
+    # Iteratively copy transitive dependencies (3 passes)
+    for pass in 1 2 3; do
+        echo "Transitive dependency pass $pass..."
+        for lib in "$lib_dir"/*.so* "$glibc_dir"/*.so*; do
+            if [[ -f "$lib" ]]; then
+                for dep in $(get_deps "$lib"); do
+                    depname="$(basename "$dep")"
+                    if is_glibc_lib "$depname"; then
+                        if [[ ! -f "$glibc_dir/$depname" ]] && [[ -f "$dep" ]]; then
+                            echo "  Copying (glibc): $depname"
+                            cp -L "$dep" "$glibc_dir/" 2>/dev/null || true
+                        fi
+                    else
+                        if [[ ! -f "$lib_dir/$depname" ]] && [[ -f "$dep" ]]; then
+                            echo "  Copying: $depname"
+                            cp -L "$dep" "$lib_dir/" 2>/dev/null || true
+                        fi
+                    fi
+                done
+            fi
+        done
+    done
+
+    # Create symlinks for versioned libraries
+    echo "Creating library symlinks..."
+    for dir in "$lib_dir" "$glibc_dir"; do
+        (
+            cd "$dir"
+            for lib in *.so.*; do
+                if [[ -f "$lib" ]]; then
+                    base="${lib%.so.*}.so"
+                    if [[ ! -e "$base" ]] && [[ "$lib" != "$base" ]]; then
+                        ln -sf "$lib" "$base"
+                    fi
+                fi
+            done
+        )
+    done
+
+    local lib_count glibc_count
+    lib_count="$(find "$lib_dir" -maxdepth 1 -name "*.so*" | wc -l)"
+    glibc_count="$(find "$glibc_dir" -name "*.so*" | wc -l)"
+    echo "=== Bundled $lib_count app/LLVM libraries + $glibc_count glibc libraries ==="
+}
+
+# Create a fully standalone distribution
+make_standalone_distribution() {
+    local dist_dir="$1"
+    local output_name="${2:-app}"
+
+    echo "Creating standalone distribution in: $dist_dir"
+
+    # Bundle all dependencies
+    bundle_all_dependencies "$dist_dir"
+
+    # Find the executable name
+    local executable
+    executable="$(find "$dist_dir/bin" -type f -executable -printf '%f\n' | head -1)"
+
+    # Generate standalone launcher
+    generate_standalone_launcher_script \
+        "$dist_dir/${output_name}_run" \
+        "bin/$executable" \
+        "lib"
+
+    echo "Created launcher: $dist_dir/${output_name}_run"
+}

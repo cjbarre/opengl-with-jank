@@ -62,3 +62,6 @@ Thumbs.db
 # REPL/development
 .portal/
 .rebel_readline_history
+
+# Build archives
+*.tar.gz

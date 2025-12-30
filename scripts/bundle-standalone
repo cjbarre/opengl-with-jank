@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Bundle all dependencies into a standalone Linux distribution
+# This creates a distribution that doesn't depend on system glibc
+#
+# Usage: ./bundle-standalone [dist-dir] [output-name]
+#   dist-dir: Directory containing bin/ and lib/ (default: dist)
+#   output-name: Name for the launcher script (default: app)
+#
+# Example:
+#   ./bundle-standalone dist demo
+#   # Creates dist/demo_run that uses bundled glibc
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/platform/common.sh"
+
+# Check platform
+if [[ "$(detect_platform)" != linux-* ]]; then
+    echo "ERROR: This script only runs on Linux" >&2
+    exit 1
+fi
+
+DIST_DIR="${1:-dist}"
+OUTPUT_NAME="${2:-app}"
+
+if [[ ! -d "$DIST_DIR" ]]; then
+    echo "ERROR: Distribution directory not found: $DIST_DIR" >&2
+    exit 1
+fi
+
+if [[ ! -d "$DIST_DIR/bin" ]]; then
+    echo "ERROR: No bin/ directory in $DIST_DIR" >&2
+    exit 1
+fi
+
+echo "Bundling standalone distribution: $DIST_DIR"
+echo "Output launcher: ${OUTPUT_NAME}_run"
+
+# Use the platform function
+make_standalone_distribution "$DIST_DIR" "$OUTPUT_NAME"
+
+echo ""
+echo "=== Standalone distribution ready ==="
+echo "Run with: ./${OUTPUT_NAME}_run"
+echo ""
+echo "This distribution is completely standalone and does not"
+echo "depend on the system glibc version."
