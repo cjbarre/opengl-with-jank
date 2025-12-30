@@ -95,9 +95,15 @@ jobs:
           ./bin/configure -GNinja -DCMAKE_BUILD_TYPE=Release -Djank_local_clang=on
           ./bin/compile
 
+      - name: Install jank
+        working-directory: jank/compiler+runtime
+        run: |
+          # Install jank to a local prefix so resource directories are set up correctly
+          cmake --install build --prefix ${{ github.workspace }}/jank-install
+
       - name: Add jank to PATH
         run: |
-          echo "${{ github.workspace }}/jank/compiler+runtime/build" >> $GITHUB_PATH
+          echo "${{ github.workspace }}/jank-install/bin" >> $GITHUB_PATH
           echo "JANK_DIR=${{ github.workspace }}/jank/compiler+runtime" >> $GITHUB_ENV
 
       - name: Verify jank installation
@@ -122,6 +128,7 @@ jobs:
             cmake --build /tmp/glfw/build -j$(nproc)
             mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include/GLFW"
             cp /tmp/glfw/build/src/libglfw.so.3* "$LIBS_DIR/glfw/lib/"
+            ln -sf libglfw.so.3 "$LIBS_DIR/glfw/lib/libglfw.so"
             cp /tmp/glfw/include/GLFW/*.h "$LIBS_DIR/glfw/include/GLFW/"
           fi
 
@@ -134,7 +141,7 @@ jobs:
               -Dozz_build_samples=OFF \
               -Dozz_build_tests=OFF
             cmake --build third_party/ozz-animation/build -j$(nproc)
-            mkdir -p "$LIBS_DIR/ozz-animation/lib"
+            mkdir -p "$LIBS_DIR/ozz-animation/lib" "$LIBS_DIR/ozz-animation/include"
             cp third_party/ozz-animation/build/src/animation/runtime/libozz_animation_r.so "$LIBS_DIR/ozz-animation/lib/"
             cp third_party/ozz-animation/build/src/base/libozz_base_r.so "$LIBS_DIR/ozz-animation/lib/"
             cp third_party/ozz-animation/build/src/geometry/runtime/libozz_geometry_r.so "$LIBS_DIR/ozz-animation/lib/"
@@ -180,7 +187,15 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           LIBS_DIR="libs/${{ matrix.platform }}"
-          export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib"
+
+          # Detect system library path based on architecture
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            SYS_LIB_PATH="/usr/lib/aarch64-linux-gnu"
+          else
+            SYS_LIB_PATH="/usr/lib/x86_64-linux-gnu"
+          fi
+
+          export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$SYS_LIB_PATH"
 
           jank \
             -I"$LIBS_DIR/glfw/include" -I libs/glm -I include -I"$LIBS_DIR/ozz-animation/include" \
@@ -189,8 +204,8 @@ jobs:
             -L"$LIBS_DIR/stb/lib" -lstb_all \
             -L"$LIBS_DIR/enet/lib" -lenet \
             -L"$LIBS_DIR/cgltf/lib" -lcgltf \
-            -I/usr/include -L/usr/lib -lGL -lGLEW \
-            --module-path src \
+            -I/usr/include -L"$SYS_LIB_PATH" -lGL -lGLEW \
+            --module-path "$JANK_DIR/src/jank:src" \
             compile examples.demo.core -o demo
 
       - name: Compile game (macOS)
@@ -200,12 +215,12 @@ jobs:
 
           jank \
             -I"$LIBS_DIR/glfw/include" -I libs/glm -I include -I"$LIBS_DIR/ozz-animation/include" \
-            -L"$LIBS_DIR/glfw/lib" -l"lib"glfw.3.dylib \
-            -L"$LIBS_DIR/ozz-animation/lib" -l"lib"ozz_animation_r.dylib -l"lib"ozz_base_r.dylib -l"lib"ozz_geometry_r.dylib \
-            -L"$LIBS_DIR/stb/lib" -l"lib"stb_all.dylib \
-            -L"$LIBS_DIR/enet/lib" -l"lib"enet.dylib \
-            -L"$LIBS_DIR/cgltf/lib" -l"lib"cgltf.dylib \
-            --module-path src \
+            -L"$LIBS_DIR/glfw/lib" -lglfw.3 \
+            -L"$LIBS_DIR/ozz-animation/lib" -lozz_animation_r -lozz_base_r -lozz_geometry_r \
+            -L"$LIBS_DIR/stb/lib" -lstb_all \
+            -L"$LIBS_DIR/enet/lib" -lenet \
+            -L"$LIBS_DIR/cgltf/lib" -lcgltf \
+            --module-path "$JANK_DIR/src/jank:src" \
             compile examples.demo.core -o demo
 
       - name: Package distribution (Linux)
