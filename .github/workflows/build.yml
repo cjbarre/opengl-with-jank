@@ -77,13 +77,22 @@ jobs:
           git clone --recurse-submodules --depth 1 -b ${{ env.JANK_BRANCH }} \
             https://github.com/${{ env.JANK_REPO }}.git jank
 
+      - name: Get LLVM cache key
+        id: llvm-cache-key
+        run: |
+          # Use jank commit hash + build script hash for stable cache key
+          JANK_COMMIT=$(cd jank && git rev-parse HEAD)
+          BUILD_SCRIPT_HASH=$(sha256sum jank/compiler+runtime/bin/build-clang | cut -d' ' -f1)
+          echo "key=llvm-${{ matrix.platform }}-${JANK_COMMIT:0:12}-${BUILD_SCRIPT_HASH:0:12}" >> $GITHUB_OUTPUT
+          echo "Cache key: llvm-${{ matrix.platform }}-${JANK_COMMIT:0:12}-${BUILD_SCRIPT_HASH:0:12}"
+
       - name: Cache LLVM build
         id: cache-llvm
         if: ${{ !inputs.skip_cache }}
         uses: actions/cache@v4
         with:
           path: jank/compiler+runtime/build/llvm-install
-          key: llvm-${{ matrix.platform }}-${{ hashFiles('jank/compiler+runtime/bin/build-clang') }}
+          key: ${{ steps.llvm-cache-key.outputs.key }}
           restore-keys: |
             llvm-${{ matrix.platform }}-
 
@@ -91,9 +100,16 @@ jobs:
         if: steps.cache-llvm.outputs.cache-hit != 'true'
         working-directory: jank/compiler+runtime
         run: |
+          echo "Cache miss - building LLVM from scratch..."
           export CC=clang CXX=clang++
           ./bin/build-clang
         timeout-minutes: 180
+
+      - name: Verify LLVM cache
+        run: |
+          echo "LLVM install directory contents:"
+          ls -la jank/compiler+runtime/build/llvm-install/usr/local/bin/ | head -10
+          echo "Cache hit: ${{ steps.cache-llvm.outputs.cache-hit }}"
 
       - name: Build jank
         working-directory: jank/compiler+runtime
