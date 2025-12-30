@@ -64,6 +64,11 @@ jobs:
         with:
           cli: latest
 
+      - name: Clone jank
+        run: |
+          git clone --recurse-submodules --depth 1 -b ${{ env.JANK_BRANCH }} \
+            https://github.com/${{ env.JANK_REPO }}.git jank
+
       - name: Cache LLVM build
         id: cache-llvm
         if: ${{ !inputs.skip_cache }}
@@ -73,11 +78,6 @@ jobs:
           key: llvm-${{ matrix.platform }}-${{ hashFiles('jank/compiler+runtime/bin/build-clang') }}
           restore-keys: |
             llvm-${{ matrix.platform }}-
-
-      - name: Clone jank
-        run: |
-          git clone --recurse-submodules --depth 1 -b ${{ env.JANK_BRANCH }} \
-            https://github.com/${{ env.JANK_REPO }}.git jank
 
       - name: Build LLVM (if not cached)
         if: steps.cache-llvm.outputs.cache-hit != 'true'
