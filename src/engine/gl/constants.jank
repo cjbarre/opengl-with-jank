@@ -67,6 +67,7 @@
   inline int glfw_key_7() { return GLFW_KEY_7; }
   inline int glfw_key_8() { return GLFW_KEY_8; }
   inline int glfw_key_9() { return GLFW_KEY_9; }
+  inline int glfw_key_0() { return GLFW_KEY_0; }
   inline int gl_lines() { return GL_LINES; }
   ")
 
@@ -131,4 +132,5 @@
 (def GLFW_KEY_7 (cpp/glfw_key_7))
 (def GLFW_KEY_8 (cpp/glfw_key_8))
 (def GLFW_KEY_9 (cpp/glfw_key_9))
+(def GLFW_KEY_0 (cpp/glfw_key_0))
 (def GL_LINES (cpp/gl_lines))

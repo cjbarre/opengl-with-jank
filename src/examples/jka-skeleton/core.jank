@@ -334,9 +334,19 @@ inline bool init_glew_jka() {
                                      :exclude #{"humanoid"}})
         _ (println "  Found" (count all-anim-names) "animation files")
 
-        ;; Only load BOTH_STAND1 for focused debugging
-        anim-names ["BOTH_STAND1"]
-        _ (println "  Loading" (count anim-names) "animation (BOTH_STAND1 only)...")
+        ;; Core movement animations
+        anim-names ["BOTH_STAND1"      ;; 1: Idle stance
+                    "BOTH_WALK1"       ;; 2: Walk forward
+                    "BOTH_WALKBACK1"   ;; 3: Walk backward
+                    "BOTH_RUN1"        ;; 4: Run forward
+                    "BOTH_RUNBACK1"    ;; 5: Run backward
+                    "BOTH_RUNSTRAFE_LEFT1"   ;; 6: Strafe left
+                    "BOTH_RUNSTRAFE_RIGHT1"  ;; 7: Strafe right
+                    "BOTH_JUMP1"       ;; 8: Jump
+                    "BOTH_LAND1"       ;; 9: Land
+                    "BOTH_CROUCH1WALK" ;; 0: Crouch walk
+                    "BOTH_INAIR1"]     ;; In air
+        _ (println "  Loading" (count anim-names) "movement animations...")
 
         ;; Load animations
         anim-infos (loop [names anim-names
@@ -393,7 +403,7 @@ inline bool init_glew_jka() {
       (= (cpp/glfwGetKey window gl/GLFW_KEY_RIGHT) gl/GLFW_PRESS)
       (assoc :next-anim true)
 
-      ;; Number keys 1-9 direct select
+      ;; Number keys 1-9, 0 direct select
       (= (cpp/glfwGetKey window gl/GLFW_KEY_1) gl/GLFW_PRESS) (assoc :select-anim 0)
       (= (cpp/glfwGetKey window gl/GLFW_KEY_2) gl/GLFW_PRESS) (assoc :select-anim 1)
       (= (cpp/glfwGetKey window gl/GLFW_KEY_3) gl/GLFW_PRESS) (assoc :select-anim 2)
@@ -402,7 +412,8 @@ inline bool init_glew_jka() {
       (= (cpp/glfwGetKey window gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :select-anim 5)
       (= (cpp/glfwGetKey window gl/GLFW_KEY_7) gl/GLFW_PRESS) (assoc :select-anim 6)
       (= (cpp/glfwGetKey window gl/GLFW_KEY_8) gl/GLFW_PRESS) (assoc :select-anim 7)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_9) gl/GLFW_PRESS) (assoc :select-anim 8))))
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_9) gl/GLFW_PRESS) (assoc :select-anim 8)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_0) gl/GLFW_PRESS) (assoc :select-anim 9))))
 
 ;; ============================================================================
 ;; Command Handling

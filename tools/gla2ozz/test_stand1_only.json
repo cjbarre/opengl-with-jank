@@ -1,0 +1,14 @@
+{
+  "skeleton": {
+    "filename": "humanoid.ozz",
+    "import": {
+      "enable": true
+    }
+  },
+  "animations": [
+    {
+      "filename": "BOTH_STAND1.ozz",
+      "clip": "BOTH_STAND1"
+    }
+  ]
+}

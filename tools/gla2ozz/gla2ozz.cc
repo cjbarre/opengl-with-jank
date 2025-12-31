@@ -327,18 +327,22 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
                 ozz::math::Quaternion world_rot_jka;
                 m_parser.ComputeAnimatedWorldTransform(gla_frame, gla_bone, &world_pos_jka, &world_rot_jka);
 
-                // Debug: print JKA world transform for first frame, first few joints
-                if (f == 0 && j < 5) {
-                    ozz::log::Log() << "  Phase1 Joint[" << j << "] JKA world pos: ("
-                        << world_pos_jka.x << "," << world_pos_jka.y << "," << world_pos_jka.z << ")" << std::endl;
-                    ozz::log::Log() << "  Phase1 Joint[" << j << "] JKA world rot: ("
-                        << world_rot_jka.x << "," << world_rot_jka.y << "," << world_rot_jka.z << "," << world_rot_jka.w << ")" << std::endl;
-                }
-
                 // Convert world transform from JKA (Z-up) to ozz (Y-up)
                 world_pos_ozz[j] = coord_convert::ConvertPosition(world_pos_jka);
                 world_rot_ozz[j] = coord_convert::NormalizeQuaternion(
                     coord_convert::ConvertQuaternion(world_rot_jka));
+
+                // Debug: print world transform for first frame, key joints
+                const char* joint_name = _skeleton.joint_names()[j];
+                bool is_key_joint = (j < 3 || strstr(joint_name, "humerus") != nullptr);
+                if (f == 0 && is_key_joint) {
+                    printf("  [%s] Joint[%d] '%s' GLA bone %d, frame %d:\n",
+                           clip->name.c_str(), j, joint_name, gla_bone, gla_frame);
+                    printf("    JKA world: (%.2f, %.2f, %.2f)\n",
+                           world_pos_jka.x, world_pos_jka.y, world_pos_jka.z);
+                    printf("    OZZ world: (%.4f, %.4f, %.4f)\n",
+                           world_pos_ozz[j].x, world_pos_ozz[j].y, world_pos_ozz[j].z);
+                }
             }
 
             // Phase 2: Compute local transforms using ozz's parent hierarchy
