@@ -1,5 +1,5 @@
 (ns examples.demo.shared
-  "Shared game logic for the demo, used by server, client, and solo mode.
+  "Shared game logic for the demo, used by server and client.
 
    Contains:
    - Physics constants

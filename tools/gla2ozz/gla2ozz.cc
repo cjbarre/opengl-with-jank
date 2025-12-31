@@ -199,42 +199,128 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
             printf("*** END DEBUG TRACES ***\n\n");
         }
 
+        // Build reverse map: ozz joint index -> GLA bone index
+        std::map<int, int> ozz_to_gla;
+        for (int b = 0; b < m_parser.GetNumBones(); ++b) {
+            const char* bone_name = m_parser.GetBones()[b].name;
+            auto it = joint_map.find(bone_name);
+            if (it != joint_map.end()) {
+                ozz_to_gla[it->second] = b;
+            }
+        }
+
+        // Allocate storage for world transforms indexed by ozz joint
+        std::vector<ozz::math::Float3> world_pos_ozz(num_joints);
+        std::vector<ozz::math::Quaternion> world_rot_ozz(num_joints);
+
         // For each frame in the clip
         for (int f = 0; f < clip->frame_count; ++f) {
             int gla_frame = clip->start_frame + f;
             float time = static_cast<float>(f) * frame_duration;
 
-            // For each bone in the GLA
-            for (int b = 0; b < m_parser.GetNumBones(); ++b) {
-                ozz::math::Float3 trans_jka;
-                ozz::math::Quaternion rot_jka;
-
-                // Use the new function that converts animation from bone-space to parent-space
-                if (!m_parser.GetAnimTransformInParentSpace(gla_frame, b, &trans_jka, &rot_jka)) {
+            // Phase 1: Compute and convert world transforms for all ozz joints
+            for (int j = 0; j < num_joints; ++j) {
+                auto gla_it = ozz_to_gla.find(j);
+                if (gla_it == ozz_to_gla.end()) {
+                    // No GLA bone for this joint - use identity
+                    world_pos_ozz[j] = ozz::math::Float3::zero();
+                    world_rot_ozz[j] = ozz::math::Quaternion::identity();
                     continue;
                 }
+                int gla_bone = gla_it->second;
 
-                // Find corresponding skeleton joint
-                const char* bone_name = m_parser.GetBones()[b].name;
-                auto it = joint_map.find(bone_name);
-                if (it == joint_map.end()) {
-                    continue;
+                ozz::math::Float3 world_pos_jka;
+                ozz::math::Quaternion world_rot_jka;
+                m_parser.ComputeAnimatedWorldTransform(gla_frame, gla_bone, &world_pos_jka, &world_rot_jka);
+
+                // Convert world transform from JKA (Z-up) to ozz (Y-up)
+                world_pos_ozz[j] = coord_convert::ConvertPosition(world_pos_jka);
+                world_rot_ozz[j] = coord_convert::NormalizeQuaternion(
+                    coord_convert::ConvertQuaternion(world_rot_jka));
+            }
+
+            // Phase 1.5: Extract root motion and re-center skeleton at origin
+            // The GLA root bone translation is "root motion" data intended for
+            // character controller displacement, not skeleton deformation.
+            // We subtract the root translation from all world positions so the
+            // skeleton is anchored at the origin for proper rendering.
+            ozz::math::Float3 root_offset = world_pos_ozz[0];  // Joint 0 is model_root
+            for (int j = 0; j < num_joints; ++j) {
+                world_pos_ozz[j].x -= root_offset.x;
+                world_pos_ozz[j].y -= root_offset.y;
+                world_pos_ozz[j].z -= root_offset.z;
+            }
+
+            // Phase 2: Compute local transforms using ozz's parent hierarchy
+            for (int j = 0; j < num_joints; ++j) {
+                auto& track = _animation->tracks[j];
+                animated[j] = true;
+
+                int ozz_parent = _skeleton.joint_parents()[j];
+
+                ozz::math::Float3 trans;
+                ozz::math::Quaternion rot;
+
+                if (ozz_parent < 0) {
+                    // Root joint: local = world (now at origin after root motion extraction)
+                    trans = world_pos_ozz[j];  // Will be (0,0,0) after Phase 1.5
+                    rot = world_rot_ozz[j];
+                } else {
+                    // Non-root: compute local from ozz parent and child world transforms
+                    ozz::math::Quaternion parent_rot_inv(
+                        -world_rot_ozz[ozz_parent].x,
+                        -world_rot_ozz[ozz_parent].y,
+                        -world_rot_ozz[ozz_parent].z,
+                        world_rot_ozz[ozz_parent].w);
+
+                    // Local rotation: parent_inv * child
+                    rot = coord_convert::NormalizeQuaternion(ozz::math::Quaternion(
+                        parent_rot_inv.w * world_rot_ozz[j].x + parent_rot_inv.x * world_rot_ozz[j].w +
+                            parent_rot_inv.y * world_rot_ozz[j].z - parent_rot_inv.z * world_rot_ozz[j].y,
+                        parent_rot_inv.w * world_rot_ozz[j].y - parent_rot_inv.x * world_rot_ozz[j].z +
+                            parent_rot_inv.y * world_rot_ozz[j].w + parent_rot_inv.z * world_rot_ozz[j].x,
+                        parent_rot_inv.w * world_rot_ozz[j].z + parent_rot_inv.x * world_rot_ozz[j].y -
+                            parent_rot_inv.y * world_rot_ozz[j].x + parent_rot_inv.z * world_rot_ozz[j].w,
+                        parent_rot_inv.w * world_rot_ozz[j].w - parent_rot_inv.x * world_rot_ozz[j].x -
+                            parent_rot_inv.y * world_rot_ozz[j].y - parent_rot_inv.z * world_rot_ozz[j].z));
+
+                    // World offset
+                    ozz::math::Float3 offset(
+                        world_pos_ozz[j].x - world_pos_ozz[ozz_parent].x,
+                        world_pos_ozz[j].y - world_pos_ozz[ozz_parent].y,
+                        world_pos_ozz[j].z - world_pos_ozz[ozz_parent].z);
+
+                    // Rotate offset by parent_inv: q * v * q^-1
+                    ozz::math::Quaternion offset_q(offset.x, offset.y, offset.z, 0.0f);
+                    ozz::math::Quaternion temp(
+                        parent_rot_inv.w * offset_q.x + parent_rot_inv.x * offset_q.w +
+                            parent_rot_inv.y * offset_q.z - parent_rot_inv.z * offset_q.y,
+                        parent_rot_inv.w * offset_q.y - parent_rot_inv.x * offset_q.z +
+                            parent_rot_inv.y * offset_q.w + parent_rot_inv.z * offset_q.x,
+                        parent_rot_inv.w * offset_q.z + parent_rot_inv.x * offset_q.y -
+                            parent_rot_inv.y * offset_q.x + parent_rot_inv.z * offset_q.w,
+                        parent_rot_inv.w * offset_q.w - parent_rot_inv.x * offset_q.x -
+                            parent_rot_inv.y * offset_q.y - parent_rot_inv.z * offset_q.z);
+                    ozz::math::Quaternion parent_conj(
+                        -parent_rot_inv.x, -parent_rot_inv.y, -parent_rot_inv.z, parent_rot_inv.w);
+                    ozz::math::Quaternion result(
+                        temp.w * parent_conj.x + temp.x * parent_conj.w +
+                            temp.y * parent_conj.z - temp.z * parent_conj.y,
+                        temp.w * parent_conj.y - temp.x * parent_conj.z +
+                            temp.y * parent_conj.w + temp.z * parent_conj.x,
+                        temp.w * parent_conj.z + temp.x * parent_conj.y -
+                            temp.y * parent_conj.x + temp.z * parent_conj.w,
+                        temp.w * parent_conj.w - temp.x * parent_conj.x -
+                            temp.y * parent_conj.y - temp.z * parent_conj.z);
+                    trans = ozz::math::Float3(result.x, result.y, result.z);
                 }
 
-                int track_idx = it->second;
-                auto& track = _animation->tracks[track_idx];
-                animated[track_idx] = true;
-
-                // Convert from JKA coordinates (Z-up) to ozz coordinates (Y-up)
-                ozz::math::Float3 trans = coord_convert::ConvertPosition(trans_jka);
-                ozz::math::Quaternion rot = coord_convert::ConvertQuaternion(rot_jka);
-                rot = coord_convert::NormalizeQuaternion(rot);
-
-                // Debug: print first frame, first few bones
-                if (f == 0 && b < 5) {
-                    ozz::log::Log() << "  Anim[" << b << "] '" << bone_name << "': "
-                        << "jka=(" << trans_jka.x << "," << trans_jka.y << "," << trans_jka.z << ") -> "
-                        << "ozz=(" << trans.x << "," << trans.y << "," << trans.z << ")"
+                // Debug: print first frame, first few joints
+                if (f == 0 && j < 5) {
+                    ozz::log::Log() << "  Anim[" << j << "] '" << _skeleton.joint_names()[j] << "': "
+                        << "world_ozz=(" << world_pos_ozz[j].x << "," << world_pos_ozz[j].y
+                        << "," << world_pos_ozz[j].z << ") -> "
+                        << "local=(" << trans.x << "," << trans.y << "," << trans.z << ")"
                         << std::endl;
                 }
 

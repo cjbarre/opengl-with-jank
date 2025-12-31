@@ -13,8 +13,10 @@
 #include "gla_parser.h"
 #include "coordinate_convert.h"
 
-// ozz includes for skeleton loading
+// ozz includes for skeleton and animation loading
 #include "ozz/animation/runtime/skeleton.h"
+#include "ozz/animation/runtime/animation.h"
+#include "ozz/animation/runtime/sampling_job.h"
 #include "ozz/animation/runtime/local_to_model_job.h"
 #include "ozz/base/io/archive.h"
 #include "ozz/base/maths/soa_transform.h"
@@ -78,13 +80,16 @@ void test_coordinate_conversion() {
     printf("Test: Coordinate conversion... ");
 
     // Test position conversion: JKA Z-up to Y-up
-    // (1, 2, 3) in JKA -> (1, 3, -2) in Y-up (with scale)
+    // JKA: +X right, +Y forward, +Z up
+    // ozz/OpenGL: +X right, +Y up, -Z forward
+    // Expected: (x, y, z) -> (x, z, -y)
     auto pos = coord_convert::ConvertPosition(1.0f, 2.0f, 3.0f);
-    // Currently disabled, so just scaling
     float scale = coord_convert::SCALE_FACTOR;
-    assert(float_eq(pos.x, 1.0f * scale));
-    assert(float_eq(pos.y, 2.0f * scale));  // Disabled: would be 3.0*scale
-    assert(float_eq(pos.z, 3.0f * scale));  // Disabled: would be -2.0*scale
+
+    // After conversion: (1, 2, 3) -> (1*s, 3*s, -2*s)
+    assert(float_eq(pos.x, 1.0f * scale));  // X unchanged
+    assert(float_eq(pos.y, 3.0f * scale));  // Z becomes Y (height)
+    assert(float_eq(pos.z, -2.0f * scale)); // Y becomes -Z (depth)
 
     printf("PASSED\n");
 }
@@ -354,6 +359,232 @@ void test_animation_transforms(const char* gla_path) {
     printf("  PASSED (manual verification needed)\n");
 }
 
+// Test 8: Check animation orientation - does frame 0 produce correct world positions?
+void test_animation_orientation(const char* ozz_skeleton_path, const char* ozz_anim_path) {
+    printf("Test: Animation orientation (empirical)...\n");
+
+    // Load ozz skeleton
+    ozz::animation::Skeleton skeleton;
+    {
+        ozz::io::File file(ozz_skeleton_path, "rb");
+        if (!file.opened()) {
+            printf("  SKIPPED (ozz skeleton not found)\n");
+            return;
+        }
+        ozz::io::IArchive archive(&file);
+        archive >> skeleton;
+    }
+
+    // Load ozz animation
+    ozz::animation::Animation animation;
+    {
+        ozz::io::File file(ozz_anim_path, "rb");
+        if (!file.opened()) {
+            printf("  SKIPPED (ozz animation not found: %s)\n", ozz_anim_path);
+            return;
+        }
+        ozz::io::IArchive archive(&file);
+        if (!archive.TestTag<ozz::animation::Animation>()) {
+            printf("  SKIPPED (invalid ozz animation file)\n");
+            return;
+        }
+        archive >> animation;
+    }
+
+    printf("  Loaded animation: %s (duration: %.3fs)\n",
+           animation.name(), animation.duration());
+
+    int num_joints = skeleton.num_joints();
+    int num_soa_joints = skeleton.num_soa_joints();
+
+    // Sample animation at t=0
+    std::vector<ozz::math::SoaTransform> locals(num_soa_joints);
+    std::vector<ozz::math::Float4x4> models(num_joints);
+
+    ozz::animation::SamplingJob sampling_job;
+    ozz::animation::SamplingJob::Context context;
+    context.Resize(num_joints);
+    sampling_job.animation = &animation;
+    sampling_job.context = &context;
+    sampling_job.ratio = 0.0f;  // Sample at t=0
+    sampling_job.output = ozz::make_span(locals);
+    if (!sampling_job.Run()) {
+        printf("  FAILED (sampling job failed)\n");
+        return;
+    }
+
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = &skeleton;
+    ltm_job.input = ozz::make_span(locals);
+    ltm_job.output = ozz::make_span(models);
+    if (!ltm_job.Run()) {
+        printf("  FAILED (local-to-model job failed)\n");
+        return;
+    }
+
+    // Build name->index map
+    std::map<std::string, int> name_to_idx;
+    for (int i = 0; i < num_joints; ++i) {
+        name_to_idx[skeleton.joint_names()[i]] = i;
+    }
+
+    // Also get skeleton rest pose for comparison
+    std::vector<ozz::math::SoaTransform> rest_locals(num_soa_joints);
+    std::vector<ozz::math::Float4x4> rest_models(num_joints);
+    for (int i = 0; i < num_soa_joints; ++i) {
+        rest_locals[i] = skeleton.joint_rest_poses()[i];
+    }
+    ozz::animation::LocalToModelJob rest_ltm_job;
+    rest_ltm_job.skeleton = &skeleton;
+    rest_ltm_job.input = ozz::make_span(rest_locals);
+    rest_ltm_job.output = ozz::make_span(rest_models);
+    rest_ltm_job.Run();
+
+    // Print ALL bone world positions for debugging
+    printf("  Bone world positions (rest vs animation frame 0):\n");
+    printf("  %4s %-20s  %-30s  %-30s\n", "idx", "name", "REST POSE", "ANIMATION");
+    for (int i = 0; i < std::min(25, num_joints); ++i) {
+        const ozz::math::Float4x4& rm = rest_models[i];
+        const ozz::math::Float4x4& am = models[i];
+        float rx = ozz::math::GetX(rm.cols[3]);
+        float ry = ozz::math::GetY(rm.cols[3]);
+        float rz = ozz::math::GetZ(rm.cols[3]);
+        float ax = ozz::math::GetX(am.cols[3]);
+        float ay = ozz::math::GetY(am.cols[3]);
+        float az = ozz::math::GetZ(am.cols[3]);
+        printf("  [%2d] %-20s (%.3f, %.3f, %.3f) vs (%.3f, %.3f, %.3f)\n",
+               i, skeleton.joint_names()[i], rx, ry, rz, ax, ay, az);
+    }
+
+    auto get_world_pos = [&](const char* name) -> ozz::math::Float3 {
+        auto it = name_to_idx.find(name);
+        if (it == name_to_idx.end()) return ozz::math::Float3(0, 0, 0);
+        const ozz::math::Float4x4& m = models[it->second];
+        return ozz::math::Float3(
+            ozz::math::GetX(m.cols[3]),
+            ozz::math::GetY(m.cols[3]),
+            ozz::math::GetZ(m.cols[3]));
+    };
+
+    auto pelvis = get_world_pos("pelvis");
+    auto cranium = get_world_pos("cranium");
+    auto ltalus = get_world_pos("ltalus");
+
+    printf("  Key bone positions:\n");
+    printf("    ltalus (foot): (%.4f, %.4f, %.4f)\n", ltalus.x, ltalus.y, ltalus.z);
+    printf("    pelvis: (%.4f, %.4f, %.4f)\n", pelvis.x, pelvis.y, pelvis.z);
+    printf("    cranium: (%.4f, %.4f, %.4f)\n", cranium.x, cranium.y, cranium.z);
+
+    bool head_above_pelvis = cranium.y > pelvis.y;
+    bool pelvis_above_feet = pelvis.y > ltalus.y;
+
+    printf("  Orientation checks:\n");
+    printf("    cranium.y > pelvis.y: %s (%.4f > %.4f)\n",
+           head_above_pelvis ? "OK" : "FAIL", cranium.y, pelvis.y);
+    printf("    pelvis.y > ltalus.y: %s (%.4f > %.4f)\n",
+           pelvis_above_feet ? "OK" : "FAIL", pelvis.y, ltalus.y);
+
+    if (head_above_pelvis && pelvis_above_feet) {
+        printf("  PASSED - Animation frame 0 is properly oriented!\n");
+    } else {
+        printf("  FAILED - Animation produces WRONG orientation!\n");
+    }
+}
+
+// Test 9: Empirical orientation check - verify head is above feet in Y-up space
+void test_skeleton_orientation(const char* ozz_skeleton_path) {
+    printf("Test: Skeleton orientation (empirical)...\n");
+
+    // Load ozz skeleton
+    ozz::animation::Skeleton skeleton;
+    {
+        ozz::io::File file(ozz_skeleton_path, "rb");
+        if (!file.opened()) {
+            printf("  SKIPPED (ozz skeleton not found: %s)\n", ozz_skeleton_path);
+            return;
+        }
+        ozz::io::IArchive archive(&file);
+        if (!archive.TestTag<ozz::animation::Skeleton>()) {
+            printf("  FAILED (invalid ozz skeleton file)\n");
+            return;
+        }
+        archive >> skeleton;
+    }
+
+    // Sample skeleton at rest pose
+    int num_joints = skeleton.num_joints();
+    int num_soa_joints = skeleton.num_soa_joints();
+
+    std::vector<ozz::math::SoaTransform> locals(num_soa_joints);
+    std::vector<ozz::math::Float4x4> models(num_joints);
+
+    for (int i = 0; i < num_soa_joints; ++i) {
+        locals[i] = skeleton.joint_rest_poses()[i];
+    }
+
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = &skeleton;
+    ltm_job.input = ozz::make_span(locals);
+    ltm_job.output = ozz::make_span(models);
+    if (!ltm_job.Run()) {
+        printf("  FAILED (local-to-model job failed)\n");
+        return;
+    }
+
+    // Build name->index map
+    std::map<std::string, int> name_to_idx;
+    for (int i = 0; i < num_joints; ++i) {
+        name_to_idx[skeleton.joint_names()[i]] = i;
+    }
+
+    // Extract key bone world Y positions (height in Y-up space)
+    auto get_world_y = [&](const char* name) -> float {
+        auto it = name_to_idx.find(name);
+        if (it == name_to_idx.end()) return -999.0f;
+        return ozz::math::GetY(models[it->second].cols[3]);
+    };
+
+    float root_y = get_world_y("model_root");
+    float pelvis_y = get_world_y("pelvis");
+    float thoracic_y = get_world_y("thoracic");
+    float cervical_y = get_world_y("cervical");
+    float cranium_y = get_world_y("cranium");
+    float ltalus_y = get_world_y("ltalus");  // Left ankle/foot
+
+    printf("  World Y positions (Y-up, height in meters):\n");
+    printf("    model_root: %.4f\n", root_y);
+    printf("    ltalus (foot): %.4f\n", ltalus_y);
+    printf("    pelvis: %.4f\n", pelvis_y);
+    printf("    thoracic: %.4f\n", thoracic_y);
+    printf("    cervical: %.4f\n", cervical_y);
+    printf("    cranium: %.4f\n", cranium_y);
+
+    // In a properly oriented Y-up skeleton:
+    // - cranium.y should be HIGHER than pelvis.y (head above hips)
+    // - pelvis.y should be HIGHER than ltalus.y (hips above feet)
+    // - All height values should be positive
+
+    bool head_above_pelvis = cranium_y > pelvis_y;
+    bool pelvis_above_feet = pelvis_y > ltalus_y;
+    bool positive_heights = pelvis_y > 0.0f && cranium_y > 0.0f;
+
+    printf("  Orientation checks:\n");
+    printf("    cranium > pelvis: %s (%.4f > %.4f)\n",
+           head_above_pelvis ? "OK" : "FAIL", cranium_y, pelvis_y);
+    printf("    pelvis > ltalus: %s (%.4f > %.4f)\n",
+           pelvis_above_feet ? "OK" : "FAIL", pelvis_y, ltalus_y);
+    printf("    heights positive: %s\n", positive_heights ? "OK" : "FAIL");
+
+    if (head_above_pelvis && pelvis_above_feet && positive_heights) {
+        printf("  PASSED - Skeleton is properly oriented (Y-up)!\n");
+    } else if (!head_above_pelvis && cranium_y < pelvis_y) {
+        printf("  FAILED - Skeleton is UPSIDE DOWN (head below pelvis)!\n");
+        printf("  -> The coordinate conversion is inverting the skeleton.\n");
+    } else {
+        printf("  FAILED - Unexpected orientation issue.\n");
+    }
+}
+
 int main(int argc, char** argv) {
     printf("=== GLA2OZZ Unit Tests ===\n\n");
 
@@ -365,13 +596,17 @@ int main(int argc, char** argv) {
     // File-based tests
     const char* default_gla = "/tmp/gla2ozz_test/models/players/_humanoid/_humanoid.gla";
     const char* default_ozz = "/tmp/gla2ozz_test/models/players/_humanoid/humanoid.ozz";
+    const char* default_anim = "/tmp/gla2ozz_test/models/players/_humanoid/BOTH_STAND1.ozz";
     const char* gla_path = argc > 1 ? argv[1] : default_gla;
     const char* ozz_path = argc > 2 ? argv[2] : default_ozz;
+    const char* anim_path = argc > 3 ? argv[3] : default_anim;
 
     test_gla_loading(gla_path);
     test_bind_pose_structure(gla_path);
     test_gla_ozz_comparison(gla_path, ozz_path);
     test_animation_transforms(gla_path);
+    test_skeleton_orientation(ozz_path);
+    test_animation_orientation(ozz_path, anim_path);
 
     printf("\n=== Tests Complete ===\n");
     return 0;

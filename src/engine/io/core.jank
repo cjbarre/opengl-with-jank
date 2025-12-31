@@ -4,11 +4,17 @@
 
 (cpp/raw
  "#include <stdio.h>
-  #include <stdlib.h>")
+  #include <stdlib.h>
+  #include <dirent.h>
+  #include <string.h>")
 
 (cpp/raw
  "inline char* charify_void (void* buffer) {
     return static_cast<char*>(buffer);
+  }
+
+  inline const char* dirent_name(struct dirent* entry) {
+    return entry->d_name;
   }")
 
 (defn- read-file
@@ -76,6 +82,63 @@
          _ (close-file file)]
 
         buffer))
+
+(defn- ends-with?
+  "Check if string s ends with suffix"
+  [s suffix]
+  (let [s-ptr (cpp/cast (cpp/type "char const*") s)
+        suffix-ptr (cpp/cast (cpp/type "char const*") suffix)
+        s-len (cpp/strlen s-ptr)
+        suffix-len (cpp/strlen suffix-ptr)]
+    (if (< s-len suffix-len)
+      false
+      (= 0 (cpp/strcmp (cpp/+ s-ptr (cpp/- s-len suffix-len)) suffix-ptr)))))
+
+(defn- strip-suffix
+  "Strip suffix from string, returning new jank string"
+  [s suffix]
+  (let [s-ptr (cpp/cast (cpp/type "char const*") s)
+        s-len (cpp/strlen s-ptr)
+        suffix-len (cpp/strlen suffix)
+        new-len (cpp/- s-len suffix-len)]
+    (str (cpp/std.string. s-ptr (cpp/size_t new-len)))))
+
+(defn list-dir
+  "Lists files in a directory.
+   Args:
+     :path - directory path to list
+     :extension - optional extension filter (e.g. \".ozz\")
+     :strip-extension? - if true, strips the extension from returned names (default true)
+     :exclude - optional set of filenames to exclude
+
+   Returns a vector of filename strings, sorted alphabetically."
+  [{:keys [path extension strip-extension? exclude]
+    :or {strip-extension? true}}]
+  (clet [dir (cpp/opendir path)
+         :when (cpp/! dir)
+         :error nil]
+    (let [exclude-set (or exclude #{})]
+      (loop [acc []]
+        (let [entry (cpp/readdir dir)]
+          (if (cpp/! entry)
+            (do
+              (cpp/closedir dir)
+              (sort acc))
+            (let [name-ptr (cpp/dirent_name entry)
+                  name-str (str name-ptr)]
+              ;; Skip . and ..
+              (if (or (= name-str ".") (= name-str ".."))
+                (recur acc)
+                ;; Check extension filter
+                (if (and extension (not (ends-with? name-ptr extension)))
+                  (recur acc)
+                  ;; Apply exclusion and extension stripping
+                  (let [final-name (if (and extension strip-extension?)
+                                     (strip-suffix name-ptr extension)
+                                     name-str)]
+                    (if (contains? exclude-set final-name)
+                      (recur acc)
+                      (recur (conj acc final-name)))))))))))))
 
 (comment
 

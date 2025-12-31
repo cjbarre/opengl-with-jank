@@ -56,6 +56,18 @@
   inline int glfw_cursor() { return GLFW_CURSOR; }
   inline int glfw_cursor_normal() { return GLFW_CURSOR_NORMAL; }
   inline int glfw_cursor_disabled() { return GLFW_CURSOR_DISABLED; }
+  inline int glfw_key_left() { return GLFW_KEY_LEFT; }
+  inline int glfw_key_right() { return GLFW_KEY_RIGHT; }
+  inline int glfw_key_1() { return GLFW_KEY_1; }
+  inline int glfw_key_2() { return GLFW_KEY_2; }
+  inline int glfw_key_3() { return GLFW_KEY_3; }
+  inline int glfw_key_4() { return GLFW_KEY_4; }
+  inline int glfw_key_5() { return GLFW_KEY_5; }
+  inline int glfw_key_6() { return GLFW_KEY_6; }
+  inline int glfw_key_7() { return GLFW_KEY_7; }
+  inline int glfw_key_8() { return GLFW_KEY_8; }
+  inline int glfw_key_9() { return GLFW_KEY_9; }
+  inline int gl_lines() { return GL_LINES; }
   ")
 
 ;; OpenGL constants
@@ -108,3 +120,15 @@
 (def GLFW_CURSOR (cpp/glfw_cursor))
 (def GLFW_CURSOR_NORMAL (cpp/glfw_cursor_normal))
 (def GLFW_CURSOR_DISABLED (cpp/glfw_cursor_disabled))
+(def GLFW_KEY_LEFT (cpp/glfw_key_left))
+(def GLFW_KEY_RIGHT (cpp/glfw_key_right))
+(def GLFW_KEY_1 (cpp/glfw_key_1))
+(def GLFW_KEY_2 (cpp/glfw_key_2))
+(def GLFW_KEY_3 (cpp/glfw_key_3))
+(def GLFW_KEY_4 (cpp/glfw_key_4))
+(def GLFW_KEY_5 (cpp/glfw_key_5))
+(def GLFW_KEY_6 (cpp/glfw_key_6))
+(def GLFW_KEY_7 (cpp/glfw_key_7))
+(def GLFW_KEY_8 (cpp/glfw_key_8))
+(def GLFW_KEY_9 (cpp/glfw_key_9))
+(def GL_LINES (cpp/gl_lines))

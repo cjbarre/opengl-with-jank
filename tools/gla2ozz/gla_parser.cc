@@ -618,75 +618,34 @@ bool GlaParser::GetAnimTransformInParentSpace(int frame_index, int bone_index,
 
     const GlaBone& bone = m_bones[bone_index];
 
-    // JKA transform model (from tr_ghoul2.cpp):
-    //   bone[i] = bone[parent] * anim[i]     (accumulate in "bone space")
-    //   world[i] = bone[i] * BasePoseMat[i]  (convert to world space)
-    //
-    // ozz transform model:
-    //   world[i] = world[parent] * local[i]
-    //
-    // To convert, derive local[i] from:
-    //   world[parent] * local[i] = world[i]
-    //   local[i] = world[parent]^-1 * world[i]
-    //
-    // Substituting JKA formulas:
-    //   local[i] = (bone[parent] * BasePoseMat[parent])^-1 * (bone[i] * BasePoseMat[i])
-    //            = BasePoseMat[parent]^-1 * bone[parent]^-1 * bone[parent] * anim[i] * BasePoseMat[i]
-    //            = BasePoseMat[parent]^-1 * anim[i] * BasePoseMat[i]
-    //
-    // For root (no parent): local = anim * BasePoseMat
-
-    // Get animation transform from GLA
-    ozz::math::Float3 anim_trans;
-    ozz::math::Quaternion anim_rot;
-    if (!GetBoneTransform(frame_index, bone_index, &anim_trans, &anim_rot)) {
-        return false;
-    }
-
-    // Get child's BasePoseMat (bind pose world transform)
-    ozz::math::Float3 child_base_pos, child_base_scale;
-    ozz::math::Quaternion child_base_rot;
-    DecomposeMatrix(bone.base_pose, &child_base_pos, &child_base_rot, &child_base_scale);
+    // Compute animated world transform for this bone (in JKA space)
+    ozz::math::Float3 child_world_pos;
+    ozz::math::Quaternion child_world_rot;
+    ComputeAnimatedWorldTransform(frame_index, bone_index, &child_world_pos, &child_world_rot);
 
     if (bone.parent < 0) {
-        // Root bone: ozz_local = anim * BasePoseMat
-        // Combined rotation: anim_rot * child_base_rot
-        *rotation = QuaternionNormalize(QuaternionMultiply(anim_rot, child_base_rot));
-        // Combined translation: anim_trans + anim_rot * base_pos
-        ozz::math::Float3 rotated_base = RotateVectorByQuaternion(anim_rot, child_base_pos);
-        *translation = ozz::math::Float3(
-            anim_trans.x + rotated_base.x,
-            anim_trans.y + rotated_base.y,
-            anim_trans.z + rotated_base.z);
+        // Root bone: local = world (no parent to transform relative to)
+        *translation = child_world_pos;
+        *rotation = child_world_rot;
         return true;
     }
 
-    // Non-root bone: ozz_local = parent_BasePoseMat_inv * anim * child_BasePoseMat
-    const GlaBone& parent_bone = m_bones[bone.parent];
-    ozz::math::Float3 parent_base_pos, parent_base_scale;
-    ozz::math::Quaternion parent_base_rot;
-    DecomposeMatrix(parent_bone.base_pose, &parent_base_pos, &parent_base_rot, &parent_base_scale);
+    // Compute parent's animated world transform (in JKA space)
+    ozz::math::Float3 parent_world_pos;
+    ozz::math::Quaternion parent_world_rot;
+    ComputeAnimatedWorldTransform(frame_index, bone.parent, &parent_world_pos, &parent_world_rot);
 
-    // Step 1: anim * child_BasePoseMat
-    ozz::math::Quaternion anim_child_rot = QuaternionNormalize(
-        QuaternionMultiply(anim_rot, child_base_rot));
-    ozz::math::Float3 rotated_child_base = RotateVectorByQuaternion(anim_rot, child_base_pos);
-    ozz::math::Float3 anim_child_trans(
-        anim_trans.x + rotated_child_base.x,
-        anim_trans.y + rotated_child_base.y,
-        anim_trans.z + rotated_child_base.z);
+    // Compute local transform: local = parent_world^-1 * child_world
+    ozz::math::Quaternion parent_rot_inv = QuaternionConjugate(parent_world_rot);
 
-    // Step 2: parent_BasePoseMat_inv * (anim * child_BasePoseMat)
-    ozz::math::Quaternion parent_rot_inv = QuaternionConjugate(parent_base_rot);
+    // Local rotation: parent_inv * child
+    *rotation = QuaternionNormalize(QuaternionMultiply(parent_rot_inv, child_world_rot));
 
-    // Final rotation: parent_inv * anim_child
-    *rotation = QuaternionNormalize(QuaternionMultiply(parent_rot_inv, anim_child_rot));
-
-    // Final translation: parent_rot_inv * (anim_child_trans - parent_base_pos)
+    // Local translation: parent_rot_inv * (child_pos - parent_pos)
     ozz::math::Float3 offset(
-        anim_child_trans.x - parent_base_pos.x,
-        anim_child_trans.y - parent_base_pos.y,
-        anim_child_trans.z - parent_base_pos.z);
+        child_world_pos.x - parent_world_pos.x,
+        child_world_pos.y - parent_world_pos.y,
+        child_world_pos.z - parent_world_pos.z);
     *translation = RotateVectorByQuaternion(parent_rot_inv, offset);
 
     return true;

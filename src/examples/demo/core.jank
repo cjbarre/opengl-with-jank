@@ -692,70 +692,17 @@ inline bool init_glew() {
    :follow-height      (math/gimmie :boxed :float 1.0)   ; Height above player
    :look-height-offset (math/gimmie :boxed :float 1.2)}) ; Look at head, not feet
 
-(defn run-solo
-  "Run the game in solo (offline) mode."
-  []
-  (let [_ (cpp/glfwInit)
-        window (setup-window {:width 1280 :height 720 :name "Demo - Solo"})
-        _ (cpp/glfwSetInputMode
-           (cpp/unbox cpp/GLFWwindow* window)
-           gl/GLFW_CURSOR
-           gl/GLFW_CURSOR_DISABLED)
-        shader (shaders/load-shader-program
-                {:vertex-shader-path
-                 "shaders/basic_vertex.glsl"
-                 :fragment-shader-path
-                 "shaders/basic_fragment.glsl"})
-        _ (cpp/wrap_glUseProgram shader)
-        _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
-        skinned-shader (shaders/load-shader-program
-                        {:vertex-shader-path "shaders/skinned_vertex.glsl"
-                         :fragment-shader-path "shaders/skinned_fragment.glsl"})
-        _ (cpp/wrap_glUseProgram skinned-shader)
-        _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorTex") (cpp/int 0))
-        text-shader (shaders/load-shader-program
-                     {:vertex-shader-path "shaders/text_vertex.glsl"
-                      :fragment-shader-path "shaders/text_fragment.glsl"})
-        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
-        graphics2d-shader (shaders/load-shader-program
-                           {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
-                            :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
-        gfx2d (gfx2d/init-graphics2d graphics2d-shader)
-        camera (setup-camera)
-        event-store (es/start {})
-        _ (es/append event-store {:events [{:event/type :level/spawned
-                                            :event/tags #{}
-                                            :id #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345"
-                                            :model "models/hills.gltf"}
-                                           {:event/type :player/spawned
-                                            :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
-                                            :model "models/player.gltf"
-                                            :transform/position [0.0 50.0 0.0]}]})]
-
-    (run-loop {:event-store event-store
-               :state (atom {})
-               :window window
-               :shader shader
-               :skinned-shader skinned-shader
-               :models []
-               :camera camera
-               :gfx2d gfx2d
-               :delta-time          (math/gimmie :boxed :float 0.0)
-               :last-frame          (math/gimmie :boxed :float 0.0)
-               :cursor/initialized? (atom false)
-               :cursor/last-x       (math/gimmie :boxed :float 400.0)
-               :cursor/last-y       (math/gimmie :boxed :float 300.0)
-               :cursor/sensitivity  (math/gimmie :boxed :float 0.05)
-               :cursor/pitch        (math/gimmie :boxed :float 0.0)
-               :cursor/yaw          (math/gimmie :boxed :float -90.0)})))
-
 (defn -main
   "Entry point. Usage:
-     ./run demo              - Solo mode (offline)
      ./run demo server       - Start server on port 7777
      ./run demo client       - Connect to localhost:7777
      ./run demo client <ip>  - Connect to specific server"
-  ([] (run-solo))
+  ([]
+   (println "Error: Mode required")
+   (println "Usage:")
+   (println "  ./run demo server       - Start server on port 7777")
+   (println "  ./run demo client       - Connect to localhost:7777")
+   (println "  ./run demo client <ip>  - Connect to specific server"))
   ([mode]
    (cond
      (= mode "server")
@@ -768,7 +715,6 @@ inline bool init_glew() {
      (do
        (println "Unknown mode:" mode)
        (println "Usage:")
-       (println "  ./run demo              - Solo mode (offline)")
        (println "  ./run demo server       - Start server on port 7777")
        (println "  ./run demo client       - Connect to localhost:7777")
        (println "  ./run demo client <ip>  - Connect to specific server"))))

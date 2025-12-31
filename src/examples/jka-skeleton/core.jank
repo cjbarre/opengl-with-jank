@@ -1,15 +1,17 @@
 (ns examples.jka-skeleton.core
-  "JKA Skeleton Viewer - Displays converted Jedi Academy animations as skeleton lines
-   Supports both original JKA skeleton and retargeted Mixamo skeleton"
+  "JKA Skeleton Viewer - Displays all converted Jedi Academy animations
+   with category-based navigation (TAB cycles categories, 1-9 selects within)"
   (:require [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
             [engine.3d.animation.interface :as anim]
             [engine.2d.text.interface :as text]
+            [engine.io.interface :as io]
             [engine.gl.constants :as gl]))
 
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
 #include <cstdio>
+#include <vector>
 
 // GLEW initialization for Linux
 inline bool init_glew_jka() {
@@ -25,46 +27,77 @@ inline bool init_glew_jka() {
 #else
     return true;
 #endif
-}")
+}
+")
 
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>
           #include \"gl_utils.h\"
 
-          // Create a Z-up to Y-up conversion matrix (rotate -90 deg around X)
           inline glm::mat4 zup_to_yup_matrix() {
-              return glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+              // gla2ozz now converts correctly - no rotation needed
+              return glm::mat4(1.0f);
           }")
 
 (cpp/raw "#include \"animation_types.h\"")
 
-;; GLFW key codes and GL constants not in engine.gl.constants
 (cpp/raw "
-  inline int glfw_key_1() { return GLFW_KEY_1; }
-  inline int glfw_key_2() { return GLFW_KEY_2; }
-  inline int glfw_key_3() { return GLFW_KEY_3; }
-  inline int glfw_key_4() { return GLFW_KEY_4; }
-  inline int glfw_key_5() { return GLFW_KEY_5; }
-  inline int gl_lines() { return GL_LINES; }
-")
-(def GLFW_KEY_1 (cpp/glfw_key_1))
-(def GLFW_KEY_2 (cpp/glfw_key_2))
-(def GLFW_KEY_3 (cpp/glfw_key_3))
-(def GLFW_KEY_4 (cpp/glfw_key_4))
-(def GLFW_KEY_5 (cpp/glfw_key_5))
-(def GLFW_KEY_TAB (cpp/int 258))  ;; GLFW_KEY_TAB
-(def GL_LINES (cpp/gl_lines))
-
-(cpp/raw
- "inline void framebuffer_size_callback_jka(GLFWwindow* window, int width, int height) {
+  inline void framebuffer_size_callback_jka(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
-    }
+  }
 
   inline glm::vec3 make_vec3(float x, float y, float z) {
       return glm::vec3(x, y, z);
-  }")
+  }
+
+  inline GLuint compile_shader_inline(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    return shader;
+  }
+
+  inline GLuint create_line_shader(const char* vs, const char* fs) {
+    GLuint vert = compile_shader_inline(GL_VERTEX_SHADER, vs);
+    GLuint frag = compile_shader_inline(GL_FRAGMENT_SHADER, fs);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
+  }
+
+  inline GLuint create_line_vao(GLuint* vbo_out) {
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    *vbo_out = vbo;
+    return vao;
+  }
+
+  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
+  }
+
+  inline float* get_vector_data(std::vector<float>* v) {
+    return v->data();
+  }
+
+  inline bool starts_with(const char* str, const char* prefix) {
+      return strncmp(str, prefix, strlen(prefix)) == 0;
+  }
+")
 
 ;; Simple line shader for skeleton visualization
 (def line-vertex-shader
@@ -105,297 +138,389 @@ inline bool init_glew_jka() {
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
-(cpp/raw
- "inline GLuint compile_shader_inline(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    GLint success;
-    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
-    if (!success) {
-        char log[512];
-        glGetShaderInfoLog(shader, 512, nullptr, log);
-        fprintf(stderr, \"Shader compile error: %s\\n\", log);
+;; ============================================================================
+;; Animation Loading
+;; ============================================================================
+
+(def PAGE_SIZE 9)
+
+(cpp/raw "
+  // Debug: Compare animation model matrices vs rest pose model matrices
+  inline void debug_compare_anim_vs_rest(AnimationContext* ctx) {
+    if (!ctx || !ctx->skeleton) return;
+
+    ozz::animation::Skeleton* skel = ctx->skeleton;
+    int num_joints = skel->num_joints();
+    int num_soa = skel->num_soa_joints();
+
+    // Compute REST POSE model matrices
+    std::vector<ozz::math::SoaTransform> rest_locals(num_soa);
+    std::vector<ozz::math::Float4x4> rest_models(num_joints);
+    for (int i = 0; i < num_soa; ++i) {
+      rest_locals[i] = skel->joint_rest_poses()[i];
     }
-    return shader;
-  }
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = skel;
+    ltm_job.input = ozz::make_span(rest_locals);
+    ltm_job.output = ozz::make_span(rest_models);
+    ltm_job.Run();
 
-  inline GLuint create_line_shader(const char* vs, const char* fs) {
-    GLuint vert = compile_shader_inline(GL_VERTEX_SHADER, vs);
-    GLuint frag = compile_shader_inline(GL_FRAGMENT_SHADER, fs);
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-    GLint success;
-    glGetProgramiv(prog, GL_LINK_STATUS, &success);
-    if (!success) {
-        char log[512];
-        glGetProgramInfoLog(prog, 512, nullptr, log);
-        fprintf(stderr, \"Shader link error: %s\\n\", log);
+    // Compare with animation model matrices (already in ctx->models)
+    printf(\"\\n=== COMPARING ANIMATION vs REST POSE ===\\n\");
+    printf(\"%-20s  %-24s  %-24s  %s\\n\", \"Joint\", \"REST (x,y,z)\", \"ANIM (x,y,z)\", \"Delta\");
+
+    float max_delta = 0;
+    int max_delta_joint = -1;
+
+    for (int i = 0; i < std::min(15, num_joints); ++i) {
+      // Rest position
+      float rx = ozz::math::GetX(rest_models[i].cols[3]);
+      float ry = ozz::math::GetY(rest_models[i].cols[3]);
+      float rz = ozz::math::GetZ(rest_models[i].cols[3]);
+
+      // Animation position
+      float ax = ozz::math::GetX(ctx->models[i].cols[3]);
+      float ay = ozz::math::GetY(ctx->models[i].cols[3]);
+      float az = ozz::math::GetZ(ctx->models[i].cols[3]);
+
+      float delta = sqrtf((rx-ax)*(rx-ax) + (ry-ay)*(ry-ay) + (rz-az)*(rz-az));
+      if (delta > max_delta) {
+        max_delta = delta;
+        max_delta_joint = i;
+      }
+
+      printf(\"%-20s  (%.3f, %.3f, %.3f)  (%.3f, %.3f, %.3f)  %.3f\\n\",
+             skel->joint_names()[i], rx, ry, rz, ax, ay, az, delta);
     }
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return prog;
-  }
 
-  // Create VAO for skeleton lines (dynamic updates)
-  inline GLuint create_line_vao(GLuint* vbo_out) {
-    GLuint vao, vbo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    // Allocate space for 128 lines * 2 verts * 3 floats
-    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-    *vbo_out = vbo;
-    return vao;
-  }
+    printf(\"\\nMax delta: %.3f at joint %d ('%s')\\n\",
+           max_delta, max_delta_joint,
+           max_delta_joint >= 0 ? skel->joint_names()[max_delta_joint] : \"none\");
 
-  // Update line VBO with new vertices
-  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
-  }
+    // Also print the LOCAL transforms from animation (what SamplingJob produced)
+    printf(\"\\n=== ANIMATION LOCAL TRANSFORMS (from SamplingJob) ===\\n\");
+    printf(\"%-20s  %-30s  %-30s\\n\", \"Joint\", \"Local Translation\", \"Local Rotation (quat)\");
 
-  // Get std::vector data pointer
-  inline float* get_vector_data(std::vector<float>* v) {
-    return v->data();
-  }
-  ")
+    // Access SoaTransform data - need to transpose for individual joints
+    for (int soa_idx = 0; soa_idx < std::min(4, num_soa); ++soa_idx) {
+      const ozz::math::SoaTransform& soa = ctx->locals[soa_idx];
 
-(defn init-jka-animation
-  "Initialize JKA animation system with original skeleton"
+      // ozz stores 4 joints per SoaTransform using SIMD
+      // We need to extract individual components from the SIMD vectors
+      alignas(16) float tx[4], ty[4], tz[4];
+      alignas(16) float rx[4], ry[4], rz[4], rw[4];
+
+      // Store SIMD vectors to arrays (ozz cross-platform)
+      ozz::math::StorePtrU(soa.translation.x, tx);
+      ozz::math::StorePtrU(soa.translation.y, ty);
+      ozz::math::StorePtrU(soa.translation.z, tz);
+      ozz::math::StorePtrU(soa.rotation.x, rx);
+      ozz::math::StorePtrU(soa.rotation.y, ry);
+      ozz::math::StorePtrU(soa.rotation.z, rz);
+      ozz::math::StorePtrU(soa.rotation.w, rw);
+
+      for (int lane = 0; lane < 4; ++lane) {
+        int joint = soa_idx * 4 + lane;
+        if (joint >= num_joints) break;
+
+        printf(\"%-20s  (%.4f, %.4f, %.4f)        (%.4f, %.4f, %.4f, %.4f)\\n\",
+               skel->joint_names()[joint],
+               tx[lane], ty[lane], tz[lane],
+               rx[lane], ry[lane], rz[lane], rw[lane]);
+      }
+    }
+
+    // Also compare REST POSE local transforms
+    printf(\"\\n=== REST POSE LOCAL TRANSFORMS ===\\n\");
+    printf(\"%-20s  %-30s  %-30s\\n\", \"Joint\", \"Local Translation\", \"Local Rotation (quat)\");
+    for (int soa_idx = 0; soa_idx < std::min(4, num_soa); ++soa_idx) {
+      const ozz::math::SoaTransform& soa = skel->joint_rest_poses()[soa_idx];
+
+      alignas(16) float tx[4], ty[4], tz[4];
+      alignas(16) float rx[4], ry[4], rz[4], rw[4];
+
+      ozz::math::StorePtrU(soa.translation.x, tx);
+      ozz::math::StorePtrU(soa.translation.y, ty);
+      ozz::math::StorePtrU(soa.translation.z, tz);
+      ozz::math::StorePtrU(soa.rotation.x, rx);
+      ozz::math::StorePtrU(soa.rotation.y, ry);
+      ozz::math::StorePtrU(soa.rotation.z, rz);
+      ozz::math::StorePtrU(soa.rotation.w, rw);
+
+      for (int lane = 0; lane < 4; ++lane) {
+        int joint = soa_idx * 4 + lane;
+        if (joint >= num_joints) break;
+
+        printf(\"%-20s  (%.4f, %.4f, %.4f)        (%.4f, %.4f, %.4f, %.4f)\\n\",
+               skel->joint_names()[joint],
+               tx[lane], ty[lane], tz[lane],
+               rx[lane], ry[lane], rz[lane], rw[lane]);
+      }
+    }
+
+    printf(\"=== END DEBUG ===\\n\\n\");
+  }
+")
+
+(defn load-animations
+  "Load skeleton and animations from jka directory"
   []
-  (println "Loading JKA _humanoid skeleton and animations...")
-  (let [ctx (anim/create-context)
-        skeleton-info (anim/load-skeleton {:path "models/player/jka/humanoid.ozz"
+  (println "Loading JKA skeleton and animations...")
+  (let [base-path "models/player/jka/"
+        ctx (anim/create-context)
+
+        ;; Load skeleton
+        skeleton-info (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                            :context ctx})
         _ (println "  Skeleton loaded:" (:num-joints skeleton-info) "joints")
 
-        ;; Load available animations
-        run-info (anim/load-animation {:path "models/player/jka/run1.ozz" :context ctx})
-        _ (println "  Animation 0 (run1):" (:duration run-info) "s")
+        ;; List all .ozz files from directory using engine io module
+        all-anim-names (io/list-dir {:path base-path
+                                     :extension ".ozz"
+                                     :exclude #{"humanoid"}})
+        _ (println "  Found" (count all-anim-names) "animation files")
 
-        walk-info (anim/load-animation {:path "models/player/jka/walk1.ozz" :context ctx})
-        _ (println "  Animation 1 (walk1):" (:duration walk-info) "s")
+        ;; Put BOTH_STAND1 first, then other animations
+        stand-first (vec (concat
+                          (filter #(= % "BOTH_STAND1") all-anim-names)
+                          (take 99 (remove #(= % "BOTH_STAND1") all-anim-names))))
+        anim-names stand-first
+        _ (println "  Loading" (count anim-names) "animations (starting with BOTH_STAND1)...")
 
-        stand-info (anim/load-animation {:path "models/player/jka/stand1.ozz" :context ctx})
-        _ (println "  Animation 2 (stand1):" (:duration stand-info) "s")
-
-        death-info (anim/load-animation {:path "models/player/jka/death1.ozz" :context ctx})
-        _ (println "  Animation 3 (death1):" (:duration death-info) "s")
-
-        _ (println "  Ready to animate!")]
+        ;; Load animations
+        anim-infos (loop [names anim-names
+                         idx 0
+                         result []]
+                     (if (empty? names)
+                       result
+                       (let [anim-name (first names)
+                             path (str base-path anim-name ".ozz")
+                             info (anim/load-animation {:path path :context ctx})]
+                         (recur (rest names)
+                                (inc idx)
+                                (conj result {:name anim-name
+                                              :idx idx
+                                              :duration (double (:duration info))})))))
+        _ (println "  Ready!")]
     {:context ctx
-     :skeleton-type :jka
-     :animations [{:name "run1" :duration (:duration run-info)}
-                  {:name "walk1" :duration (:duration walk-info)}
-                  {:name "stand1" :duration (:duration stand-info)}
-                  {:name "death1" :duration (:duration death-info)}]
+     :animations anim-infos
      :current-anim 0
-     :time 0.0
-     :num-joints (:num-joints skeleton-info)}))
+     :anim-time 0.0
+     :num-joints (:num-joints skeleton-info)
+     :use-rest-pose false}))  ;; Use animations
 
-(defn init-mixamo-retargeted
-  "Initialize Mixamo skeleton with retargeted JKA animations"
-  []
-  (println "Loading Mixamo skeleton with retargeted JKA animations...")
-  (let [ctx (anim/create-context)
-        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
-                                           :context ctx})
-        _ (println "  Mixamo skeleton loaded:" (:num-joints skeleton-info) "joints")
+;; ============================================================================
+;; Time Update (matches demo pattern)
+;; ============================================================================
 
-        ;; Load retargeted animations
-        run-info (anim/load-animation {:path "models/player/jka_retargeted/run1.ozz" :context ctx})
-        _ (println "  Animation 0 (run1 retargeted):" (:duration run-info) "s")
+(defn update-time
+  [{:keys [delta-time last-frame]}]
+  (let [current-frame (cpp/glfwGetTime)
+        delta-time (math/*-> :float delta-time)
+        last-frame (math/*-> :float last-frame)]
+    (cpp/= delta-time (cpp/- current-frame last-frame))
+    (cpp/= last-frame current-frame)))
 
-        walk-info (anim/load-animation {:path "models/player/jka_retargeted/walk1.ozz" :context ctx})
-        _ (println "  Animation 1 (walk1 retargeted):" (:duration walk-info) "s")
+;; ============================================================================
+;; Input Processing (matches demo cond-> pattern)
+;; ============================================================================
 
-        stand-info (anim/load-animation {:path "models/player/jka_retargeted/stand1.ozz" :context ctx})
-        _ (println "  Animation 2 (stand1 retargeted):" (:duration stand-info) "s")
+(defn process-input
+  [{:keys [window state]}]
+  (let [window (cpp/unbox cpp/GLFWwindow* window)
+        anim-count (count (:animations @state))]
+    (cond-> {:command/name :viewer/input}
+      ;; ESC to exit
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
+      (assoc :exit true)
 
-        death-info (anim/load-animation {:path "models/player/jka_retargeted/death1.ozz" :context ctx})
-        _ (println "  Animation 3 (death1 retargeted):" (:duration death-info) "s")
+      ;; LEFT arrow - previous animation
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_LEFT) gl/GLFW_PRESS)
+      (assoc :prev-anim true)
 
-        _ (println "  Ready to animate!")]
-    {:context ctx
-     :skeleton-type :mixamo
-     :animations [{:name "run1 (retargeted)" :duration (:duration run-info)}
-                  {:name "walk1 (retargeted)" :duration (:duration walk-info)}
-                  {:name "stand1 (retargeted)" :duration (:duration stand-info)}
-                  {:name "death1 (retargeted)" :duration (:duration death-info)}]
-     :current-anim 0
-     :time 0.0
-     :num-joints (:num-joints skeleton-info)}))
+      ;; RIGHT arrow - next animation
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_RIGHT) gl/GLFW_PRESS)
+      (assoc :next-anim true)
+
+      ;; Number keys 1-9 direct select
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_1) gl/GLFW_PRESS) (assoc :select-anim 0)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_2) gl/GLFW_PRESS) (assoc :select-anim 1)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_3) gl/GLFW_PRESS) (assoc :select-anim 2)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :select-anim 3)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :select-anim 4)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :select-anim 5)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_7) gl/GLFW_PRESS) (assoc :select-anim 6)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_8) gl/GLFW_PRESS) (assoc :select-anim 7)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_9) gl/GLFW_PRESS) (assoc :select-anim 8))))
+
+;; ============================================================================
+;; Command Handling
+;; ============================================================================
+
+(defn handle-command
+  [{:keys [command window state key-state]}]
+  (let [window-ptr (cpp/unbox cpp/GLFWwindow* window)
+        anim-count (count (:animations @state))
+        prev-key-state @key-state]
+
+    ;; Handle exit
+    (when (:exit command)
+      (cpp/glfwSetWindowShouldClose window-ptr 1))
+
+    ;; Handle prev/next with debouncing
+    (when (and (:prev-anim command) (not (:prev-anim prev-key-state)))
+      (swap! state update :current-anim #(mod (dec (+ % anim-count)) anim-count))
+      (swap! state assoc :anim-time 0.0))
+
+    (when (and (:next-anim command) (not (:next-anim prev-key-state)))
+      (swap! state update :current-anim #(mod (inc %) anim-count))
+      (swap! state assoc :anim-time 0.0))
+
+    ;; Handle number key selection with debouncing
+    (when-let [sel (:select-anim command)]
+      (when (and (< sel anim-count) (not (:select-anim prev-key-state)))
+        (swap! state assoc :current-anim sel :anim-time 0.0)))
+
+    ;; Update key state for debouncing
+    (reset! key-state {:prev-anim (:prev-anim command)
+                       :next-anim (:next-anim command)
+                       :select-anim (:select-anim command)})))
+
+;; ============================================================================
+;; Animation Update
+;; ============================================================================
+
+(defn update-animation
+  [{:keys [state delta-time]}]
+  (let [dt (double (math/*-> :float delta-time))
+        {:keys [context animations current-anim anim-time debug-printed]} @state]
+    (when (seq animations)
+      (let [anim-info (nth animations current-anim)
+            duration (double (:duration anim-info 1.0))
+            new-time (mod (+ anim-time dt) (max duration 0.001))
+            time-ratio (/ new-time (max duration 0.001))]
+        (swap! state assoc :anim-time new-time)
+        (anim/sample {:context context
+                      :animation-index (:idx anim-info)
+                      :time-ratio time-ratio})
+        ;; Debug: print positions once after first sample
+        (when (not debug-printed)
+          (println "DEBUG: Playing animation:" (:name anim-info))
+          ;; Compare animation vs rest pose matrices
+          (let [ctx (cpp/unbox cpp/AnimationContext* context)]
+            (cpp/debug_compare_anim_vs_rest ctx))
+          (swap! state assoc :debug-printed true))))))
+
+;; ============================================================================
+;; Rendering
+;; ============================================================================
+
+(defn render
+  [{:keys [state line-shader line-vao line-vbo text-shader]}]
+  (cpp/wrap_glClearColor 0.1 0.1 0.15 1.0)
+  (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
+
+  (let [{:keys [context animations current-anim use-rest-pose lines-printed]} @state]
+    ;; Build skeleton lines - use REST POSE for debugging
+    (let [lines-data (if use-rest-pose
+                       (anim/build-skeleton-lines-rest-pose {:context context :max-lines 128})
+                       (anim/build-skeleton-lines {:context context :max-lines 128}))
+          line-count (int (:line-count lines-data))
+          verts-box (:vertices lines-data)
+          verts-ptr (cpp/get_vector_data (cpp/unbox (cpp/type "std::vector<float>*") verts-box))]
+
+
+      ;; Update VBO
+      (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))
+
+      ;; Setup matrices
+      (let [model (cpp/zup_to_yup_matrix)
+            view (cpp/glm.lookAt (cpp/make_vec3 3.0 2.0 3.0)
+                                  (cpp/make_vec3 0.0 1.0 0.0)
+                                  (cpp/make_vec3 0.0 1.0 0.0))
+            projection (cpp/glm.perspective (cpp/glm.radians (cpp/float 45.0))
+                                             (cpp/float (/ 1280.0 720.0))
+                                             (cpp/float 0.1)
+                                             (cpp/float 100.0))]
+
+        ;; Draw skeleton
+        (cpp/wrap_glUseProgram line-shader)
+
+        ;; Set uniforms
+        (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "model")
+                                     1 gl/GL_FALSE (cpp/glm.value_ptr model))
+        (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "view")
+                                     1 gl/GL_FALSE (cpp/glm.value_ptr view))
+        (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "projection")
+                                     1 gl/GL_FALSE (cpp/glm.value_ptr projection))
+        (cpp/wrap_glUniform3f (cpp/glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
+
+        (cpp/wrap_glBindVertexArray line-vao)
+        (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2)))
+        (cpp/wrap_glBindVertexArray 0)))
+
+    ;; Render HUD
+    (when (seq animations)
+      (let [anim-info (nth animations current-anim)]
+        (text/render-text (str "Animation: " (:name anim-info))
+                          10.0 30.0 [1.0 1.0 1.0] 1280 720)
+        (text/render-text (str "[" (inc current-anim) "/" (count animations) "]")
+                          10.0 55.0 [0.7 0.7 0.7] 1280 720)
+        (text/render-text "LEFT/RIGHT: change | 1-9: select | ESC: exit"
+                          10.0 80.0 [0.5 0.5 0.5] 1280 720)))))
+
+;; ============================================================================
+;; Main Loop
+;; ============================================================================
+
+(defn run-loop
+  [{:keys [window] :as context}]
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
+    (update-time context)
+    (let [command (process-input context)]
+      (handle-command (assoc context :command command)))
+    (update-animation context)
+    (render context)
+    (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
+    (cpp/glfwPollEvents)))
 
 (defn -main
   []
   (println "=== JKA Skeleton Viewer ===")
-  (println "Controls: 1-4 to switch animations, TAB to toggle JKA/Mixamo, ESC to exit")
+  (println "Controls: LEFT/RIGHT arrows, 1-9 keys, ESC to exit")
   (println "")
 
   (let [_ (cpp/glfwInit)
         window (setup-window {:width 1280 :height 720 :name "JKA Skeleton Viewer"})
 
-        ;; Create line shader
+        ;; Create shaders
         line-shader (cpp/create_line_shader line-vertex-shader line-fragment-shader)
-
-        ;; Create line VAO/VBO
         line-vbo-ptr (cpp/new cpp/GLuint)
         line-vao (cpp/create_line_vao line-vbo-ptr)
         line-vbo (cpp/* line-vbo-ptr)
 
-        ;; Load text shader for HUD
+        ;; Load text shader
         text-shader (shaders/load-shader-program
                      {:vertex-shader-path "shaders/text_vertex.glsl"
                       :fragment-shader-path "shaders/text_fragment.glsl"})
-        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
+        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 20.0 text-shader)
 
-        ;; Initialize animation - start with JKA mode
-        anim-data (atom (init-jka-animation))
+        ;; Load animations
+        state (atom (load-animations))
 
-        ;; Mode toggle tracking (to prevent rapid switching)
-        tab-pressed (atom false)
+        ;; Key debouncing state
+        key-state (atom {})
 
         ;; Timing
         delta-time (math/gimmie :boxed :float 0.0)
-        last-frame (math/gimmie :boxed :float 0.0)
+        last-frame (math/gimmie :boxed :float 0.0)]
 
-        ;; Camera settings
-        cam-distance 4.0
-        cam-height 1.2
-        cam-angle (atom 0.0)]
-
-    ;; Main loop
-    (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
-      (let [current-frame (cpp/glfwGetTime)
-            dt-f (math/*-> :float delta-time)
-            lf-f (math/*-> :float last-frame)
-            _ (cpp/= dt-f (cpp/- current-frame lf-f))
-            _ (cpp/= lf-f current-frame)
-            dt (float dt-f)
-
-            state @anim-data
-            ctx (:context state)
-            anims (:animations state)
-            curr-idx (:current-anim state)
-            curr-anim (nth anims curr-idx)
-            duration (:duration curr-anim)
-
-            ;; Update animation time
-            new-time (mod (+ (:time state) dt) duration)
-            time-ratio (/ new-time duration)
-            _ (swap! anim-data assoc :time new-time)
-
-            ;; Sample animation
-            _ (anim/sample {:context ctx :animation-index curr-idx :time-ratio time-ratio})
-
-            ;; Debug: print message once at startup
-            _ (when (and (< (:time state) 0.01) (= curr-idx 0))
-                (println "Animation playing - press 1-4 to switch, TAB to toggle mode"))
-
-            ;; Build skeleton lines from animation
-            lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
-            line-count (:line-count lines-data)
-            verts-box (:vertices lines-data)
-            verts-ptr (cpp/get_vector_data (cpp/unbox (cpp/type "std::vector<float>*") verts-box))]
-
-        ;; Check input
-        (let [win (cpp/unbox cpp/GLFWwindow* window)]
-          (when (= (cpp/glfwGetKey win gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
-            (cpp/glfwSetWindowShouldClose win 1))
-          (when (= (cpp/glfwGetKey win GLFW_KEY_1) gl/GLFW_PRESS)
-            (swap! anim-data assoc :current-anim 0 :time 0.0))
-          (when (= (cpp/glfwGetKey win GLFW_KEY_2) gl/GLFW_PRESS)
-            (swap! anim-data assoc :current-anim 1 :time 0.0))
-          (when (= (cpp/glfwGetKey win GLFW_KEY_3) gl/GLFW_PRESS)
-            (swap! anim-data assoc :current-anim 2 :time 0.0))
-          (when (= (cpp/glfwGetKey win GLFW_KEY_4) gl/GLFW_PRESS)
-            (swap! anim-data assoc :current-anim 3 :time 0.0))
-
-          ;; TAB to toggle between JKA and Mixamo skeletons
-          (if (= (cpp/glfwGetKey win GLFW_KEY_TAB) gl/GLFW_PRESS)
-            (when (not @tab-pressed)
-              (reset! tab-pressed true)
-              (let [current-type (:skeleton-type @anim-data)]
-                (if (= current-type :jka)
-                  (do
-                    (println "Switching to Mixamo (retargeted)...")
-                    (reset! anim-data (init-mixamo-retargeted)))
-                  (do
-                    (println "Switching to JKA (original)...")
-                    (reset! anim-data (init-jka-animation))))))
-            (reset! tab-pressed false)))
-
-        ;; Rotate camera slowly
-        (swap! cam-angle + (* dt 0.3))
-
-        ;; Clear
-        (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
-        (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
-
-        ;; Set up matrices
-        (let [angle (float @cam-angle)
-              cam-x (cpp/* (cpp/float cam-distance) (cpp/cos (cpp/float angle)))
-              cam-z (cpp/* (cpp/float cam-distance) (cpp/sin (cpp/float angle)))
-              view-m (cpp/glm.lookAt
-                      (cpp/make_vec3 (cpp/float cam-x) (cpp/float cam-height) (cpp/float cam-z))
-                      (cpp/make_vec3 (cpp/float 0.0) (cpp/float 0.5) (cpp/float 0.0))
-                      (cpp/make_vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))
-              proj-m (cpp/glm.perspective
-                      (cpp/glm.radians (cpp/float 60.0))
-                      (cpp// (cpp/float 1280.0) (cpp/float 720.0))
-                      (cpp/float 0.1)
-                      (cpp/float 100.0))
-              ;; Model matrix - identity since coordinate conversion is done in converter
-              model-m (cpp/glm.mat4 (cpp/float 1.0))]
-
-          ;; Draw skeleton lines
-          (cpp/wrap_glUseProgram line-shader)
-          (cpp/wrap_glUniformMatrix4fv
-           (cpp/wrap_glGetUniformLocation line-shader "model")
-           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr model-m))
-          (cpp/wrap_glUniformMatrix4fv
-           (cpp/wrap_glGetUniformLocation line-shader "view")
-           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))
-          (cpp/wrap_glUniformMatrix4fv
-           (cpp/wrap_glGetUniformLocation line-shader "projection")
-           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr proj-m))
-          ;; Line color based on skeleton type
-          (if (= (:skeleton-type state) :jka)
-            (cpp/wrap_glUniform3f
-             (cpp/wrap_glGetUniformLocation line-shader "lineColor")
-             (cpp/float 0.2) (cpp/float 0.8) (cpp/float 0.3))  ;; Green for JKA
-            (cpp/wrap_glUniform3f
-             (cpp/wrap_glGetUniformLocation line-shader "lineColor")
-             (cpp/float 0.3) (cpp/float 0.6) (cpp/float 1.0))) ;; Blue for Mixamo
-
-          ;; Update VBO and draw
-          (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))
-          (cpp/wrap_glBindVertexArray line-vao)
-          (cpp/glLineWidth (cpp/float 2.0))
-          (cpp/wrap_glDrawArrays GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))
-          (cpp/wrap_glBindVertexArray (cpp/GLuint 0)))
-
-        ;; Draw HUD
-        (let [mode-name (if (= (:skeleton-type state) :jka) "JKA (original)" "Mixamo (retargeted)")
-              mode-color (if (= (:skeleton-type state) :jka) [0.3 0.8 0.3] [0.3 0.6 1.0])]
-          (text/render-text (str "Mode: " mode-name) 10.0 30.0 mode-color 1280 720)
-          (text/render-text (str "Animation: " (:name curr-anim)) 10.0 55.0 [1.0 1.0 1.0] 1280 720)
-          (text/render-text (str "Time: " (int (* new-time 100)) "ms / " (int (* duration 1000)) "ms")
-                            10.0 80.0 [0.8 0.8 0.8] 1280 720)
-          (text/render-text (str "Joints: " (:num-joints state))
-                            10.0 105.0 [0.8 0.8 0.8] 1280 720)
-          (text/render-text "[1-4: Animation | TAB: Toggle mode | ESC: Exit]"
-                            10.0 130.0 [0.6 0.6 0.6] 1280 720))
-
-        (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
-        (cpp/glfwPollEvents)))
-
-    (cpp/glfwTerminate)
-    (println "Done.")))
+    (run-loop {:window window
+               :state state
+               :key-state key-state
+               :delta-time delta-time
+               :last-frame last-frame
+               :line-shader line-shader
+               :line-vao line-vao
+               :line-vbo line-vbo
+               :text-shader text-shader})))

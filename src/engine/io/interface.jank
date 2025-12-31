@@ -5,3 +5,18 @@
 (defn slurp
   [{:keys [_path] :as args}]
   (core/slurp args))
+
+(defn list-dir
+  "Lists files in a directory.
+   Args:
+     :path - directory path to list
+     :extension - optional extension filter (e.g. \".ozz\")
+     :strip-extension? - if true, strips the extension from returned names (default true)
+     :exclude - optional set of filenames to exclude
+
+   Returns a vector of filename strings, sorted alphabetically.
+
+   Example:
+     (list-dir {:path \"models/player/jka/\" :extension \".ozz\" :exclude #{\"humanoid\"}})"
+  [args]
+  (core/list-dir args))
