@@ -1,5 +1,6 @@
 (ns examples.jka-skeleton.core
-  "JKA Skeleton Viewer - Displays converted Jedi Academy animations as skeleton lines"
+  "JKA Skeleton Viewer - Displays converted Jedi Academy animations as skeleton lines
+   Supports both original JKA skeleton and retargeted Mixamo skeleton"
   (:require [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
             [engine.3d.animation.interface :as anim]
@@ -52,6 +53,7 @@ inline bool init_glew_jka() {
 (def GLFW_KEY_3 (cpp/glfw_key_3))
 (def GLFW_KEY_4 (cpp/glfw_key_4))
 (def GLFW_KEY_5 (cpp/glfw_key_5))
+(def GLFW_KEY_TAB (cpp/int 258))  ;; GLFW_KEY_TAB
 (def GL_LINES (cpp/gl_lines))
 
 (cpp/raw
@@ -166,7 +168,7 @@ inline bool init_glew_jka() {
   ")
 
 (defn init-jka-animation
-  "Initialize JKA animation system"
+  "Initialize JKA animation system with original skeleton"
   []
   (println "Loading JKA _humanoid skeleton and animations...")
   (let [ctx (anim/create-context)
@@ -187,21 +189,54 @@ inline bool init_glew_jka() {
         death-info (anim/load-animation {:path "models/player/jka/death1.ozz" :context ctx})
         _ (println "  Animation 3 (death1):" (:duration death-info) "s")
 
-        ;; Skip skeleton info for now - just use joint count from skeleton-info
         _ (println "  Ready to animate!")]
     {:context ctx
+     :skeleton-type :jka
      :animations [{:name "run1" :duration (:duration run-info)}
                   {:name "walk1" :duration (:duration walk-info)}
                   {:name "stand1" :duration (:duration stand-info)}
                   {:name "death1" :duration (:duration death-info)}]
      :current-anim 0
      :time 0.0
-     :num-joints 53}))
+     :num-joints (:num-joints skeleton-info)}))
+
+(defn init-mixamo-retargeted
+  "Initialize Mixamo skeleton with retargeted JKA animations"
+  []
+  (println "Loading Mixamo skeleton with retargeted JKA animations...")
+  (let [ctx (anim/create-context)
+        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+                                           :context ctx})
+        _ (println "  Mixamo skeleton loaded:" (:num-joints skeleton-info) "joints")
+
+        ;; Load retargeted animations
+        run-info (anim/load-animation {:path "models/player/jka_retargeted/run1.ozz" :context ctx})
+        _ (println "  Animation 0 (run1 retargeted):" (:duration run-info) "s")
+
+        walk-info (anim/load-animation {:path "models/player/jka_retargeted/walk1.ozz" :context ctx})
+        _ (println "  Animation 1 (walk1 retargeted):" (:duration walk-info) "s")
+
+        stand-info (anim/load-animation {:path "models/player/jka_retargeted/stand1.ozz" :context ctx})
+        _ (println "  Animation 2 (stand1 retargeted):" (:duration stand-info) "s")
+
+        death-info (anim/load-animation {:path "models/player/jka_retargeted/death1.ozz" :context ctx})
+        _ (println "  Animation 3 (death1 retargeted):" (:duration death-info) "s")
+
+        _ (println "  Ready to animate!")]
+    {:context ctx
+     :skeleton-type :mixamo
+     :animations [{:name "run1 (retargeted)" :duration (:duration run-info)}
+                  {:name "walk1 (retargeted)" :duration (:duration walk-info)}
+                  {:name "stand1 (retargeted)" :duration (:duration stand-info)}
+                  {:name "death1 (retargeted)" :duration (:duration death-info)}]
+     :current-anim 0
+     :time 0.0
+     :num-joints (:num-joints skeleton-info)}))
 
 (defn -main
   []
   (println "=== JKA Skeleton Viewer ===")
-  (println "Controls: 1-4 to switch animations, ESC to exit")
+  (println "Controls: 1-4 to switch animations, TAB to toggle JKA/Mixamo, ESC to exit")
   (println "")
 
   (let [_ (cpp/glfwInit)
@@ -221,8 +256,11 @@ inline bool init_glew_jka() {
                       :fragment-shader-path "shaders/text_fragment.glsl"})
         _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
 
-        ;; Initialize animation
+        ;; Initialize animation - start with JKA mode
         anim-data (atom (init-jka-animation))
+
+        ;; Mode toggle tracking (to prevent rapid switching)
+        tab-pressed (atom false)
 
         ;; Timing
         delta-time (math/gimmie :boxed :float 0.0)
@@ -257,11 +295,9 @@ inline bool init_glew_jka() {
             ;; Sample animation
             _ (anim/sample {:context ctx :animation-index curr-idx :time-ratio time-ratio})
 
-            ;; Debug: print joint positions once at startup only
+            ;; Debug: print message once at startup
             _ (when (and (< (:time state) 0.01) (= curr-idx 0))
-                (println "Animation playing - press 1-4 to switch animations")
-                (println "Key joint positions (Y should be UP):")
-                (cpp/debug_print_joint_positions (cpp/unbox cpp/AnimationContext* (:context state)) (cpp/int 20)))
+                (println "Animation playing - press 1-4 to switch, TAB to toggle mode"))
 
             ;; Build skeleton lines from animation
             lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
@@ -280,7 +316,21 @@ inline bool init_glew_jka() {
           (when (= (cpp/glfwGetKey win GLFW_KEY_3) gl/GLFW_PRESS)
             (swap! anim-data assoc :current-anim 2 :time 0.0))
           (when (= (cpp/glfwGetKey win GLFW_KEY_4) gl/GLFW_PRESS)
-            (swap! anim-data assoc :current-anim 3 :time 0.0)))
+            (swap! anim-data assoc :current-anim 3 :time 0.0))
+
+          ;; TAB to toggle between JKA and Mixamo skeletons
+          (if (= (cpp/glfwGetKey win GLFW_KEY_TAB) gl/GLFW_PRESS)
+            (when (not @tab-pressed)
+              (reset! tab-pressed true)
+              (let [current-type (:skeleton-type @anim-data)]
+                (if (= current-type :jka)
+                  (do
+                    (println "Switching to Mixamo (retargeted)...")
+                    (reset! anim-data (init-mixamo-retargeted)))
+                  (do
+                    (println "Switching to JKA (original)...")
+                    (reset! anim-data (init-jka-animation))))))
+            (reset! tab-pressed false)))
 
         ;; Rotate camera slowly
         (swap! cam-angle + (* dt 0.3))
@@ -316,9 +366,14 @@ inline bool init_glew_jka() {
           (cpp/wrap_glUniformMatrix4fv
            (cpp/wrap_glGetUniformLocation line-shader "projection")
            (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr proj-m))
-          (cpp/wrap_glUniform3f
-           (cpp/wrap_glGetUniformLocation line-shader "lineColor")
-           (cpp/float 0.2) (cpp/float 0.8) (cpp/float 0.3))
+          ;; Line color based on skeleton type
+          (if (= (:skeleton-type state) :jka)
+            (cpp/wrap_glUniform3f
+             (cpp/wrap_glGetUniformLocation line-shader "lineColor")
+             (cpp/float 0.2) (cpp/float 0.8) (cpp/float 0.3))  ;; Green for JKA
+            (cpp/wrap_glUniform3f
+             (cpp/wrap_glGetUniformLocation line-shader "lineColor")
+             (cpp/float 0.3) (cpp/float 0.6) (cpp/float 1.0))) ;; Blue for Mixamo
 
           ;; Update VBO and draw
           (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))
@@ -328,13 +383,16 @@ inline bool init_glew_jka() {
           (cpp/wrap_glBindVertexArray (cpp/GLuint 0)))
 
         ;; Draw HUD
-        (text/render-text (str "Animation: " (:name curr-anim)) 10.0 30.0 [1.0 1.0 1.0] 1280 720)
-        (text/render-text (str "Time: " (int (* new-time 100)) "ms / " (int (* duration 1000)) "ms")
-                          10.0 55.0 [0.8 0.8 0.8] 1280 720)
-        (text/render-text (str "Joints: " (:num-joints state))
-                          10.0 80.0 [0.8 0.8 0.8] 1280 720)
-        (text/render-text "[1-4: Switch animation | ESC: Exit]"
-                          10.0 105.0 [0.6 0.6 0.6] 1280 720)
+        (let [mode-name (if (= (:skeleton-type state) :jka) "JKA (original)" "Mixamo (retargeted)")
+              mode-color (if (= (:skeleton-type state) :jka) [0.3 0.8 0.3] [0.3 0.6 1.0])]
+          (text/render-text (str "Mode: " mode-name) 10.0 30.0 mode-color 1280 720)
+          (text/render-text (str "Animation: " (:name curr-anim)) 10.0 55.0 [1.0 1.0 1.0] 1280 720)
+          (text/render-text (str "Time: " (int (* new-time 100)) "ms / " (int (* duration 1000)) "ms")
+                            10.0 80.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text (str "Joints: " (:num-joints state))
+                            10.0 105.0 [0.8 0.8 0.8] 1280 720)
+          (text/render-text "[1-4: Animation | TAB: Toggle mode | ESC: Exit]"
+                            10.0 130.0 [0.6 0.6 0.6] 1280 720))
 
         (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
         (cpp/glfwPollEvents)))

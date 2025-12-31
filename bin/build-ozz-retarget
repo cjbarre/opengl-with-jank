@@ -1,0 +1,36 @@
+#!/bin/bash
+# Build the ozz-retarget tool
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+TOOL_DIR="$PROJECT_DIR/tools/ozz-retarget"
+BUILD_DIR="$TOOL_DIR/build"
+
+echo "Building ozz-retarget..."
+
+# Create build directory
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+
+# Run CMake
+cmake .. -DCMAKE_BUILD_TYPE=Release
+
+# Build
+make -j$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+
+echo ""
+echo "Build complete!"
+echo "  ozz-retarget: $BUILD_DIR/ozz-retarget"
+echo "  retarget_tests: $BUILD_DIR/retarget_tests"
+echo ""
+echo "Run tests with: $BUILD_DIR/retarget_tests"
+echo ""
+echo "Example usage:"
+echo "  $BUILD_DIR/ozz-retarget \\"
+echo "    --source-anim=models/player/jka/run1.ozz \\"
+echo "    --source-skeleton=models/player/jka/humanoid.ozz \\"
+echo "    --target-skeleton=models/player/mixamo_skeleton.ozz \\"
+echo "    --config=tools/ozz-retarget/jka_to_mixamo.json \\"
+echo "    --output=models/player/jka_retargeted/run1.ozz"
