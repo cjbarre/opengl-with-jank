@@ -89,3 +89,36 @@
    Returns: {:vao id :index-count n :vertex-count n}"
   [args]
   (mesh/create-skinned-vao args))
+
+;; ============ SKELETON DEBUG VISUALIZATION ============
+
+(defn get-skeleton-info
+  "Gets skeleton information from context.
+   Args: {:context ctx}
+   Returns: {:num-joints n :joint-names [...]}"
+  [args]
+  (core/get-skeleton-info args))
+
+(defn build-skeleton-lines
+  "Builds line vertices for skeleton debug visualization.
+   Call after sampling animation.
+   Args: {:context ctx :max-lines 128}
+   Returns: {:line-count n :vertices float-buffer}"
+  [args]
+  (core/build-skeleton-lines args))
+
+(defn build-skeleton-lines-rest-pose
+  "Builds line vertices for skeleton REST POSE (bind pose) visualization.
+   No animation applied - shows the bind pose skeleton.
+   Args: {:context ctx :max-lines 128}
+   Returns: {:line-count n :vertices float-buffer}"
+  [args]
+  (core/build-skeleton-lines-rest-pose args))
+
+(defn build-joint-points
+  "Builds point vertices for joint debug visualization.
+   Call after sampling animation.
+   Args: {:context ctx :max-points 128}
+   Returns: {:point-count n :vertices float-buffer}"
+  [args]
+  (core/build-joint-points args))

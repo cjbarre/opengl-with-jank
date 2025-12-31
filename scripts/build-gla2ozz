@@ -1,0 +1,84 @@
+#!/bin/bash
+set -e
+
+# Resolve script directory (handle symlinks)
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+
+OZZ_DIR="$PROJECT_DIR/third_party/ozz-animation"
+TOOL_DIR="$PROJECT_DIR/tools/gla2ozz"
+BUILD_DIR="$TOOL_DIR/build"
+
+echo "=== Building gla2ozz converter ==="
+echo "Project dir: $PROJECT_DIR"
+echo "ozz dir: $OZZ_DIR"
+
+# Get CPU count for parallel build
+if command -v nproc &> /dev/null; then
+    CPU_COUNT=$(nproc)
+elif command -v sysctl &> /dev/null; then
+    CPU_COUNT=$(sysctl -n hw.ncpu)
+else
+    CPU_COUNT=4
+fi
+
+# Ensure ozz submodule is initialized
+if [[ ! -f "$OZZ_DIR/CMakeLists.txt" ]]; then
+    echo "Initializing ozz-animation submodule..."
+    git submodule update --init "$OZZ_DIR"
+fi
+
+# Build ozz-animation with tools support if not already built
+if [[ ! -f "$OZZ_DIR/build/src/animation/offline/tools/libozz_animation_tools.a" ]]; then
+    echo ""
+    echo "=== Building ozz-animation with tools support ==="
+    mkdir -p "$OZZ_DIR/build"
+    cd "$OZZ_DIR/build"
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -Dozz_build_tools=ON \
+        -Dozz_build_samples=OFF \
+        -Dozz_build_howtos=OFF \
+        -Dozz_build_tests=OFF
+    make -j$CPU_COUNT
+    echo "ozz-animation built successfully."
+fi
+
+# Build gla2ozz
+echo ""
+echo "=== Building gla2ozz ==="
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
+
+cmake "$TOOL_DIR" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH="$OZZ_DIR/build"
+
+make -j$CPU_COUNT
+
+echo ""
+echo "=== gla2ozz built successfully ==="
+echo ""
+echo "Binary location:"
+echo "  $BUILD_DIR/gla2ozz"
+echo ""
+echo "Usage example (skeleton only):"
+echo "  $BUILD_DIR/gla2ozz \\"
+echo "    --file=_humanoid.gla \\"
+echo "    --config='{\"skeleton\":{\"filename\":\"humanoid.ozz\"}}'"
+echo ""
+echo "Usage example (with animations):"
+echo "  $BUILD_DIR/gla2ozz \\"
+echo "    --file=_humanoid.gla \\"
+echo "    --config='{\"skeleton\":{\"filename\":\"humanoid.ozz\"},\"animations\":[{\"filename\":\"*.ozz\"}]}'"
+echo ""

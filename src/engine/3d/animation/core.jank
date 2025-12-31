@@ -399,6 +399,204 @@
   }
 
   // compute_and_upload_skinning_matrices is defined in animation_types.h
+
+  // ============ SKELETON DEBUG VISUALIZATION ============
+
+  // Get joint parent indices from skeleton
+  inline const int16_t* get_skeleton_joint_parents(ozz::animation::Skeleton* skel) {
+    if (!skel) return nullptr;
+    return skel->joint_parents().data();
+  }
+
+  // Get joint name by index
+  inline const char* get_skeleton_joint_name(ozz::animation::Skeleton* skel, int index) {
+    if (!skel || index < 0 || index >= skel->num_joints()) return nullptr;
+    return skel->joint_names()[index];
+  }
+
+  // Get joint position from model matrix (translation column)
+  inline void get_joint_position(AnimationContext* ctx, int index, float* out_xyz) {
+    if (!ctx || index < 0 || index >= static_cast<int>(ctx->models.size())) {
+      out_xyz[0] = out_xyz[1] = out_xyz[2] = 0.0f;
+      return;
+    }
+    // ozz Float4x4 is column-major, translation is in column 3 (indices 12,13,14)
+    const float* m = reinterpret_cast<const float*>(&ctx->models[index]);
+    out_xyz[0] = m[12];
+    out_xyz[1] = m[13];
+    out_xyz[2] = m[14];
+  }
+
+  // Build skeleton line vertices for debug rendering
+  // Returns number of lines (pairs of vertices) written
+  // Each line is 2 vertices * 3 floats = 6 floats
+  inline int build_skeleton_lines(AnimationContext* ctx, float* out_vertices, int max_lines) {
+    if (!ctx || !ctx->skeleton) return 0;
+
+    int num_joints = ctx->skeleton->num_joints();
+    auto parents = ctx->skeleton->joint_parents();
+    int line_count = 0;
+
+    for (int i = 0; i < num_joints && line_count < max_lines; ++i) {
+      int parent = parents[i];
+      if (parent < 0) continue;  // Root has no parent
+
+      float child_pos[3], parent_pos[3];
+      get_joint_position(ctx, i, child_pos);
+      get_joint_position(ctx, parent, parent_pos);
+
+      // Write line segment (2 vertices)
+      int offset = line_count * 6;
+      out_vertices[offset + 0] = parent_pos[0];
+      out_vertices[offset + 1] = parent_pos[1];
+      out_vertices[offset + 2] = parent_pos[2];
+      out_vertices[offset + 3] = child_pos[0];
+      out_vertices[offset + 4] = child_pos[1];
+      out_vertices[offset + 5] = child_pos[2];
+      ++line_count;
+    }
+    return line_count;
+  }
+
+  // Build skeleton lines from REST POSE (bind pose) - no animation
+  inline int build_skeleton_lines_rest_pose(AnimationContext* ctx, float* out_vertices, int max_lines) {
+    if (!ctx || !ctx->skeleton) return 0;
+
+    ozz::animation::Skeleton* skel = ctx->skeleton;
+    int num_joints = skel->num_joints();
+    int num_soa = skel->num_soa_joints();
+    auto parents = skel->joint_parents();
+
+    // Compute rest pose world positions
+    std::vector<ozz::math::SoaTransform> rest_locals(num_soa);
+    std::vector<ozz::math::Float4x4> rest_models(num_joints);
+
+    for (int i = 0; i < num_soa; ++i) {
+      rest_locals[i] = skel->joint_rest_poses()[i];
+    }
+
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = skel;
+    ltm_job.input = ozz::make_span(rest_locals);
+    ltm_job.output = ozz::make_span(rest_models);
+    if (!ltm_job.Run()) return 0;
+
+    // Build line segments
+    int line_count = 0;
+    for (int i = 0; i < num_joints && line_count < max_lines; ++i) {
+      int parent = parents[i];
+      if (parent < 0) continue;
+
+      const ozz::math::Float4x4& child_m = rest_models[i];
+      const ozz::math::Float4x4& parent_m = rest_models[parent];
+
+      float cx = ozz::math::GetX(child_m.cols[3]);
+      float cy = ozz::math::GetY(child_m.cols[3]);
+      float cz = ozz::math::GetZ(child_m.cols[3]);
+      float px = ozz::math::GetX(parent_m.cols[3]);
+      float py = ozz::math::GetY(parent_m.cols[3]);
+      float pz = ozz::math::GetZ(parent_m.cols[3]);
+
+      int offset = line_count * 6;
+      out_vertices[offset + 0] = px;
+      out_vertices[offset + 1] = py;
+      out_vertices[offset + 2] = pz;
+      out_vertices[offset + 3] = cx;
+      out_vertices[offset + 4] = cy;
+      out_vertices[offset + 5] = cz;
+      ++line_count;
+    }
+    return line_count;
+  }
+
+  // Build joint point vertices for debug rendering
+  // Returns number of points written (3 floats each)
+  inline int build_joint_points(AnimationContext* ctx, float* out_vertices, int max_points) {
+    if (!ctx) return 0;
+    int num_joints = static_cast<int>(ctx->models.size());
+    int count = (num_joints < max_points) ? num_joints : max_points;
+
+    for (int i = 0; i < count; ++i) {
+      get_joint_position(ctx, i, out_vertices + i * 3);
+    }
+    return count;
+  }
+
+  // Get skeleton from context (for helper functions)
+  inline ozz::animation::Skeleton* get_context_skeleton(AnimationContext* ctx) {
+    return ctx ? ctx->skeleton : nullptr;
+  }
+
+  // Get skeleton joint count from context
+  inline int get_context_num_joints(AnimationContext* ctx) {
+    return ctx && ctx->skeleton ? ctx->skeleton->num_joints() : 0;
+  }
+
+  // Get joint name by index from context
+  inline const char* get_context_joint_name(AnimationContext* ctx, int index) {
+    static const char* empty = \"(none)\";
+    if (!ctx || !ctx->skeleton) return empty;
+    if (index < 0 || index >= ctx->skeleton->num_joints()) return empty;
+    return ctx->skeleton->joint_names()[index];
+  }
+
+  // Debug: print first N joint positions
+  inline void debug_print_joint_positions(AnimationContext* ctx, int count) {
+    if (!ctx || !ctx->skeleton) {
+      printf(\"DEBUG: No skeleton\\n\");
+      return;
+    }
+    int n = std::min(count, static_cast<int>(ctx->models.size()));
+    printf(\"DEBUG: First %d joint positions:\\n\", n);
+    for (int i = 0; i < n; ++i) {
+      float pos[3];
+      get_joint_position(ctx, i, pos);
+      const char* name = ctx->skeleton->joint_names()[i];
+      printf(\"  [%d] '%s': (%.4f, %.4f, %.4f)\\n\", i, name, pos[0], pos[1], pos[2]);
+    }
+  }
+
+  // Debug: print REST POSE (bind pose) positions - independent of animation
+  inline void debug_print_rest_pose_positions(AnimationContext* ctx, int count) {
+    if (!ctx || !ctx->skeleton) {
+      printf(\"DEBUG REST POSE: No skeleton\\n\");
+      return;
+    }
+
+    ozz::animation::Skeleton* skel = ctx->skeleton;
+    int num_joints = skel->num_joints();
+    int num_soa = skel->num_soa_joints();
+
+    // Create temp buffers for rest pose computation
+    std::vector<ozz::math::SoaTransform> rest_locals(num_soa);
+    std::vector<ozz::math::Float4x4> rest_models(num_joints);
+
+    // Copy rest poses
+    for (int i = 0; i < num_soa; ++i) {
+      rest_locals[i] = skel->joint_rest_poses()[i];
+    }
+
+    // Run LocalToModel to get world positions
+    ozz::animation::LocalToModelJob ltm_job;
+    ltm_job.skeleton = skel;
+    ltm_job.input = ozz::make_span(rest_locals);
+    ltm_job.output = ozz::make_span(rest_models);
+    if (!ltm_job.Run()) {
+      printf(\"DEBUG REST POSE: LocalToModelJob failed\\n\");
+      return;
+    }
+
+    int n = std::min(count, num_joints);
+    printf(\"DEBUG REST POSE: First %d joint positions (bind pose):\\n\", n);
+    for (int i = 0; i < n; ++i) {
+      const ozz::math::Float4x4& m = rest_models[i];
+      float x = ozz::math::GetX(m.cols[3]);
+      float y = ozz::math::GetY(m.cols[3]);
+      float z = ozz::math::GetZ(m.cols[3]);
+      const char* name = skel->joint_names()[i];
+      printf(\"  [%d] '%s': (%.4f, %.4f, %.4f)\\n\", i, name, x, y, z);
+    }
+  }
   ")
 
 ;; Create a new animation context
@@ -527,3 +725,61 @@
     (cpp/compute_skinning_matrices ctx meshes-ptr (cpp/int mesh-index) (cpp/.data buffer))
     {:joint-count joint-count
      :matrices (cpp/box buffer)}))
+
+;; ============ SKELETON DEBUG VISUALIZATION ============
+
+(defn get-skeleton-info
+  "Gets skeleton information from context.
+   Returns: {:num-joints n :joint-names [...]}"
+  [{:keys [context]}]
+  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+        num-joints-cpp (cpp/get_context_num_joints ctx)
+        num-joints (int num-joints-cpp)]
+    (when (> num-joints 0)
+      (let [names (loop [i 0 acc []]
+                    (if (>= i num-joints)
+                      acc
+                      (recur (inc i)
+                             (conj acc (str (cpp/get_context_joint_name ctx (cpp/int i)))))))]
+        {:num-joints num-joints
+         :joint-names names}))))
+
+(defn build-skeleton-lines
+  "Builds line vertices for skeleton debug visualization.
+   Call after sampling animation. Returns {:line-count n :vertices float-buffer}"
+  [{:keys [context max-lines]}]
+  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+        max-l (or max-lines 128)
+        ;; Allocate buffer: 2 vertices per line * 3 floats per vertex = 6 floats per line
+        buffer (cpp/new (cpp/type "std::vector<float>"))]
+    (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6)))
+    (let [line-count (cpp/build_skeleton_lines ctx (cpp/.data buffer) (cpp/int max-l))]
+      {:line-count line-count
+       :vertices (cpp/box buffer)})))
+
+(defn build-skeleton-lines-rest-pose
+  "Builds line vertices for skeleton REST POSE (bind pose) visualization.
+   No animation applied - shows the bind pose skeleton.
+   Args: {:context ctx :max-lines 128}
+   Returns: {:line-count n :vertices float-buffer}"
+  [{:keys [context max-lines]}]
+  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+        max-l (or max-lines 128)
+        buffer (cpp/new (cpp/type "std::vector<float>"))]
+    (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6)))
+    (let [line-count (cpp/build_skeleton_lines_rest_pose ctx (cpp/.data buffer) (cpp/int max-l))]
+      {:line-count line-count
+       :vertices (cpp/box buffer)})))
+
+(defn build-joint-points
+  "Builds point vertices for joint debug visualization.
+   Call after sampling animation. Returns {:point-count n :vertices float-buffer}"
+  [{:keys [context max-points]}]
+  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+        max-p (or max-points 128)
+        ;; Allocate buffer: 3 floats per point
+        buffer (cpp/new (cpp/type "std::vector<float>"))]
+    (cpp/.resize buffer (cpp/* (cpp/int max-p) (cpp/int 3)))
+    (let [point-count (cpp/build_joint_points ctx (cpp/.data buffer) (cpp/int max-p))]
+      {:point-count point-count
+       :vertices (cpp/box buffer)})))

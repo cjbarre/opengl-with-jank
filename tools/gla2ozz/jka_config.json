@@ -1,0 +1,30 @@
+{
+  "skeleton": {
+    "filename": "humanoid.ozz",
+    "import": {
+      "enable": true
+    }
+  },
+  "animations": [
+    {
+      "clip": "BOTH_RUN1",
+      "filename": "run1.ozz"
+    },
+    {
+      "clip": "BOTH_WALK1",
+      "filename": "walk1.ozz"
+    },
+    {
+      "clip": "BOTH_STAND1",
+      "filename": "stand1.ozz"
+    },
+    {
+      "clip": "BOTH_DEATH1",
+      "filename": "death1.ozz"
+    },
+    {
+      "clip": "BOTH_ATTACK_SPECIAL",
+      "filename": "attack_special.ozz"
+    }
+  ]
+}
