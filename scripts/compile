@@ -21,10 +21,11 @@ BREW_PREFIX="$(get_homebrew_prefix)"
 
 # Platform-specific settings
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    OPENGL_LIB_FLAG="-lGL"
+    SYSTEM_LIB_PATH="$(get_system_lib_path GL)"
+    OPENGL_LIB_FLAGS="-L$SYSTEM_LIB_PATH -lGL -lGLEW"
     RPATH_PREFIX='$ORIGIN'
 else
-    OPENGL_LIB_FLAG="-lOpenGL"
+    OPENGL_LIB_FLAGS="-lOpenGL"
     RPATH_PREFIX="@executable_path"
 fi
 
@@ -47,6 +48,13 @@ else
     GLFW_LIB="-lglfw.3"
 fi
 
+# Get module path - use clojure if available, otherwise use src directory
+if command -v clojure &> /dev/null; then
+    MODULE_PATH=$(clojure -Spath)
+else
+    MODULE_PATH="$PROJECT_DIR/src"
+fi
+
 jank \
   -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" \
   -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" \
@@ -55,8 +63,8 @@ jank \
   -lstb_all \
   -lenet \
   -lcgltf \
-  $OPENGL_LIB_FLAG \
-  --module-path $(clojure -Spath) \
+  $OPENGL_LIB_FLAGS \
+  --module-path "$MODULE_PATH" \
   compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
 
 # =============================================================================
@@ -103,9 +111,12 @@ fi
 # Jank/LLVM runtime libraries
 # -----------------------------------------------------------------------------
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    # Linux uses .so without version in filename typically
+    # Copy LLVM libraries and create versioned symlinks
     cp "$JANK_LLVM/lib/libLLVM.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libLLVM"*".so"* "$BUNDLE_DIR/"
     cp "$JANK_LLVM/lib/libclang-cpp.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libclang-cpp"*".so"* "$BUNDLE_DIR/"
+    # Create versioned symlinks (binary is linked against libLLVM.so.22.0git)
+    ln -sf libLLVM.so "$BUNDLE_DIR/libLLVM.so.22.0git" 2>/dev/null || true
+    ln -sf libclang-cpp.so "$BUNDLE_DIR/libclang-cpp.so.22.0git" 2>/dev/null || true
     # libc++ may or may not be bundled with jank on Linux
     cp "$JANK_LLVM/lib/libc++.so"* "$BUNDLE_DIR/" 2>/dev/null || true
     cp "$JANK_LLVM/lib/libunwind.so"* "$BUNDLE_DIR/" 2>/dev/null || true

@@ -15,7 +15,7 @@
   [file size]
   (clet [file* (cpp/unbox cpp/FILE* file)
 
-         buffer (cpp/malloc size)
+         buffer (cpp/malloc (+ size 1))
          :when (cpp/! buffer)
          :error (cpp/perror "malloc")
 
