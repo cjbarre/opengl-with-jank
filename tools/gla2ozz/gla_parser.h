@@ -60,13 +60,29 @@ class GlaParser {
                                         ozz::math::Quaternion* rotation) const;
 
     // Compute animated world transform for a bone at a specific frame
-    // Returns: world = base_pose * anim_delta
+    // Uses JKA formula: world = bone_matrix * BasePoseMat
+    // where bone_matrix = parent_bone_matrix * local_anim
     void ComputeAnimatedWorldTransform(int frame_index, int bone_index,
                                         ozz::math::Float3* world_pos,
                                         ozz::math::Quaternion* world_rot) const;
 
+    // Compute bone_matrix hierarchically (like JKA's G2_TransformBone)
+    void ComputeBoneMatrix(int frame_index, int bone_index, float out[3][4]) const;
+
+    // Decompose a 3x4 matrix array into translation, rotation, scale
+    void DecomposeMatrix34(const float m[3][4],
+                           ozz::math::Float3* translation,
+                           ozz::math::Quaternion* rotation,
+                           ozz::math::Float3* scale) const;
+
     // Debug: Print detailed transform trace for a bone
     void DebugTraceTransform(int frame_index, int bone_index) const;
+
+    // Decompose a 3x4 matrix into translation, rotation, scale
+    bool DecomposeMatrix(const GlaMatrix34& matrix,
+                         ozz::math::Float3* translation,
+                         ozz::math::Quaternion* rotation,
+                         ozz::math::Float3* scale) const;
 
  private:
     bool ParseHeader();
@@ -81,12 +97,6 @@ class GlaParser {
     void DecompressBone(const CompressedBone& comp,
                         ozz::math::Float3* translation,
                         ozz::math::Quaternion* rotation) const;
-
-    // Decompose a 3x4 matrix into translation, rotation, scale
-    bool DecomposeMatrix(const GlaMatrix34& matrix,
-                         ozz::math::Float3* translation,
-                         ozz::math::Quaternion* rotation,
-                         ozz::math::Float3* scale) const;
 
     // Invert a 3x4 affine matrix (assumes orthonormal rotation)
     void InvertMatrix(const GlaMatrix34& m, GlaMatrix34* result) const;

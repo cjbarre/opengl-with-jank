@@ -12,6 +12,7 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 #include <vector>
+#include <iostream>
 
 // GLEW initialization for Linux
 inline bool init_glew_jka() {
@@ -96,6 +97,23 @@ inline bool init_glew_jka() {
 
   inline bool starts_with(const char* str, const char* prefix) {
       return strncmp(str, prefix, strlen(prefix)) == 0;
+  }
+
+  inline void print_bone_lines(float* vertices, int line_count, int max_print) {
+      std::cout << std::endl << \"=== BONE LINES BEING RENDERED ===\" << std::endl;
+      for (int i = 0; i < line_count && i < max_print; ++i) {
+          int offset = i * 6;
+          std::cout << \"  Line \" << i << \": (\"
+                    << vertices[offset + 0] << \", \"
+                    << vertices[offset + 1] << \", \"
+                    << vertices[offset + 2] << \") -> (\"
+                    << vertices[offset + 3] << \", \"
+                    << vertices[offset + 4] << \", \"
+                    << vertices[offset + 5] << \")\" << std::endl;
+      }
+      std::cout << \"=== END BONE LINES (showing \"
+                << (line_count < max_print ? line_count : max_print)
+                << \" of \" << line_count << \") ===\" << std::endl;
   }
 ")
 
@@ -197,6 +215,42 @@ inline bool init_glew_jka() {
            max_delta, max_delta_joint,
            max_delta_joint >= 0 ? skel->joint_names()[max_delta_joint] : \"none\");
 
+    // Debug: Print ARM joint positions specifically (search by name)
+    printf(\"\\n=== ARM JOINT POSITIONS (humerus bones) ===\\n\");
+    for (int i = 0; i < num_joints; ++i) {
+      const char* name = skel->joint_names()[i];
+      if (strstr(name, \"humerus\") != nullptr && strstr(name, \"X\") == nullptr) {
+        float rx = ozz::math::GetX(rest_models[i].cols[3]);
+        float ry = ozz::math::GetY(rest_models[i].cols[3]);
+        float rz = ozz::math::GetZ(rest_models[i].cols[3]);
+        float ax = ozz::math::GetX(ctx->models[i].cols[3]);
+        float ay = ozz::math::GetY(ctx->models[i].cols[3]);
+        float az = ozz::math::GetZ(ctx->models[i].cols[3]);
+        int parent_idx = skel->joint_parents()[i];
+        const char* parent_name = parent_idx >= 0 ? skel->joint_names()[parent_idx] : \"none\";
+        printf(\"  Joint[%d] '%s' (parent=%d '%s'):\\n\", i, name, parent_idx, parent_name);
+        printf(\"    REST:  (%.4f, %.4f, %.4f)\\n\", rx, ry, rz);
+        printf(\"    ANIM:  (%.4f, %.4f, %.4f)\\n\", ax, ay, az);
+      }
+    }
+
+    // Also print thoracic (parent of both arms)
+    for (int i = 0; i < num_joints; ++i) {
+      if (strcmp(skel->joint_names()[i], \"thoracic\") == 0) {
+        float rx = ozz::math::GetX(rest_models[i].cols[3]);
+        float ry = ozz::math::GetY(rest_models[i].cols[3]);
+        float rz = ozz::math::GetZ(rest_models[i].cols[3]);
+        float ax = ozz::math::GetX(ctx->models[i].cols[3]);
+        float ay = ozz::math::GetY(ctx->models[i].cols[3]);
+        float az = ozz::math::GetZ(ctx->models[i].cols[3]);
+        printf(\"  Joint[%d] 'thoracic':\\n\", i);
+        printf(\"    REST:  (%.4f, %.4f, %.4f)\\n\", rx, ry, rz);
+        printf(\"    ANIM:  (%.4f, %.4f, %.4f)\\n\", ax, ay, az);
+        break;
+      }
+    }
+    printf(\"=== END ARM JOINTS ===\\n\");
+
     // Also print the LOCAL transforms from animation (what SamplingJob produced)
     printf(\"\\n=== ANIMATION LOCAL TRANSFORMS (from SamplingJob) ===\\n\");
     printf(\"%-20s  %-30s  %-30s\\n\", \"Joint\", \"Local Translation\", \"Local Rotation (quat)\");
@@ -280,12 +334,9 @@ inline bool init_glew_jka() {
                                      :exclude #{"humanoid"}})
         _ (println "  Found" (count all-anim-names) "animation files")
 
-        ;; Put BOTH_STAND1 first, then other animations
-        stand-first (vec (concat
-                          (filter #(= % "BOTH_STAND1") all-anim-names)
-                          (take 99 (remove #(= % "BOTH_STAND1") all-anim-names))))
-        anim-names stand-first
-        _ (println "  Loading" (count anim-names) "animations (starting with BOTH_STAND1)...")
+        ;; Only load BOTH_STAND1 for focused debugging
+        anim-names ["BOTH_STAND1"]
+        _ (println "  Loading" (count anim-names) "animation (BOTH_STAND1 only)...")
 
         ;; Load animations
         anim-infos (loop [names anim-names
@@ -429,6 +480,11 @@ inline bool init_glew_jka() {
           verts-box (:vertices lines-data)
           verts-ptr (cpp/get_vector_data (cpp/unbox (cpp/type "std::vector<float>*") verts-box))]
 
+
+      ;; Debug: print ALL bone lines (once)
+      (when (and (not lines-printed) (pos? line-count))
+        (cpp/print_bone_lines verts-ptr line-count (cpp/int 100))
+        (swap! state assoc :lines-printed true))
 
       ;; Update VBO
       (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))

@@ -1,0 +1,31 @@
+#!/bin/bash
+# Analyze skeleton structure from converter output
+
+cat << 'EOF'
+=== SKELETON STRUCTURE ANALYSIS ===
+
+From converter output, analyzing joint positions to verify humanoid structure.
+
+Key joints to verify:
+- model_root: origin
+- pelvis: center of hips (should be ~0.9 above root)
+- lfemurYZ/rfemurYZ: hip joints (should be at pelvis level, left/right offset)
+- ltibia/rtibia: knees (should be ~0.4 below hips)
+- ltalus/rtalus: ankles (should be near ground level)
+- thoracic: upper spine (should be above pelvis)
+- cervical: neck (should be above thoracic)
+- cranium: head (should be at top)
+
+EOF
+
+if [ -f /tmp/converter-output.txt ]; then
+    echo "=== FROM CONVERTER OUTPUT ==="
+    echo ""
+    echo "SKELETON local transforms (rest pose):"
+    grep -E "SKELETON Joint\[[0-9]\]" /tmp/converter-output.txt | head -10
+    echo ""
+    echo "ANIMATION world positions (frame 0):"
+    grep "OZZ world pos:" /tmp/converter-output.txt | head -10
+else
+    echo "Run test-animation-pipeline first to generate converter output"
+fi

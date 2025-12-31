@@ -1,0 +1,66 @@
+#!/bin/bash
+# Run viewer briefly and capture debug output for analysis
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+echo "=== Running JKA Skeleton Viewer ==="
+echo ""
+
+# Run viewer with timeout to capture initial debug output
+# gtimeout for macOS (brew install coreutils), timeout for Linux
+if command -v gtimeout &> /dev/null; then
+    TIMEOUT_CMD="gtimeout"
+elif command -v timeout &> /dev/null; then
+    TIMEOUT_CMD="timeout"
+else
+    echo "Warning: No timeout command available, viewer will run until closed"
+    TIMEOUT_CMD=""
+fi
+
+OUTPUT_FILE="/tmp/anim-debug.txt"
+
+if [ -n "$TIMEOUT_CMD" ]; then
+    $TIMEOUT_CMD 3s ./bin/run jka-skeleton 2>&1 | tee "$OUTPUT_FILE" || true
+else
+    ./bin/run jka-skeleton 2>&1 | tee "$OUTPUT_FILE" &
+    PID=$!
+    sleep 3
+    kill $PID 2>/dev/null || true
+fi
+
+echo ""
+echo "=========================================="
+echo "=== ANIMATION DEBUG ANALYSIS ==="
+echo "=========================================="
+echo ""
+
+echo "--- ROOT BONE COMPARISON ---"
+grep "model_root" "$OUTPUT_FILE" 2>/dev/null || echo "(no model_root data found)"
+echo ""
+
+echo "--- PELVIS COMPARISON ---"
+grep "pelvis" "$OUTPUT_FILE" 2>/dev/null || echo "(no pelvis data found)"
+echo ""
+
+echo "--- MAX DELTA ---"
+grep "Max delta" "$OUTPUT_FILE" 2>/dev/null || echo "(no max delta found)"
+echo ""
+
+echo "--- LOCAL TRANSFORM DELTAS ---"
+echo "Comparing ANIMATION vs REST local transforms..."
+echo ""
+
+# Extract and compare local transforms
+if grep -q "ANIMATION LOCAL TRANSFORMS" "$OUTPUT_FILE"; then
+    echo "Animation local (first 8 joints):"
+    sed -n '/ANIMATION LOCAL TRANSFORMS/,/REST POSE LOCAL TRANSFORMS/p' "$OUTPUT_FILE" | head -12
+    echo ""
+    echo "Rest pose local (first 8 joints):"
+    sed -n '/REST POSE LOCAL TRANSFORMS/,/END DEBUG/p' "$OUTPUT_FILE" | head -12
+fi
+
+echo ""
+echo "Full output saved to: $OUTPUT_FILE"

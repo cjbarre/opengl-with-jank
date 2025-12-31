@@ -183,18 +183,112 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
             int debug_frame = clip->start_frame;
             printf("\n\n*** DEBUG TRACES for animation '%s' frame %d ***\n", clip->name.c_str(), debug_frame);
 
-            // Trace the spine chain: pelvis(1) -> lower_lumbar(13) -> upper_lumbar(14) -> thoracic(15) -> cervical(16) -> cranium(17)
-            m_parser.DebugTraceTransform(debug_frame, 1);   // pelvis
-            m_parser.DebugTraceTransform(debug_frame, 13);  // lower_lumbar
-            m_parser.DebugTraceTransform(debug_frame, 14);  // upper_lumbar
-            m_parser.DebugTraceTransform(debug_frame, 15);  // thoracic
-            m_parser.DebugTraceTransform(debug_frame, 16);  // cervical
-            m_parser.DebugTraceTransform(debug_frame, 17);  // cranium
+            // Compare frame 0 animation data vs computed rest local from base_pose
+            printf("\n=== FRAME %d vs BASE_POSE COMPARISON ===\n", clip->start_frame);
+            int test_bones[] = {11, 12, 13, 24, 25, 27, 29};  // spine + arm chain
+            for (int b : test_bones) {
+                const auto& bone = m_parser.GetBones()[b];
 
-            // Trace left leg: pelvis(1) -> lfemurYZ(3) -> ltibia(5) -> ltalus(6)
-            m_parser.DebugTraceTransform(debug_frame, 3);   // lfemurYZ
-            m_parser.DebugTraceTransform(debug_frame, 5);   // ltibia
-            m_parser.DebugTraceTransform(debug_frame, 6);   // ltalus
+                // Get animation data at clip start frame (not frame 0!)
+                ozz::math::Float3 t0;
+                ozz::math::Quaternion r0;
+                m_parser.GetBoneTransform(clip->start_frame, b, &t0, &r0);
+
+                // Get base_pose world position
+                ozz::math::Float3 base_pos, base_scale;
+                ozz::math::Quaternion base_rot;
+                m_parser.DecomposeMatrix(bone.base_pose, &base_pos, &base_rot, &base_scale);
+
+                printf("  %s:\n", bone.name);
+                printf("    Frame 0 anim trans: (%.2f, %.2f, %.2f)\n", t0.x, t0.y, t0.z);
+                printf("    Base_pose world pos: (%.2f, %.2f, %.2f)\n", base_pos.x, base_pos.y, base_pos.z);
+                printf("    Difference: (%.2f, %.2f, %.2f)\n",
+                       t0.x - base_pos.x, t0.y - base_pos.y, t0.z - base_pos.z);
+                printf("    Ratio: (%.2f, %.2f, %.2f)\n",
+                       base_pos.x != 0 ? t0.x / base_pos.x : 0,
+                       base_pos.y != 0 ? t0.y / base_pos.y : 0,
+                       base_pos.z != 0 ? t0.z / base_pos.z : 0);
+            }
+            printf("=== END COMPARISON ===\n\n");
+
+            // Also print rest local comparison
+            printf("=== REST LOCAL COMPARISON at frame %d (spine vs arms) ===\n", clip->start_frame);
+            int test_bones2[] = {11, 12, 13, 25, 38};  // lower_lumbar, upper_lumbar, thoracic, rhumerus, lhumerus
+            for (int b : test_bones2) {
+                const auto& bone = m_parser.GetBones()[b];
+
+                // Get animation data at clip start frame
+                ozz::math::Float3 t0;
+                ozz::math::Quaternion r0;
+                m_parser.GetBoneTransform(clip->start_frame, b, &t0, &r0);
+
+                // Compute rest local from base_pose matrices
+                ozz::math::Float3 bone_world_pos, bone_scale;
+                ozz::math::Quaternion bone_world_rot;
+                m_parser.DecomposeMatrix(bone.base_pose, &bone_world_pos, &bone_world_rot, &bone_scale);
+
+                ozz::math::Float3 rest_local_trans;
+                if (bone.parent >= 0) {
+                    const auto& parent = m_parser.GetBones()[bone.parent];
+                    ozz::math::Float3 parent_pos, parent_scale;
+                    ozz::math::Quaternion parent_rot;
+                    m_parser.DecomposeMatrix(parent.base_pose, &parent_pos, &parent_rot, &parent_scale);
+
+                    // Local offset in world space
+                    ozz::math::Float3 world_offset(
+                        bone_world_pos.x - parent_pos.x,
+                        bone_world_pos.y - parent_pos.y,
+                        bone_world_pos.z - parent_pos.z);
+
+                    // Rotate by parent inverse to get local (inline quaternion rotation)
+                    ozz::math::Quaternion q(-parent_rot.x, -parent_rot.y, -parent_rot.z, parent_rot.w);
+                    ozz::math::Quaternion v_q(world_offset.x, world_offset.y, world_offset.z, 0.0f);
+                    // temp = q * v_q
+                    ozz::math::Quaternion temp(
+                        q.w * v_q.x + q.x * v_q.w + q.y * v_q.z - q.z * v_q.y,
+                        q.w * v_q.y - q.x * v_q.z + q.y * v_q.w + q.z * v_q.x,
+                        q.w * v_q.z + q.x * v_q.y - q.y * v_q.x + q.z * v_q.w,
+                        q.w * v_q.w - q.x * v_q.x - q.y * v_q.y - q.z * v_q.z);
+                    // result = temp * conj(q)
+                    ozz::math::Quaternion qc(q.x, q.y, q.z, q.w);  // conjugate of inverse = original
+                    rest_local_trans.x = temp.w * qc.x + temp.x * qc.w + temp.y * qc.z - temp.z * qc.y;
+                    rest_local_trans.y = temp.w * qc.y - temp.x * qc.z + temp.y * qc.w + temp.z * qc.x;
+                    rest_local_trans.z = temp.w * qc.z + temp.x * qc.y - temp.y * qc.x + temp.z * qc.w;
+                } else {
+                    rest_local_trans = bone_world_pos;
+                }
+
+                printf("  %s (parent=%s):\n", bone.name, bone.parent >= 0 ? m_parser.GetBones()[bone.parent].name : "none");
+                printf("    Frame 0 anim:   (%.2f, %.2f, %.2f)\n", t0.x, t0.y, t0.z);
+                printf("    Rest local:     (%.2f, %.2f, %.2f)\n", rest_local_trans.x, rest_local_trans.y, rest_local_trans.z);
+            }
+            printf("=== END REST LOCAL COMPARISON ===\n\n");
+
+            // Print full bone list first
+            printf("\n=== FULL SKELETON BONE LIST ===\n");
+            for (int b = 0; b < m_parser.GetNumBones(); ++b) {
+                const auto& bone = m_parser.GetBones()[b];
+                printf("  Bone[%d]: '%s' parent=%d\n", b, bone.name, bone.parent);
+            }
+            printf("=== END BONE LIST ===\n\n");
+
+            // Trace spine chain
+            m_parser.DebugTraceTransform(debug_frame, 1);   // pelvis
+            m_parser.DebugTraceTransform(debug_frame, 11);  // lower_lumbar
+            m_parser.DebugTraceTransform(debug_frame, 12);  // upper_lumbar
+            m_parser.DebugTraceTransform(debug_frame, 13);  // thoracic
+
+            // Trace RIGHT arm chain: thoracic -> rhumerus -> rradius -> rhand
+            m_parser.DebugTraceTransform(debug_frame, 24);  // rclavical
+            m_parser.DebugTraceTransform(debug_frame, 25);  // rhumerus
+            m_parser.DebugTraceTransform(debug_frame, 27);  // rradius
+            m_parser.DebugTraceTransform(debug_frame, 29);  // rhand
+
+            // Trace LEFT arm chain: thoracic -> lhumerus -> lradius -> lhand
+            m_parser.DebugTraceTransform(debug_frame, 37);  // lclavical
+            m_parser.DebugTraceTransform(debug_frame, 38);  // lhumerus
+            m_parser.DebugTraceTransform(debug_frame, 40);  // lradius
+            m_parser.DebugTraceTransform(debug_frame, 42);  // lhand
 
             printf("*** END DEBUG TRACES ***\n\n");
         }
@@ -233,22 +327,18 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
                 ozz::math::Quaternion world_rot_jka;
                 m_parser.ComputeAnimatedWorldTransform(gla_frame, gla_bone, &world_pos_jka, &world_rot_jka);
 
+                // Debug: print JKA world transform for first frame, first few joints
+                if (f == 0 && j < 5) {
+                    ozz::log::Log() << "  Phase1 Joint[" << j << "] JKA world pos: ("
+                        << world_pos_jka.x << "," << world_pos_jka.y << "," << world_pos_jka.z << ")" << std::endl;
+                    ozz::log::Log() << "  Phase1 Joint[" << j << "] JKA world rot: ("
+                        << world_rot_jka.x << "," << world_rot_jka.y << "," << world_rot_jka.z << "," << world_rot_jka.w << ")" << std::endl;
+                }
+
                 // Convert world transform from JKA (Z-up) to ozz (Y-up)
                 world_pos_ozz[j] = coord_convert::ConvertPosition(world_pos_jka);
                 world_rot_ozz[j] = coord_convert::NormalizeQuaternion(
                     coord_convert::ConvertQuaternion(world_rot_jka));
-            }
-
-            // Phase 1.5: Extract root motion and re-center skeleton at origin
-            // The GLA root bone translation is "root motion" data intended for
-            // character controller displacement, not skeleton deformation.
-            // We subtract the root translation from all world positions so the
-            // skeleton is anchored at the origin for proper rendering.
-            ozz::math::Float3 root_offset = world_pos_ozz[0];  // Joint 0 is model_root
-            for (int j = 0; j < num_joints; ++j) {
-                world_pos_ozz[j].x -= root_offset.x;
-                world_pos_ozz[j].y -= root_offset.y;
-                world_pos_ozz[j].z -= root_offset.z;
             }
 
             // Phase 2: Compute local transforms using ozz's parent hierarchy
@@ -262,8 +352,8 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
                 ozz::math::Quaternion rot;
 
                 if (ozz_parent < 0) {
-                    // Root joint: local = world (now at origin after root motion extraction)
-                    trans = world_pos_ozz[j];  // Will be (0,0,0) after Phase 1.5
+                    // Root joint: local = world
+                    trans = world_pos_ozz[j];
                     rot = world_rot_ozz[j];
                 } else {
                     // Non-root: compute local from ozz parent and child world transforms
@@ -315,13 +405,20 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
                     trans = ozz::math::Float3(result.x, result.y, result.z);
                 }
 
-                // Debug: print first frame, first few joints
-                if (f == 0 && j < 5) {
-                    ozz::log::Log() << "  Anim[" << j << "] '" << _skeleton.joint_names()[j] << "': "
-                        << "world_ozz=(" << world_pos_ozz[j].x << "," << world_pos_ozz[j].y
-                        << "," << world_pos_ozz[j].z << ") -> "
-                        << "local=(" << trans.x << "," << trans.y << "," << trans.z << ")"
-                        << std::endl;
+                // Debug: print first frame for arm joints (rhumerus, lhumerus)
+                const char* joint_name = _skeleton.joint_names()[j];
+                bool is_arm_joint = (strstr(joint_name, "humerus") != nullptr);
+                if (f == 0 && (j < 5 || is_arm_joint)) {
+                    ozz::log::Log() << "  ANIMATION Joint[" << j << "] '" << _skeleton.joint_names()[j] << "':" << std::endl;
+                    ozz::log::Log() << "    OZZ world pos: (" << world_pos_ozz[j].x << "," << world_pos_ozz[j].y << "," << world_pos_ozz[j].z << ")" << std::endl;
+                    ozz::log::Log() << "    OZZ world rot: (" << world_rot_ozz[j].x << "," << world_rot_ozz[j].y << "," << world_rot_ozz[j].z << "," << world_rot_ozz[j].w << ")" << std::endl;
+                    ozz::log::Log() << "    Computed local trans: (" << trans.x << "," << trans.y << "," << trans.z << ")" << std::endl;
+                    ozz::log::Log() << "    Computed local rot:   (" << rot.x << "," << rot.y << "," << rot.z << "," << rot.w << ")" << std::endl;
+                    if (ozz_parent >= 0) {
+                        ozz::log::Log() << "    Parent[" << ozz_parent << "] world rot: ("
+                            << world_rot_ozz[ozz_parent].x << "," << world_rot_ozz[ozz_parent].y << ","
+                            << world_rot_ozz[ozz_parent].z << "," << world_rot_ozz[ozz_parent].w << ")" << std::endl;
+                    }
                 }
 
                 // Add keyframes
@@ -468,15 +565,19 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
             coord_convert::ConvertQuaternion(rot_jka));
         joint->transform.scale = ozz::math::Float3::one();  // Ignore scale for now
 
-        // Debug: print first few bones to understand the data
+        // Debug: print first few bones with full quaternion info
         if (bone_index < 5) {
-            ozz::log::Log() << "  Joint[" << bone_index << "]: " << joint->name
-                            << " parent=" << bone.parent
-                            << " trans=(" << trans_jka.x << "," << trans_jka.y << "," << trans_jka.z << ")"
-                            << " -> (" << joint->transform.translation.x << ","
+            ozz::log::Log() << "  SKELETON Joint[" << bone_index << "]: " << joint->name
+                            << " parent=" << bone.parent << std::endl;
+            ozz::log::Log() << "    JKA local trans: (" << trans_jka.x << "," << trans_jka.y << "," << trans_jka.z << ")" << std::endl;
+            ozz::log::Log() << "    JKA local rot:   (" << rot_jka.x << "," << rot_jka.y << "," << rot_jka.z << "," << rot_jka.w << ")" << std::endl;
+            ozz::log::Log() << "    OZZ local trans: (" << joint->transform.translation.x << ","
                             << joint->transform.translation.y << ","
-                            << joint->transform.translation.z << ")"
-                            << std::endl;
+                            << joint->transform.translation.z << ")" << std::endl;
+            ozz::log::Log() << "    OZZ local rot:   (" << joint->transform.rotation.x << ","
+                            << joint->transform.rotation.y << ","
+                            << joint->transform.rotation.z << ","
+                            << joint->transform.rotation.w << ")" << std::endl;
         }
 
         // Find and add children

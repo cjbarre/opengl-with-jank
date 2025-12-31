@@ -1,0 +1,66 @@
+#!/bin/bash
+# Test the entire animation pipeline:
+# 1. Convert a single animation with debug output
+# 2. Run viewer and capture debug
+# 3. Compare converter output vs viewer output
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
+echo "=== ANIMATION PIPELINE TEST ==="
+echo ""
+
+# Step 1: Make sure GLA is extracted
+if [ ! -f /tmp/jka-extract/models/players/_humanoid/_humanoid.gla ]; then
+    echo "Step 1: Extracting GLA file..."
+    mkdir -p /tmp/jka-extract
+    unzip -o "/Users/cam/Library/Application Support/Steam/steamapps/common/Jedi Academy/SWJKJA.app/Contents/base/assets1.pk3" \
+        "models/players/_humanoid/*" -d /tmp/jka-extract
+fi
+
+# Step 2: Convert with debug output
+echo "Step 2: Converting BOTH_STAND1 with debug..."
+cd /tmp
+./Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/build/gla2ozz \
+    --file="/tmp/jka-extract/models/players/_humanoid/_humanoid.gla" \
+    --config_file=/Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/test_stand1_only.json 2>&1 \
+    | tee /tmp/converter-output.txt
+
+# Step 3: Copy converted files
+echo ""
+echo "Step 3: Copying converted files..."
+cp /tmp/BOTH_STAND1.ozz /tmp/humanoid.ozz /Users/cam/Documents/code/opengl-with-jank/models/player/jka/
+
+# Step 4: Extract key data from converter
+echo ""
+echo "=== CONVERTER OUTPUT ANALYSIS ==="
+echo ""
+echo "--- SKELETON pelvis local rotation ---"
+grep -A5 "SKELETON Joint\[1\]" /tmp/converter-output.txt | grep "OZZ local rot"
+
+echo ""
+echo "--- ANIMATION pelvis local rotation ---"
+grep -A6 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "Computed local rot"
+
+echo ""
+echo "--- ANIMATION pelvis world position ---"
+grep -A2 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "OZZ world pos"
+
+echo ""
+echo "=== KEY COMPARISON ==="
+echo ""
+echo "For a STAND animation, pelvis rotation should be similar to rest pose."
+echo "Small differences are normal (weight shifting, breathing)."
+echo "Large differences suggest a bug in the conversion."
+echo ""
+
+# Extract the actual values for comparison
+SKEL_ROT=$(grep -A5 "SKELETON Joint\[1\]" /tmp/converter-output.txt | grep "OZZ local rot" | sed 's/.*(\([^)]*\)).*/\1/')
+ANIM_ROT=$(grep -A6 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "Computed local rot" | sed 's/.*(\([^)]*\)).*/\1/')
+
+echo "Skeleton pelvis OZZ rot: ($SKEL_ROT)"
+echo "Animation pelvis OZZ rot: ($ANIM_ROT)"
+echo ""
+echo "Full converter output saved to: /tmp/converter-output.txt"

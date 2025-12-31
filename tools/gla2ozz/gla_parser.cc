@@ -55,6 +55,56 @@ ozz::math::Float3 RotateVectorByQuaternion(const ozz::math::Quaternion& q,
     return ozz::math::Float3(result.x, result.y, result.z);
 }
 
+// Build 3x4 matrix from quaternion and translation
+void BuildMatrix34(const ozz::math::Quaternion& q, const ozz::math::Float3& t,
+                   float out[3][4]) {
+    // Convert quaternion to rotation matrix (same as MC_UnCompressQuat)
+    float fTx = 2.0f * q.x;
+    float fTy = 2.0f * q.y;
+    float fTz = 2.0f * q.z;
+    float fTwx = fTx * q.w;
+    float fTwy = fTy * q.w;
+    float fTwz = fTz * q.w;
+    float fTxx = fTx * q.x;
+    float fTxy = fTy * q.x;
+    float fTxz = fTz * q.x;
+    float fTyy = fTy * q.y;
+    float fTyz = fTz * q.y;
+    float fTzz = fTz * q.z;
+
+    out[0][0] = 1.0f - (fTyy + fTzz);
+    out[0][1] = fTxy - fTwz;
+    out[0][2] = fTxz + fTwy;
+    out[1][0] = fTxy + fTwz;
+    out[1][1] = 1.0f - (fTxx + fTzz);
+    out[1][2] = fTyz - fTwx;
+    out[2][0] = fTxz - fTwy;
+    out[2][1] = fTyz + fTwx;
+    out[2][2] = 1.0f - (fTxx + fTyy);
+
+    out[0][3] = t.x;
+    out[1][3] = t.y;
+    out[2][3] = t.z;
+}
+
+// Multiply two 3x4 matrices: C = A * B
+// Treats as 4x4 with implicit [0,0,0,1] bottom row
+void MultiplyMatrix34(const float a[3][4], const float b[3][4], float c[3][4]) {
+    for (int i = 0; i < 3; i++) {
+        c[i][0] = a[i][0] * b[0][0] + a[i][1] * b[1][0] + a[i][2] * b[2][0];
+        c[i][1] = a[i][0] * b[0][1] + a[i][1] * b[1][1] + a[i][2] * b[2][1];
+        c[i][2] = a[i][0] * b[0][2] + a[i][1] * b[1][2] + a[i][2] * b[2][2];
+        c[i][3] = a[i][0] * b[0][3] + a[i][1] * b[1][3] + a[i][2] * b[2][3] + a[i][3];
+    }
+}
+
+// Set matrix to identity
+void SetIdentityMatrix34(float m[3][4]) {
+    m[0][0] = 1; m[0][1] = 0; m[0][2] = 0; m[0][3] = 0;
+    m[1][0] = 0; m[1][1] = 1; m[1][2] = 0; m[1][3] = 0;
+    m[2][0] = 0; m[2][1] = 0; m[2][2] = 1; m[2][3] = 0;
+}
+
 }  // anonymous namespace
 
 GlaParser::GlaParser()
@@ -584,29 +634,144 @@ void GlaParser::GetWorldPosition(int bone_index, float* x, float* y, float* z) c
 }
 
 // Compute animated world transform for a bone at a specific frame
-// Returns: world = base_pose * anim_delta
+// JKA formula:
+//   bone_matrix = parent_bone_matrix * local_anim  (hierarchical)
+//   world = bone_matrix * BasePoseMat
 void GlaParser::ComputeAnimatedWorldTransform(int frame_index, int bone_index,
                                                ozz::math::Float3* world_pos,
                                                ozz::math::Quaternion* world_rot) const {
+    // First compute bone_matrix hierarchically (like JKA's G2_TransformBone)
+    float bone_matrix[3][4];
+    ComputeBoneMatrix(frame_index, bone_index, bone_matrix);
+
+    // Then compute world = bone_matrix * BasePoseMat
+    const GlaBone& bone = m_bones[bone_index];
+    float world_matrix[3][4];
+    MultiplyMatrix34(bone_matrix, bone.base_pose.matrix, world_matrix);
+
+    // Extract translation from world matrix
+    *world_pos = ozz::math::Float3(
+        world_matrix[0][3],
+        world_matrix[1][3],
+        world_matrix[2][3]);
+
+    // Extract rotation from world matrix
+    ozz::math::Float3 scale;
+    DecomposeMatrix34(world_matrix, nullptr, world_rot, &scale);
+}
+
+// Compute bone_matrix recursively (hierarchical multiplication)
+void GlaParser::ComputeBoneMatrix(int frame_index, int bone_index, float out[3][4]) const {
     const GlaBone& bone = m_bones[bone_index];
 
-    // Get animation delta
+    // Get local animation transform
     ozz::math::Float3 anim_trans;
     ozz::math::Quaternion anim_rot;
     GetBoneTransform(frame_index, bone_index, &anim_trans, &anim_rot);
 
-    // Get base_pose (bind pose world transform)
-    ozz::math::Float3 base_pos, base_scale;
-    ozz::math::Quaternion base_rot;
-    DecomposeMatrix(bone.base_pose, &base_pos, &base_rot, &base_scale);
+    // Build local animation matrix
+    float local_anim[3][4];
+    BuildMatrix34(anim_rot, anim_trans, local_anim);
 
-    // Animated world = base_pose * anim_delta
-    *world_rot = QuaternionNormalize(QuaternionMultiply(base_rot, anim_rot));
-    ozz::math::Float3 rotated_trans = RotateVectorByQuaternion(base_rot, anim_trans);
-    *world_pos = ozz::math::Float3(
-        base_pos.x + rotated_trans.x,
-        base_pos.y + rotated_trans.y,
-        base_pos.z + rotated_trans.z);
+    // Debug: print arm bones
+    static bool debug_printed = false;
+    if (!debug_printed && (bone_index == 25 || bone_index == 38)) {  // rhumerus or lhumerus
+        printf("\n=== ComputeBoneMatrix debug for %s (bone %d) frame %d ===\n",
+               bone.name, bone_index, frame_index);
+        printf("  anim_trans: (%.2f, %.2f, %.2f)\n", anim_trans.x, anim_trans.y, anim_trans.z);
+        printf("  anim_rot: (%.4f, %.4f, %.4f, %.4f)\n", anim_rot.x, anim_rot.y, anim_rot.z, anim_rot.w);
+        printf("  local_anim matrix:\n");
+        for (int i = 0; i < 3; i++) {
+            printf("    [%.4f, %.4f, %.4f, %.4f]\n", local_anim[i][0], local_anim[i][1], local_anim[i][2], local_anim[i][3]);
+        }
+        if (bone_index == 38) debug_printed = true;  // Only print once
+    }
+
+    if (bone.parent < 0) {
+        // Root bone: bone_matrix = identity * local_anim = local_anim
+        // (In JKA this would be rootMatrix * local_anim, but we assume identity root)
+        for (int i = 0; i < 3; i++) {
+            for (int j = 0; j < 4; j++) {
+                out[i][j] = local_anim[i][j];
+            }
+        }
+    } else {
+        // Child bone: bone_matrix = parent_bone_matrix * local_anim
+        float parent_matrix[3][4];
+        ComputeBoneMatrix(frame_index, bone.parent, parent_matrix);
+        MultiplyMatrix34(parent_matrix, local_anim, out);
+    }
+}
+
+// Helper to decompose a 3x4 matrix (array version)
+void GlaParser::DecomposeMatrix34(const float m[3][4],
+                                   ozz::math::Float3* translation,
+                                   ozz::math::Quaternion* rotation,
+                                   ozz::math::Float3* scale) const {
+    if (translation) {
+        translation->x = m[0][3];
+        translation->y = m[1][3];
+        translation->z = m[2][3];
+    }
+
+    // Extract scale
+    float sx = std::sqrt(m[0][0] * m[0][0] + m[1][0] * m[1][0] + m[2][0] * m[2][0]);
+    float sy = std::sqrt(m[0][1] * m[0][1] + m[1][1] * m[1][1] + m[2][1] * m[2][1]);
+    float sz = std::sqrt(m[0][2] * m[0][2] + m[1][2] * m[1][2] + m[2][2] * m[2][2]);
+
+    if (scale) {
+        *scale = ozz::math::Float3(sx, sy, sz);
+    }
+
+    if (rotation) {
+        // Build normalized rotation matrix
+        float r[3][3];
+        if (sx > 1e-6f) {
+            r[0][0] = m[0][0] / sx; r[1][0] = m[1][0] / sx; r[2][0] = m[2][0] / sx;
+        } else {
+            r[0][0] = 1; r[1][0] = 0; r[2][0] = 0;
+        }
+        if (sy > 1e-6f) {
+            r[0][1] = m[0][1] / sy; r[1][1] = m[1][1] / sy; r[2][1] = m[2][1] / sy;
+        } else {
+            r[0][1] = 0; r[1][1] = 1; r[2][1] = 0;
+        }
+        if (sz > 1e-6f) {
+            r[0][2] = m[0][2] / sz; r[1][2] = m[1][2] / sz; r[2][2] = m[2][2] / sz;
+        } else {
+            r[0][2] = 0; r[1][2] = 0; r[2][2] = 1;
+        }
+
+        // Convert to quaternion
+        float trace = r[0][0] + r[1][1] + r[2][2];
+        float qw, qx, qy, qz;
+        if (trace > 0) {
+            float s = 0.5f / std::sqrt(trace + 1.0f);
+            qw = 0.25f / s;
+            qx = (r[2][1] - r[1][2]) * s;
+            qy = (r[0][2] - r[2][0]) * s;
+            qz = (r[1][0] - r[0][1]) * s;
+        } else if (r[0][0] > r[1][1] && r[0][0] > r[2][2]) {
+            float s = 2.0f * std::sqrt(1.0f + r[0][0] - r[1][1] - r[2][2]);
+            qw = (r[2][1] - r[1][2]) / s;
+            qx = 0.25f * s;
+            qy = (r[0][1] + r[1][0]) / s;
+            qz = (r[0][2] + r[2][0]) / s;
+        } else if (r[1][1] > r[2][2]) {
+            float s = 2.0f * std::sqrt(1.0f + r[1][1] - r[0][0] - r[2][2]);
+            qw = (r[0][2] - r[2][0]) / s;
+            qx = (r[0][1] + r[1][0]) / s;
+            qy = 0.25f * s;
+            qz = (r[1][2] + r[2][1]) / s;
+        } else {
+            float s = 2.0f * std::sqrt(1.0f + r[2][2] - r[0][0] - r[1][1]);
+            qw = (r[1][0] - r[0][1]) / s;
+            qx = (r[0][2] + r[2][0]) / s;
+            qy = (r[1][2] + r[2][1]) / s;
+            qz = 0.25f * s;
+        }
+        *rotation = QuaternionNormalize(ozz::math::Quaternion(qx, qy, qz, qw));
+    }
 }
 
 bool GlaParser::GetAnimTransformInParentSpace(int frame_index, int bone_index,
