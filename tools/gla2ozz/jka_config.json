@@ -25,6 +25,30 @@
     {
       "clip": "BOTH_ATTACK_SPECIAL",
       "filename": "attack_special.ozz"
+    },
+    {
+      "clip": "BOTH_JUMP1",
+      "filename": "jump1.ozz"
+    },
+    {
+      "clip": "BOTH_INAIR1",
+      "filename": "inair1.ozz"
+    },
+    {
+      "clip": "BOTH_LAND1",
+      "filename": "land1.ozz"
+    },
+    {
+      "clip": "BOTH_FORCEJUMP1",
+      "filename": "forcejump1.ozz"
+    },
+    {
+      "clip": "BOTH_FORCEINAIR1",
+      "filename": "forceinair1.ozz"
+    },
+    {
+      "clip": "BOTH_FORCELAND1",
+      "filename": "forceland1.ozz"
     }
   ]
 }

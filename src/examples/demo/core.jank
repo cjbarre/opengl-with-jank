@@ -46,6 +46,92 @@ inline bool init_glew() {
 (cpp/raw "#include \"animation_types.h\"")
 (cpp/raw "#include \"gl_utils.h\"")
 
+;; Simple line shader for skeleton visualization
+(def line-vertex-shader
+  "#version 330 core
+   layout (location = 0) in vec3 aPos;
+   uniform mat4 model;
+   uniform mat4 view;
+   uniform mat4 projection;
+   void main() {
+       gl_Position = projection * view * model * vec4(aPos, 1.0);
+   }")
+
+(def line-fragment-shader
+  "#version 330 core
+   out vec4 FragColor;
+   uniform vec3 lineColor;
+   void main() {
+       FragColor = vec4(lineColor, 1.0);
+   }")
+
+;; C++ helpers for line rendering
+(cpp/raw "
+  inline GLuint compile_shader_inline_demo(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetShaderInfoLog(shader, 512, nullptr, log);
+        fprintf(stderr, \"Shader compile error: %s\\n\", log);
+    }
+    return shader;
+  }
+
+  inline GLuint create_line_shader_demo(const char* vs, const char* fs) {
+    GLuint vert = compile_shader_inline_demo(GL_VERTEX_SHADER, vs);
+    GLuint frag = compile_shader_inline_demo(GL_FRAGMENT_SHADER, fs);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    GLint success;
+    glGetProgramiv(prog, GL_LINK_STATUS, &success);
+    if (!success) {
+        char log[512];
+        glGetProgramInfoLog(prog, 512, nullptr, log);
+        fprintf(stderr, \"Shader link error: %s\\n\", log);
+    }
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
+  }
+
+  // Create VAO for skeleton lines (dynamic updates)
+  inline GLuint create_line_vao_demo(GLuint* vbo_out) {
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    // Allocate space for 128 lines * 2 verts * 3 floats
+    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    *vbo_out = vbo;
+    return vao;
+  }
+
+  // Update line VBO with new vertices
+  inline void update_line_vbo_demo(GLuint vbo, float* vertices, int line_count) {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
+  }
+
+  // Get std::vector data pointer
+  inline float* get_vector_data_demo(std::vector<float>* v) {
+    return v->data();
+  }
+
+  inline int gl_lines_demo() { return GL_LINES; }
+")
+
+(def GL_LINES_CONST (cpp/gl_lines_demo))
+
 (cpp/raw
  "inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
@@ -135,11 +221,13 @@ inline bool init_glew() {
           yaw (:transform/yaw entity 0.0)
           ;; Model rotation offset (some models face different directions)
           model-offset (if (contains? tags :animated) 90.0 0.0)
+          ;; JKA skeleton origin is at pelvis, not feet - raise it up
+          model-y-offset (if (contains? tags :animated) 0.5 0.0)
           ;; Mixamo models may need scaling
           model-scale (if (contains? tags :animated) 1.0 1.0)
           ;; Translate then rotate around Y axis (negate yaw to match camera direction)
           model-m (-> (cpp/identity_matrix)
-                      (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
+                      (cpp/glm.translate (math/gimmie :vec3 [px (+ py model-y-offset) pz]))
                       (cpp/glm.rotate (cpp/glm.radians (cpp/- (cpp/float model-offset) (cpp/float yaw)))
                                       (math/gimmie :vec3 [0.0 1.0 0.0]))
                       (cpp/glm.scale (math/gimmie :vec3 [model-scale model-scale model-scale])))
@@ -213,25 +301,25 @@ inline bool init_glew() {
               ;; Calculate horizontal speed
               horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
                                            (cpp/* (cpp/float vz) (cpp/float vz))))
-              ;; Select animation: 0=run, 1=jump
+              ;; Select animation: 0=run, 1=inair
               anim-index (if grounded 0 1)
               ;; Only advance run animation if moving on ground
               is-moving (and grounded (> horiz-speed 0.5))
               current-time (double (:animation/time entity 0.0))
               run-duration (double (:animation/duration entity 1.0))
-              jump-duration 0.85 ;; Jump animation duration
+              inair-duration (double (:animation/inair-duration entity 0.05))
               ;; Calculate new time based on state
               new-time (cond
-                         ;; In air: play jump once, hold at 30%
+                         ;; In air: loop in-air animation
                          (not grounded)
-                         (min (+ current-time (* dt 1.5)) (* jump-duration 0.3))
+                         (mod (+ current-time dt) inair-duration)
                          ;; On ground moving: advance run animation
                          is-moving
                          (mod (+ current-time (* dt (/ horiz-speed 8.0))) run-duration)
                          ;; On ground idle: reset to 0
                          :else 0.0)
               ;; Use appropriate duration for ratio
-              duration (if grounded run-duration jump-duration)
+              duration (if grounded run-duration inair-duration)
               time-ratio (/ new-time duration)]
           ;; Sample animation at current time
           (anim/sample {:context (:animation/context entity)
@@ -257,39 +345,33 @@ inline bool init_glew() {
 (def DEBUG_NO_SKINNING false) ;; Set to true to test mesh without animation
 
 (defn render-animated-system
-  "Renders an animated entity with skinned shader"
-  [{:keys [skinned-shader]} {:keys [tags] :as entity}]
+  "Renders an animated entity as debug skeleton lines"
+  [{:keys [line-shader]} {:keys [tags] :as entity}]
   (when (contains? tags :animated)
-    (let [meshes (:animation/meshes entity)
-          vaos (:animation/vaos entity)
-          ctx (:animation/context entity)
-          ;; Set base color to skin tone (no texture for now)
-          _ (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorFactor")
-                             (cpp/float 0.8) (cpp/float 0.6) (cpp/float 0.5) (cpp/float 1.0))
-          _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uHasBaseColorTex") (cpp/int 0))]
-      (doseq [mesh-idx (range (:animation/mesh-count entity 0))]
-        (let [loc (cpp/wrap_glGetUniformLocation skinned-shader "uBoneMatrices")
-              ;; Unbox inside the loop to avoid capture issues
-              ctx-ptr (cpp/unbox cpp/AnimationContext* ctx)
-              meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
-          (if DEBUG_NO_SKINNING
-            ;; Debug: upload identity matrices
-            (let [mesh-info (anim/get-mesh-info {:meshes meshes :mesh-index mesh-idx})
-                  joint-count (:joint-remap-count mesh-info)]
-              (cpp/upload_identity_bones loc joint-count))
-            ;; Normal: compute and upload skinning matrices directly
-            (cpp/compute_and_upload_skinning_matrices ctx-ptr meshes-ptr (cpp/int mesh-idx) loc))
-          ;; Draw mesh
-          (let [vao-data (nth vaos mesh-idx)
-                index-count (:index-count vao-data)]
-            (cpp/wrap_glBindVertexArray (:vao vao-data))
-            (cpp/wrap_glDrawElements gl/GL_TRIANGLES
-                                index-count
-                                gl/GL_UNSIGNED_SHORT
-                                cpp/nullptr)))))))
+    (let [ctx (:animation/context entity)
+          line-vao (:animation/line-vao entity)
+          line-vbo (:animation/line-vbo entity)
+          ;; Build skeleton lines - allocate buffer, use it, then delete it
+          lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
+          line-count (:line-count lines-data)
+          verts-box (:vertices lines-data)
+          line-buffer (cpp/unbox (cpp/type "std::vector<float>*") verts-box)
+          verts-ptr (cpp/get_vector_data_demo line-buffer)]
+      ;; Set line color (black for player skeleton)
+      (cpp/wrap_glUniform3f
+       (cpp/wrap_glGetUniformLocation line-shader "lineColor")
+       (cpp/float 0.0) (cpp/float 0.0) (cpp/float 0.0))
+      ;; Update VBO and draw
+      (cpp/update_line_vbo_demo line-vbo verts-ptr (cpp/int line-count))
+      (cpp/wrap_glBindVertexArray line-vao)
+      (cpp/glLineWidth (cpp/float 15.0))
+      (cpp/wrap_glDrawArrays GL_LINES_CONST (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))
+      (cpp/wrap_glBindVertexArray (cpp/GLuint 0))
+      ;; Delete the buffer to prevent memory leak
+      (cpp/delete line-buffer))))
 
 (defn draw-3D
-  [{:keys [state shader skinned-shader] :as context}]
+  [{:keys [state shader line-shader] :as context}]
   (let [_ (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
         _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
@@ -308,15 +390,14 @@ inline bool init_glew() {
         (transform-system context e)
         (render-system context e)))
 
-    ;; Render animated entities with skinned shader
-    (cpp/wrap_glDisable gl/GL_CULL_FACE) ;; Disable culling for animated meshes
-    (cpp/wrap_glUseProgram skinned-shader)
-    (let [projection-m-loc (cpp/wrap_glGetUniformLocation skinned-shader "projection")]
+    ;; Render animated entities with line shader (debug skeleton)
+    (cpp/wrap_glUseProgram line-shader)
+    (let [projection-m-loc (cpp/wrap_glGetUniformLocation line-shader "projection")]
       (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m)))
-    (camera-system (assoc context :shader skinned-shader))
+    (camera-system (assoc context :shader line-shader))
     (doseq [e (vals (:entities @state))]
       (when (contains? (:tags e) :animated)
-        (transform-system (assoc context :shader skinned-shader) e)
+        (transform-system (assoc context :shader line-shader) e)
         (render-animated-system context e)))))
 
 (defn update-cursor
@@ -389,46 +470,35 @@ inline bool init_glew() {
                     (update :tags (fnil conj #{}) :render))))))
 
 (defn init-player-animation
-  "Initialize player animation system with ozz assets"
+  "Initialize player animation system with ozz assets - debug line rendering"
   []
   (let [ctx (anim/create-context)
-        ;; Load Mixamo skeleton + mesh + animations (all compatible)
-        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+        ;; Load JKA skeleton + original GLA-extracted animations (no mesh for debug lines)
+        skeleton-info (anim/load-skeleton {:path "models/player/jka/humanoid.ozz"
                                            :context ctx})
-        ;; Animation 0: run
-        run-info (anim/load-animation {:path "models/player/run.ozz"
+        ;; Animation 0: run (JKA original)
+        run-info (anim/load-animation {:path "models/player/jka/run1.ozz"
                                        :context ctx})
-        ;; Animation 1: crouch (used when in air)
-        jump-info (anim/load-animation {:path "models/player/crouch.ozz"
-                                        :context ctx})
-        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
+        ;; Animation 1: in-air (JKA original - used when airborne)
+        inair-info (anim/load-animation {:path "models/player/jka/inair1.ozz"
+                                         :context ctx})
         ;; Sample animation at time 0 to initialize bone matrices
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
-        ;; Create OpenGL VAOs for each mesh
-        mesh-count (:count mesh-data)
-        vaos (mapv (fn [i]
-                     (let [mesh-info (anim/get-mesh-info {:meshes (:meshes mesh-data) :mesh-index i})
-                           vao (anim/create-skinned-vao {:meshes (:meshes mesh-data)
-                                                          :mesh-index i})]
-                       (println "  Mesh" i ":"
-                                "verts=" (:vertex-count mesh-info)
-                                "indices=" (:index-count mesh-info)
-                                "joints=" (:joint-remap-count mesh-info)
-                                "skinned=" (:skinned? mesh-info))
-                       vao))
-                   (range mesh-count))]
-    (println "Animation system initialized:")
+        ;; Create line VAO/VBO for debug skeleton rendering
+        line-vbo-ptr (cpp/new cpp/GLuint)
+        line-vao (cpp/create_line_vao_demo line-vbo-ptr)
+        line-vbo (cpp/* line-vbo-ptr)]
+    (println "Animation system initialized (debug line mode):")
     (println "  Skeleton joints:" (:num-joints skeleton-info))
     (println "  Run animation duration:" (:duration run-info) "seconds")
-    (println "  Crouch animation duration:" (:duration jump-info) "seconds")
-    (println "  Mesh count:" mesh-count)
-    (println "  VAOs created:" (count vaos))
+    (println "  In-air animation duration:" (:duration inair-info) "seconds")
+    (println "  Line VAO:" line-vao "VBO:" line-vbo)
     {:animation/context ctx
      :animation/current-index 0
      :animation/duration (:duration run-info)
-     :animation/meshes (:meshes mesh-data)
-     :animation/mesh-count mesh-count
-     :animation/vaos vaos
+     :animation/inair-duration (:duration inair-info)
+     :animation/line-vao line-vao
+     :animation/line-vbo line-vbo
      :animation/time 0.0}))
 
 (defmethod handle-event :player/spawned
@@ -687,75 +757,15 @@ inline bool init_glew() {
       (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window))
       (cpp/glfwPollEvents))))
 
-(defn setup-camera []
-  {:follow-distance    (math/gimmie :boxed :float 2.5)   ; Distance behind player
-   :follow-height      (math/gimmie :boxed :float 1.0)   ; Height above player
-   :look-height-offset (math/gimmie :boxed :float 1.2)}) ; Look at head, not feet
-
-(defn run-solo
-  "Run the game in solo (offline) mode."
-  []
-  (let [_ (cpp/glfwInit)
-        window (setup-window {:width 1280 :height 720 :name "Demo - Solo"})
-        _ (cpp/glfwSetInputMode
-           (cpp/unbox cpp/GLFWwindow* window)
-           gl/GLFW_CURSOR
-           gl/GLFW_CURSOR_DISABLED)
-        shader (shaders/load-shader-program
-                {:vertex-shader-path
-                 "shaders/basic_vertex.glsl"
-                 :fragment-shader-path
-                 "shaders/basic_fragment.glsl"})
-        _ (cpp/wrap_glUseProgram shader)
-        _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
-        skinned-shader (shaders/load-shader-program
-                        {:vertex-shader-path "shaders/skinned_vertex.glsl"
-                         :fragment-shader-path "shaders/skinned_fragment.glsl"})
-        _ (cpp/wrap_glUseProgram skinned-shader)
-        _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorTex") (cpp/int 0))
-        text-shader (shaders/load-shader-program
-                     {:vertex-shader-path "shaders/text_vertex.glsl"
-                      :fragment-shader-path "shaders/text_fragment.glsl"})
-        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 24.0 text-shader)
-        graphics2d-shader (shaders/load-shader-program
-                           {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
-                            :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
-        gfx2d (gfx2d/init-graphics2d graphics2d-shader)
-        camera (setup-camera)
-        event-store (es/start {})
-        _ (es/append event-store {:events [{:event/type :level/spawned
-                                            :event/tags #{}
-                                            :id #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345"
-                                            :model "models/hills.gltf"}
-                                           {:event/type :player/spawned
-                                            :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
-                                            :model "models/player.gltf"
-                                            :transform/position [0.0 50.0 0.0]}]})]
-
-    (run-loop {:event-store event-store
-               :state (atom {})
-               :window window
-               :shader shader
-               :skinned-shader skinned-shader
-               :models []
-               :camera camera
-               :gfx2d gfx2d
-               :delta-time          (math/gimmie :boxed :float 0.0)
-               :last-frame          (math/gimmie :boxed :float 0.0)
-               :cursor/initialized? (atom false)
-               :cursor/last-x       (math/gimmie :boxed :float 400.0)
-               :cursor/last-y       (math/gimmie :boxed :float 300.0)
-               :cursor/sensitivity  (math/gimmie :boxed :float 0.05)
-               :cursor/pitch        (math/gimmie :boxed :float 0.0)
-               :cursor/yaw          (math/gimmie :boxed :float -90.0)})))
+;; Solo mode removed - use client mode instead
 
 (defn -main
   "Entry point. Usage:
-     ./run demo              - Solo mode (offline)
+     ./run demo              - Connect to localhost:7777
      ./run demo server       - Start server on port 7777
      ./run demo client       - Connect to localhost:7777
      ./run demo client <ip>  - Connect to specific server"
-  ([] (run-solo))
+  ([] (client/run-client))
   ([mode]
    (cond
      (= mode "server")
@@ -768,7 +778,7 @@ inline bool init_glew() {
      (do
        (println "Unknown mode:" mode)
        (println "Usage:")
-       (println "  ./run demo              - Solo mode (offline)")
+       (println "  ./run demo              - Connect to localhost:7777")
        (println "  ./run demo server       - Start server on port 7777")
        (println "  ./run demo client       - Connect to localhost:7777")
        (println "  ./run demo client <ip>  - Connect to specific server"))))
