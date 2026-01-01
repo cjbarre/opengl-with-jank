@@ -284,18 +284,20 @@ inline bool init_glew_client() {
       (cpp/wrap_glBindVertexArray 0))))
 
 (defn update-player-animation
-  "Update JKA animation state machine based on input keys and grounded state."
+  "Update JKA animation state machine based on input keys and grounded state.
+   Input should include: forward, backward, left, right, jump-held, crouch, speed, height, grounded
+   Optional: wall-left, wall-right, wall-front (for wall mechanics)"
   [anim-data input grounded delta-time]
   (let [;; Get current JKA state
         jka-state (or (:animation/jka-state anim-data) (jka/create-jka-state))
         indices (:animation/indices anim-data {})
         durations (:animation/durations anim-data {})
 
-        ;; Build input state for JKA (add grounded to input map)
-        jka-input (assoc input :grounded grounded)
+        ;; Input already has :grounded from caller, just use it directly
+        ;; The caller (update loop) now builds the complete input with speed, height, etc.
 
         ;; Update JKA state machine
-        new-jka-state (jka/update-jka-state jka-state jka-input delta-time durations)
+        new-jka-state (jka/update-jka-state jka-state input delta-time durations)
 
         ;; Get animation index and time ratio
         anim-name (:current-anim new-jka-state)
@@ -383,6 +385,9 @@ inline bool init_glew_client() {
 
       (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
       (assoc :jump-held true)
+
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_LEFT_CONTROL) gl/GLFW_PRESS)
+      (assoc :crouch true)
 
       (= (cpp/glfwGetKey window gl/GLFW_KEY_F3) gl/GLFW_PRESS)
       (assoc :f3-pressed true)
@@ -702,13 +707,25 @@ inline bool init_glew_client() {
         (when-let [anim-data-atom (:player-anim-data context)]
           (let [render-state (pred/get-render-state (:pred-state @client-state))
                 velocity (or (:velocity render-state) [0.0 0.0 0.0])
-                [_ vy _] velocity
+                position (or (:position render-state) [0.0 0.0 0.0])
+                [vx vy vz] velocity
+                [_ py _] position
+                ;; Calculate horizontal speed
+                speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                       (cpp/* (cpp/float vz) (cpp/float vz))))
                 ;; Determine grounded: use physics state if available, otherwise infer from velocity
                 grounded (if (contains? render-state :grounded?)
                            (:grounded? render-state)
                            ;; If no grounded info, infer: grounded if not moving vertically
-                           (< (abs vy) 0.1))]
-            (swap! anim-data-atom update-player-animation input grounded dt)))
+                           (< (abs vy) 0.1))
+                ;; Build enhanced input for animation state machine
+                ;; vy is used for glide detection: glide only when falling (vy <= 0) and not holding jump
+                anim-input (assoc input
+                                  :speed (double speed)
+                                  :height (double py)
+                                  :vy (double vy)
+                                  :grounded grounded)]
+            (swap! anim-data-atom update-player-animation anim-input grounded dt)))
 
         ;; Render (pass input for lean effect)
         (draw-world (assoc context :input input)))

@@ -48,6 +48,7 @@
   inline int glfw_key_f3() { return GLFW_KEY_F3; }
   inline int glfw_key_f4() { return GLFW_KEY_F4; }
   inline int glfw_key_space() { return GLFW_KEY_SPACE; }
+  inline int glfw_key_left_control() { return GLFW_KEY_LEFT_CONTROL; }
   inline int glfw_context_version_major() { return GLFW_CONTEXT_VERSION_MAJOR; }
   inline int glfw_context_version_minor() { return GLFW_CONTEXT_VERSION_MINOR; }
   inline int glfw_opengl_profile() { return GLFW_OPENGL_PROFILE; }
@@ -113,6 +114,7 @@
 (def GLFW_KEY_F3 (cpp/glfw_key_f3))
 (def GLFW_KEY_F4 (cpp/glfw_key_f4))
 (def GLFW_KEY_SPACE (cpp/glfw_key_space))
+(def GLFW_KEY_LEFT_CONTROL (cpp/glfw_key_left_control))
 (def GLFW_CONTEXT_VERSION_MAJOR (cpp/glfw_context_version_major))
 (def GLFW_CONTEXT_VERSION_MINOR (cpp/glfw_context_version_minor))
 (def GLFW_OPENGL_PROFILE (cpp/glfw_opengl_profile))
