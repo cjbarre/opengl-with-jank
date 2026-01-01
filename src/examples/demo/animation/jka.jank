@@ -1,0 +1,219 @@
+(ns examples.demo.animation.jka
+  "JKA animation state machine with directional movement animations"
+  (:require [engine.3d.animation.interface :as anim]))
+
+;; No C++ needed - direction comes from input keys directly
+
+;; =============================================================================
+;; Animation Name Mappings
+;; =============================================================================
+
+;; Movement state -> direction -> animation name
+(def ANIMATION_MAP
+  {:idle      {:forward "BOTH_STAND1"
+               :backward "BOTH_STAND1"
+               :left "BOTH_STAND1"
+               :right "BOTH_STAND1"
+               :none "BOTH_STAND1"}
+
+   :walk      {:forward "BOTH_WALK1"
+               :backward "BOTH_WALKBACK1"
+               :left "BOTH_WALK1"
+               :right "BOTH_WALK1"
+               :none "BOTH_WALK1"}
+
+   :run       {:forward "BOTH_RUN1"
+               :backward "BOTH_RUNBACK1"
+               :left "BOTH_RUN1"
+               :right "BOTH_RUN1"
+               :none "BOTH_RUN1"}
+
+   :jump      {:forward "BOTH_JUMP1"
+               :backward "BOTH_JUMPBACK1"
+               :left "BOTH_JUMPLEFT1"
+               :right "BOTH_JUMPRIGHT1"
+               :none "BOTH_JUMP1"}
+
+   :inair     {:forward "BOTH_INAIR1"
+               :backward "BOTH_INAIRBACK1"
+               :left "BOTH_INAIRLEFT1"
+               :right "BOTH_INAIRRIGHT1"
+               :none "BOTH_INAIR1"}
+
+   :land      {:forward "BOTH_LAND1"
+               :backward "BOTH_LANDBACK1"
+               :left "BOTH_LANDLEFT1"
+               :right "BOTH_LANDRIGHT1"
+               :none "BOTH_LAND1"}
+
+   :forcejump {:forward "BOTH_FORCEJUMP1"
+               :backward "BOTH_FORCEJUMPBACK1"
+               :left "BOTH_FORCEJUMPLEFT1"
+               :right "BOTH_FORCEJUMPRIGHT1"
+               :none "BOTH_FORCEJUMP1"}
+
+   :forceinair {:forward "BOTH_FORCEINAIR1"
+                :backward "BOTH_FORCEINAIRBACK1"
+                :left "BOTH_FORCEINAIRLEFT1"
+                :right "BOTH_FORCEINAIRRIGHT1"
+                :none "BOTH_FORCEINAIR1"}
+
+   :forceland {:forward "BOTH_FORCELAND1"
+               :backward "BOTH_FORCELANDBACK1"
+               :left "BOTH_FORCELANDLEFT1"
+               :right "BOTH_FORCELANDRIGHT1"
+               :none "BOTH_FORCELAND1"}})
+
+;; Core movement animations to load
+(def MOVEMENT_ANIMATIONS
+  ["BOTH_STAND1" "BOTH_STAND2"
+   "BOTH_WALK1" "BOTH_WALKBACK1"
+   "BOTH_RUN1" "BOTH_RUNBACK1"
+   "BOTH_JUMP1" "BOTH_JUMPBACK1" "BOTH_JUMPLEFT1" "BOTH_JUMPRIGHT1"
+   "BOTH_INAIR1" "BOTH_INAIRBACK1" "BOTH_INAIRLEFT1" "BOTH_INAIRRIGHT1"
+   "BOTH_LAND1" "BOTH_LANDBACK1" "BOTH_LANDLEFT1" "BOTH_LANDRIGHT1"
+   "BOTH_FORCEJUMP1" "BOTH_FORCEJUMPBACK1" "BOTH_FORCEJUMPLEFT1" "BOTH_FORCEJUMPRIGHT1"
+   "BOTH_FORCEINAIR1" "BOTH_FORCEINAIRBACK1" "BOTH_FORCEINAIRLEFT1" "BOTH_FORCEINAIRRIGHT1"
+   "BOTH_FORCELAND1" "BOTH_FORCELANDBACK1" "BOTH_FORCELANDLEFT1" "BOTH_FORCELANDRIGHT1"
+   "BOTH_ROLL_F" "BOTH_ROLL_B" "BOTH_ROLL_L" "BOTH_ROLL_R"
+   "BOTH_FLIP_F" "BOTH_FLIP_B" "BOTH_FLIP_L" "BOTH_FLIP_R"])
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def LAND_DURATION 0.2)    ; Seconds to play landing animation
+
+;; =============================================================================
+;; State Machine
+;; =============================================================================
+
+(defn create-jka-state
+  "Creates initial JKA animation state"
+  []
+  {:movement-state :idle           ; :idle :walk :run :jump :inair :land
+   :direction :forward             ; :forward :backward :left :right :none
+   :current-anim "BOTH_STAND1"
+   :current-time 0.0
+   :was-grounded true
+   :land-timer 0.0                 ; Countdown for landing animation
+   :force-jump-active false})
+
+(defn direction-from-input
+  "Gets direction keyword from input keys.
+   Priority: forward > backward > left > right"
+  [{:keys [forward backward left right]}]
+  (cond
+    forward :forward
+    backward :backward
+    left :left
+    right :right
+    :else :none))
+
+(defn get-animation-name
+  "Gets animation name for movement state and direction"
+  [movement-state direction]
+  (let [state-map (get ANIMATION_MAP movement-state)]
+    (if state-map
+      (get state-map direction "BOTH_STAND1")
+      "BOTH_STAND1")))
+
+(defn update-jka-state
+  "Updates JKA animation state based on input keys.
+   input: {:forward bool :backward bool :left bool :right bool :grounded bool}
+   Returns updated state."
+  [{:keys [movement-state direction current-anim current-time
+           was-grounded land-timer force-jump-active] :as state}
+   {:keys [forward backward left right grounded] :as input}
+   dt
+   anim-durations]  ; map of anim-name -> duration
+
+  (let [;; Direction from input keys
+        new-direction (direction-from-input input)
+        has-movement-input (or forward backward left right)
+
+        ;; Detect state transitions
+        just-landed (and grounded (not was-grounded))
+        just-jumped (and (not grounded) was-grounded)
+
+        ;; Determine new movement state
+        new-movement-state
+        (cond
+          ;; Just landed - play landing animation
+          just-landed :land
+
+          ;; Still playing landing animation
+          (and (= movement-state :land) (> land-timer 0.0))
+          :land
+
+          ;; In the air
+          (not grounded)
+          (if force-jump-active :forceinair :inair)
+
+          ;; On ground with movement keys - run
+          has-movement-input :run
+
+          ;; On ground, no input - idle
+          :else :idle)
+
+        ;; Get new animation name
+        new-anim (get-animation-name new-movement-state new-direction)
+
+        ;; Animation changed?
+        anim-changed (not= new-anim current-anim)
+
+        ;; Update time (loop within duration)
+        new-time (if anim-changed
+                   0.0
+                   (let [duration (get anim-durations new-anim 1.0)
+                         next-time (+ current-time dt)]
+                     (if (and (> duration 0.0) (>= next-time duration))
+                       (let [remainder (- next-time duration)]
+                         (if (>= remainder duration)
+                           ;; Multiple loops - use cpp floor
+                           (- next-time (* duration (cpp/floor (cpp// (cpp/double next-time) (cpp/double duration)))))
+                           remainder))
+                       next-time)))
+
+        ;; Update land timer
+        new-land-timer (cond
+                         just-landed LAND_DURATION
+                         (= new-movement-state :land) (max 0.0 (- land-timer dt))
+                         :else 0.0)]
+
+    {:movement-state new-movement-state
+     :direction new-direction
+     :current-anim new-anim
+     :current-time new-time
+     :was-grounded grounded
+     :land-timer new-land-timer
+     :force-jump-active force-jump-active}))
+
+(defn get-time-ratio
+  "Gets current animation time as 0.0-1.0 ratio"
+  [{:keys [current-anim current-time]} anim-durations]
+  (let [duration (get anim-durations current-anim 1.0)]
+    (if (> duration 0.0)
+      (min 1.0 (max 0.0 (/ current-time duration)))
+      0.0)))
+
+;; =============================================================================
+;; Animation Loading Helper
+;; =============================================================================
+
+(defn load-jka-animations
+  "Loads all JKA movement animations and returns index map"
+  [ctx base-path]
+  (loop [names MOVEMENT_ANIMATIONS
+         idx 0
+         indices {}
+         durations {}]
+    (if (empty? names)
+      {:indices indices :durations durations}
+      (let [name (first names)
+            path (str base-path name ".ozz")
+            info (anim/load-animation {:path path :context ctx})]
+        (recur (rest names)
+               (inc idx)
+               (assoc indices name idx)
+               (assoc durations name (double (:duration info))))))))

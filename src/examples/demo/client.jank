@@ -18,6 +18,7 @@
             [engine.2d.text.interface :as text]
             [engine.2d.graphics.interface :as gfx2d]
             [engine.3d.animation.interface :as anim]
+            [examples.demo.animation.jka :as jka]
             [examples.demo.strafehelper.interface :as strafehelper]
             [engine.gl.constants :as gl]))
 
@@ -51,6 +52,70 @@ inline bool init_glew_client() {
 (cpp/raw "#include \"animation_types.h\"")
 (cpp/raw "#include \"gl_utils.h\"")
 
+;; Line rendering helpers for skeleton visualization
+(cpp/raw "
+  inline GLuint compile_shader_client(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    return shader;
+  }
+
+  inline GLuint create_line_shader_client(const char* vs, const char* fs) {
+    GLuint vert = compile_shader_client(GL_VERTEX_SHADER, vs);
+    GLuint frag = compile_shader_client(GL_FRAGMENT_SHADER, fs);
+    GLuint prog = glCreateProgram();
+    glAttachShader(prog, vert);
+    glAttachShader(prog, frag);
+    glLinkProgram(prog);
+    glDeleteShader(vert);
+    glDeleteShader(frag);
+    return prog;
+  }
+
+  inline GLuint create_line_vao_client(GLuint* vbo_out) {
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    *vbo_out = vbo;
+    return vao;
+  }
+
+  inline void update_line_vbo_client(GLuint vbo, float* vertices, int line_count) {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
+  }
+
+  inline float* get_vector_data_client(std::vector<float>* v) {
+    return v->data();
+  }
+")
+
+;; Simple line shader for skeleton visualization
+(def line-vertex-shader
+  "#version 330 core
+   layout (location = 0) in vec3 aPos;
+   uniform mat4 model;
+   uniform mat4 view;
+   uniform mat4 projection;
+   void main() {
+       gl_Position = projection * view * model * vec4(aPos, 1.0);
+   }")
+
+(def line-fragment-shader
+  "#version 330 core
+   out vec4 FragColor;
+   uniform vec3 lineColor;
+   void main() {
+       FragColor = vec4(lineColor, 1.0);
+   }")
+
 ;; C++ helper for identity bones (same as core.jank)
 (cpp/raw
  "inline void client_upload_identity_bones(GLint loc, int count) {
@@ -83,56 +148,58 @@ inline bool init_glew_client() {
 ;; =============================================================================
 
 (defn init-player-animation
-  "Initialize player animation system with ozz assets"
+  "Initialize JKA player animation system for line skeleton rendering"
   []
-  (println "Initializing player animation...")
+  (println "Initializing JKA player animation...")
   (let [ctx (anim/create-context)
-        skeleton-info (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+        base-path "models/player/jka/"
+
+        ;; Load JKA skeleton
+        skeleton-info (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                            :context ctx})
-        run-info (anim/load-animation {:path "models/player/run.ozz"
-                                       :context ctx})
-        jump-info (anim/load-animation {:path "models/player/crouch.ozz"
-                                        :context ctx})
-        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
+        _ (println "  Skeleton loaded:" (:num-joints skeleton-info) "joints")
+
+        ;; Load JKA movement animations
+        anim-data (jka/load-jka-animations ctx base-path)
+        _ (println "  Animations loaded:" (count (:indices anim-data)))
+
+        ;; Sample initial animation
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
-        mesh-count (:count mesh-data)
-        vaos (vec (map (fn [i]
-                         (anim/create-skinned-vao {:meshes (:meshes mesh-data)
-                                                   :mesh-index i}))
-                       (range mesh-count)))]
-    (println "  Animation loaded: skeleton=" (:num-joints skeleton-info)
-             "meshes=" mesh-count)
+
+        ;; Create JKA animation state
+        jka-state (jka/create-jka-state)]
+
+    (println "  Ready for line skeleton rendering!")
     {:animation/context ctx
-     :animation/current-index 0
-     :animation/duration (:duration run-info)
-     :animation/meshes (:meshes mesh-data)
-     :animation/mesh-count mesh-count
-     :animation/vaos vaos
-     :animation/time 0.0}))
+     :animation/indices (:indices anim-data)
+     :animation/durations (:durations anim-data)
+     :animation/jka-state jka-state
+     :animation/time 0.0
+     :num-joints (:num-joints skeleton-info)}))
 
 (defn init-remote-player-animation
-  "Initialize animation context for a remote player.
-   Each remote player needs their own ozz context for independent animation sampling."
+  "Initialize JKA animation context for a remote player."
   []
   (let [ctx (anim/create-context)
-        _ (anim/load-skeleton {:path "models/player/mixamo_skeleton.ozz"
+        base-path "models/player/jka/"
+
+        ;; Load JKA skeleton
+        _ (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                :context ctx})
-        run-info (anim/load-animation {:path "models/player/run.ozz"
-                                       :context ctx})
-        _ (anim/load-animation {:path "models/player/crouch.ozz"
-                                :context ctx})
-        mesh-data (anim/load-meshes {:path "models/player/mixamo_mesh.ozz"})
+
+        ;; Load JKA movement animations
+        anim-data (jka/load-jka-animations ctx base-path)
+
+        ;; Sample initial animation
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
-        mesh-count (:count mesh-data)
-        vaos (vec (map (fn [i]
-                         (anim/create-skinned-vao {:meshes (:meshes mesh-data)
-                                                   :mesh-index i}))
-                       (range mesh-count)))]
+
+        ;; Create JKA animation state
+        jka-state (jka/create-jka-state)]
+
     {:animation/context ctx
-     :animation/duration (:duration run-info)
-     :animation/meshes (:meshes mesh-data)
-     :animation/mesh-count mesh-count
-     :animation/vaos vaos}))
+     :animation/indices (:indices anim-data)
+     :animation/durations (:durations anim-data)
+     :animation/jka-state jka-state}))
 
 (defn ensure-remote-player-anim
   "Ensure a remote player has an animation context.
@@ -181,77 +248,57 @@ inline bool init_glew_client() {
                       :time-ratio 0.0})
         (assoc anim-data :animation/time 0.0 :animation/current-index 0)))))
 
-(defn render-animated-entity
-  "Render an animated player entity at the given position."
-  [skinned-shader anim-data position yaw]
+(defn render-skeleton-entity
+  "Render a player entity as line skeleton at the given position."
+  [line-shader line-vao line-vbo anim-data position yaw]
   (let [[px py pz] position
-        meshes (:animation/meshes anim-data)
-        vaos (:animation/vaos anim-data)
-        ctx (:animation/context anim-data)
-        mesh-count (:animation/mesh-count anim-data)]
-    ;; Set model matrix
+        ctx (:animation/context anim-data)]
+    ;; Set model matrix (offset Y by 0.5 to align with ground)
     (let [model-m (-> (cpp/identity_matrix)
-                      (cpp/glm.translate (math/gimmie :vec3 [px py pz]))
+                      (cpp/glm.translate (math/gimmie :vec3 [px (+ py 0.5) pz]))
                       (cpp/glm.rotate (cpp/glm.radians (cpp/float (- 90.0 yaw)))
                                       (math/gimmie :vec3 [0.0 1.0 0.0])))
-          model-m-loc (cpp/wrap_glGetUniformLocation skinned-shader "model")]
+          model-m-loc (cpp/wrap_glGetUniformLocation line-shader "model")]
       (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                               (cpp/glm.value_ptr model-m)))
-    ;; Set base color
-    (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorFactor")
-                     (cpp/float 0.8) (cpp/float 0.6) (cpp/float 0.5) (cpp/float 1.0))
-    (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uHasBaseColorTex") (cpp/int 0))
-    ;; Render each mesh
-    (doseq [mesh-idx (range mesh-count)]
-      (let [loc (cpp/wrap_glGetUniformLocation skinned-shader "uBoneMatrices")
-            ctx-ptr (cpp/unbox cpp/AnimationContext* ctx)
-            meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
-        (cpp/compute_and_upload_skinning_matrices ctx-ptr meshes-ptr (cpp/int mesh-idx) loc)
-        (let [vao-data (nth vaos mesh-idx)
-              index-count (:index-count vao-data)]
-          (cpp/wrap_glBindVertexArray (:vao vao-data))
-          (cpp/wrap_glDrawElements gl/GL_TRIANGLES
-                              index-count
-                              gl/GL_UNSIGNED_SHORT
-                              cpp/nullptr))))))
+    ;; Build skeleton lines from animation context
+    (let [lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
+          line-count (int (:line-count lines-data))
+          verts-box (:vertices lines-data)
+          verts-ptr (cpp/get_vector_data_client (cpp/unbox (cpp/type "std::vector<float>*") verts-box))]
+      ;; Update VBO with line vertices
+      (cpp/update_line_vbo_client line-vbo verts-ptr (cpp/int line-count))
+      ;; Draw lines
+      (cpp/wrap_glBindVertexArray line-vao)
+      (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2)))
+      (cpp/wrap_glBindVertexArray 0))))
 
 (defn update-player-animation
-  "Update animation sampling based on velocity and grounded state.
-   - In air (not grounded): crouch animation (index 1), held at 30%
-   - On ground moving: run animation (index 0), speed based on velocity
-   - On ground idle: run animation at frame 0 (standing pose)"
-  [anim-data velocity grounded delta-time]
-  (let [[vx _ vz] velocity
-        horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
-                                     (cpp/* (cpp/float vz) (cpp/float vz))))
-        is-moving (and grounded (> horiz-speed 0.5))
-        current-time (double (:animation/time anim-data 0.0))
-        run-duration (double (:animation/duration anim-data 1.0))]
-    (cond
-      ;; In air - show crouch animation held at 30%
-      (not grounded)
-      (do
-        (anim/sample {:context (:animation/context anim-data)
-                      :animation-index 1  ; crouch
-                      :time-ratio 0.3})
-        (assoc anim-data :animation/time 0.0))
+  "Update JKA animation state machine based on input keys and grounded state."
+  [anim-data input grounded delta-time]
+  (let [;; Get current JKA state
+        jka-state (or (:animation/jka-state anim-data) (jka/create-jka-state))
+        indices (:animation/indices anim-data {})
+        durations (:animation/durations anim-data {})
 
-      ;; On ground and moving - play run animation
-      is-moving
-      (let [new-time (mod (+ current-time (* delta-time (/ horiz-speed 8.0))) run-duration)
-            time-ratio (/ new-time run-duration)]
-        (anim/sample {:context (:animation/context anim-data)
-                      :animation-index 0  ; run
-                      :time-ratio time-ratio})
-        (assoc anim-data :animation/time new-time))
+        ;; Build input state for JKA (add grounded to input map)
+        jka-input (assoc input :grounded grounded)
 
-      ;; On ground idle - hold at run frame 0
-      :else
-      (do
-        (anim/sample {:context (:animation/context anim-data)
-                      :animation-index 0  ; run
-                      :time-ratio 0.0})
-        (assoc anim-data :animation/time 0.0)))))
+        ;; Update JKA state machine
+        new-jka-state (jka/update-jka-state jka-state jka-input delta-time durations)
+
+        ;; Get animation index and time ratio
+        anim-name (:current-anim new-jka-state)
+        anim-index (get indices anim-name 0)
+        time-ratio (jka/get-time-ratio new-jka-state durations)]
+
+    ;; Sample animation
+    (anim/sample {:context (:animation/context anim-data)
+                  :animation-index anim-index
+                  :time-ratio time-ratio})
+
+    ;; Return updated anim-data
+    (assoc anim-data :animation/jka-state new-jka-state)))
 
 ;; =============================================================================
 ;; Client State
@@ -480,7 +527,7 @@ inline bool init_glew_client() {
 
 (defn draw-world
   "Draw the game world."
-  [{:keys [shader skinned-shader level-model player-anim-data client-state delta-time] :as context}]
+  [{:keys [shader line-shader line-vao line-vbo level-model player-anim-data client-state delta-time] :as context}]
   (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
   (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
@@ -513,20 +560,21 @@ inline bool init_glew_client() {
                                   (cpp/glm.value_ptr (cpp/identity_matrix))))
         ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"}))
 
-      ;; Switch to skinned shader for player
-      (cpp/wrap_glDisable gl/GL_CULL_FACE)
-      (cpp/wrap_glUseProgram skinned-shader)
-      (let [projection-m-loc (cpp/wrap_glGetUniformLocation skinned-shader "projection")]
+      ;; Switch to line shader for player skeleton rendering
+      (cpp/wrap_glUseProgram line-shader)
+      (let [projection-m-loc (cpp/wrap_glGetUniformLocation line-shader "projection")]
         (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE
                                 (cpp/glm.value_ptr projection-m)))
-      ;; Set camera for skinned shader too
-      (render-camera skinned-shader local-pos local-yaw local-pitch)
+      ;; Set line color to cyan
+      (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
+      ;; Set camera for line shader
+      (render-camera line-shader local-pos local-yaw local-pitch)
 
-      ;; Render local player (animated)
+      ;; Render local player (line skeleton)
       (when player-anim-data
-        (render-animated-entity skinned-shader @player-anim-data local-pos local-yaw))
+        (render-skeleton-entity line-shader line-vao line-vbo @player-anim-data local-pos local-yaw))
 
-      ;; Render remote players (interpolated, animated)
+      ;; Render remote players (interpolated, line skeleton)
       (let [interp-state (:interp-state state)
             remote-entities (interp/get-all-entity-render-states interp-state)]
         (doseq [[entity-id entity-state] remote-entities]
@@ -540,15 +588,17 @@ inline bool init_glew_client() {
               (when-let [remote-anim (get (:remote-players @client-state) entity-id)]
                 (when pos
                   ;; Use interpolated animation state from server (synchronized with position)
-                  (let [anim-index (or (:animation-index entity-state) 0)
+                  (let [anim-name (or (:animation-name entity-state) "BOTH_STAND1")
+                        anim-index (get (:animation/indices remote-anim) anim-name 0)
                         anim-time (or (:animation-time entity-state) 0.0)
-                        run-duration (or (:animation/duration remote-anim) 1.0)
-                        time-ratio (/ anim-time run-duration)]
+                        durations (:animation/durations remote-anim {})
+                        duration (get durations anim-name 1.0)
+                        time-ratio (/ anim-time duration)]
                     ;; Sample at interpolated time
                     (anim/sample {:context (:animation/context remote-anim)
                                   :animation-index anim-index
                                   :time-ratio time-ratio})
-                    (render-animated-entity skinned-shader remote-anim pos (or yaw 0.0))))))))))))
+                    (render-skeleton-entity line-shader line-vao line-vbo remote-anim pos (or yaw 0.0))))))))))))
 
 ;; =============================================================================
 ;; Main Client Loop
@@ -606,6 +656,9 @@ inline bool init_glew_client() {
                 cmd-input (assoc cmd-input
                                  :pitch (:pitch input)
                                  :yaw (:yaw input))]
+            ;; Debug: print input state
+            (when (:forward cmd-input)
+              (println "INPUT: forward=" (:forward cmd-input) "yaw=" (:yaw cmd-input)))
             ;; Run prediction
             (swap! client-state update :pred-state
                    pred/predict cmd-input physics-fn dt)
@@ -634,9 +687,9 @@ inline bool init_glew_client() {
         ;; Update prediction error smoothing
         (swap! client-state update :pred-state pred/update-error-smoothing dt-ms)
 
-        ;; Update player animation
+        ;; Update player animation (use input keys directly for animation selection)
         (when-let [anim-data-atom (:player-anim-data context)]
-          (let [render-state (pred/get-render-state (:pred-state state))
+          (let [render-state (pred/get-render-state (:pred-state @client-state))
                 velocity (or (:velocity render-state) [0.0 0.0 0.0])
                 [_ vy _] velocity
                 ;; Determine grounded: use physics state if available, otherwise infer from velocity
@@ -644,7 +697,7 @@ inline bool init_glew_client() {
                            (:grounded? render-state)
                            ;; If no grounded info, infer: grounded if not moving vertically
                            (< (abs vy) 0.1))]
-            (swap! anim-data-atom update-player-animation velocity grounded dt))))
+            (swap! anim-data-atom update-player-animation input grounded dt))))
 
       ;; Render
       (draw-world context)
@@ -737,12 +790,11 @@ inline bool init_glew_client() {
          _ (cpp/wrap_glUseProgram shader)
          _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
-         ;; Skinned shader for animated player
-         skinned-shader (shaders/load-shader-program
-                         {:vertex-shader-path "shaders/skinned_vertex.glsl"
-                          :fragment-shader-path "shaders/skinned_fragment.glsl"})
-         _ (cpp/wrap_glUseProgram skinned-shader)
-         _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation skinned-shader "uBaseColorTex") (cpp/int 0))
+         ;; Line shader for skeleton rendering
+         line-shader (cpp/create_line_shader_client line-vertex-shader line-fragment-shader)
+         line-vbo-ptr (cpp/new cpp/GLuint)
+         line-vao (cpp/create_line_vao_client line-vbo-ptr)
+         line-vbo (cpp/* line-vbo-ptr)
 
          text-shader (shaders/load-shader-program
                       {:vertex-shader-path "shaders/text_vertex.glsl"
@@ -791,7 +843,9 @@ inline bool init_glew_client() {
                :network network
                :client-state client-state
                :shader shader
-               :skinned-shader skinned-shader
+               :line-shader line-shader
+               :line-vao line-vao
+               :line-vbo line-vbo
                :level-model level-loaded
                :player-anim-data (atom player-anim-data)
                :gfx2d gfx2d
