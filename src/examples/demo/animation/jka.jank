@@ -283,6 +283,13 @@
   (let [{:keys [forward backward left right]} input]
     (not (or forward backward left right))))
 
+(defn no-forward-backward?
+  "Check if no forward/backward keys are pressed (strafe OK).
+   JKA uses force jump when not moving forward/back but strafe is allowed."
+  [{:keys [input]}]
+  (let [{:keys [forward backward]} input]
+    (not (or forward backward))))
+
 (defn in-forcejump-state?
   "Check if in force jump state (for transitioning to forceinair)"
   [{:keys [st-memory]}]
@@ -488,10 +495,11 @@
    ;; Priority 9: Flip (JKA: height threshold + ascending + direction + jump held)
    [:sequence [:condition can-flip?] [:action start-flip]]
 
-   ;; Priority 10: Force jump (Case 3: just jumped + jump held + no directional input)
-   ;; This is the T-pose arms-out jump when you release movement but hold jump
+   ;; Priority 10: Force jump (Case 3: just jumped + jump held + no forward/back)
+   ;; This is the T-pose arms-out jump when you release forward/back but hold jump
+   ;; Strafe (left/right) is allowed and will use directional force jump animations
    [:sequence [:condition just-jumped?] [:condition jump-held?]
-              [:condition no-movement?] [:action start-forcejump]]
+              [:condition no-forward-backward?] [:action start-forcejump]]
 
    ;; Priority 11: Continue force jump while in air (don't fall through to regular jump)
    [:sequence [:condition in-air?] [:condition in-forcejump-state?]
