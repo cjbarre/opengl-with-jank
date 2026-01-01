@@ -334,18 +334,208 @@ inline bool init_glew_jka() {
                                      :exclude #{"humanoid"}})
         _ (println "  Found" (count all-anim-names) "animation files")
 
-        ;; Core movement animations
-        anim-names ["BOTH_STAND1"      ;; 1: Idle stance
-                    "BOTH_WALK1"       ;; 2: Walk forward
-                    "BOTH_WALKBACK1"   ;; 3: Walk backward
-                    "BOTH_RUN1"        ;; 4: Run forward
-                    "BOTH_RUNBACK1"    ;; 5: Run backward
-                    "BOTH_RUNSTRAFE_LEFT1"   ;; 6: Strafe left
-                    "BOTH_RUNSTRAFE_RIGHT1"  ;; 7: Strafe right
-                    "BOTH_JUMP1"       ;; 8: Jump
-                    "BOTH_LAND1"       ;; 9: Land
-                    "BOTH_CROUCH1WALK" ;; 0: Crouch walk
-                    "BOTH_INAIR1"]     ;; In air
+        ;; All 156 movement animations organized by category
+        anim-names [;; === STANCE (2) ===
+                    "BOTH_STAND1"
+                    "BOTH_STAND2"
+
+                    ;; === WALKING (8) ===
+                    "BOTH_WALK1"
+                    "BOTH_WALK2"
+                    "BOTH_WALK_STAFF"
+                    "BOTH_WALK_DUAL"
+                    "BOTH_WALKBACK1"
+                    "BOTH_WALKBACK2"
+                    "BOTH_WALKBACK_STAFF"
+                    "BOTH_WALKBACK_DUAL"
+
+                    ;; === RUNNING (6) ===
+                    "BOTH_RUN1"
+                    "BOTH_RUN2"
+                    "BOTH_RUN_STAFF"
+                    "BOTH_RUN_DUAL"
+                    "BOTH_RUNBACK1"
+                    "BOTH_RUNBACK2"
+
+                    ;; === CROUCHING (3) ===
+                    "BOTH_CROUCH1IDLE"
+                    "BOTH_CROUCH1WALK"
+                    "BOTH_CROUCH1WALKBACK"
+
+                    ;; === JUMPING (12) ===
+                    "BOTH_JUMP1"
+                    "BOTH_JUMPBACK1"
+                    "BOTH_JUMPLEFT1"
+                    "BOTH_JUMPRIGHT1"
+                    "BOTH_INAIR1"
+                    "BOTH_INAIRBACK1"
+                    "BOTH_INAIRLEFT1"
+                    "BOTH_INAIRRIGHT1"
+                    "BOTH_LAND1"
+                    "BOTH_LANDBACK1"
+                    "BOTH_LANDLEFT1"
+                    "BOTH_LANDRIGHT1"
+
+                    ;; === FORCE JUMPS (12) ===
+                    "BOTH_FORCEJUMP1"
+                    "BOTH_FORCEJUMPBACK1"
+                    "BOTH_FORCEJUMPLEFT1"
+                    "BOTH_FORCEJUMPRIGHT1"
+                    "BOTH_FORCEINAIR1"
+                    "BOTH_FORCEINAIRBACK1"
+                    "BOTH_FORCEINAIRLEFT1"
+                    "BOTH_FORCEINAIRRIGHT1"
+                    "BOTH_FORCELAND1"
+                    "BOTH_FORCELANDBACK1"
+                    "BOTH_FORCELANDLEFT1"
+                    "BOTH_FORCELANDRIGHT1"
+
+                    ;; === ROLLS (4) ===
+                    "BOTH_ROLL_F"
+                    "BOTH_ROLL_B"
+                    "BOTH_ROLL_L"
+                    "BOTH_ROLL_R"
+
+                    ;; === FLIPS (4) ===
+                    "BOTH_FLIP_F"
+                    "BOTH_FLIP_B"
+                    "BOTH_FLIP_L"
+                    "BOTH_FLIP_R"
+
+                    ;; === WALL MOVES (9) ===
+                    "BOTH_WALL_RUN_LEFT"
+                    "BOTH_WALL_RUN_RIGHT"
+                    "BOTH_WALL_RUN_LEFT_STOP"
+                    "BOTH_WALL_RUN_RIGHT_STOP"
+                    "BOTH_WALL_RUN_LEFT_FLIP"
+                    "BOTH_WALL_RUN_RIGHT_FLIP"
+                    "BOTH_WALL_FLIP_LEFT"
+                    "BOTH_WALL_FLIP_RIGHT"
+                    "BOTH_WALL_FLIP_BACK1"
+
+                    ;; === SWIMMING (2) ===
+                    "BOTH_SWIM_IDLE1"
+                    "BOTH_SWIMFORWARD"
+
+                    ;; === KNOCKDOWN (5) ===
+                    "BOTH_KNOCKDOWN1"
+                    "BOTH_KNOCKDOWN2"
+                    "BOTH_KNOCKDOWN3"
+                    "BOTH_KNOCKDOWN4"
+                    "BOTH_KNOCKDOWN5"
+
+                    ;; === GETUP (5) ===
+                    "BOTH_GETUP1"
+                    "BOTH_GETUP2"
+                    "BOTH_GETUP3"
+                    "BOTH_GETUP4"
+                    "BOTH_GETUP5"
+
+                    ;; === RECOVERY ROLLS (8) ===
+                    "BOTH_GETUP_BROLL_F"
+                    "BOTH_GETUP_BROLL_B"
+                    "BOTH_GETUP_BROLL_L"
+                    "BOTH_GETUP_BROLL_R"
+                    "BOTH_GETUP_FROLL_F"
+                    "BOTH_GETUP_FROLL_B"
+                    "BOTH_GETUP_FROLL_L"
+                    "BOTH_GETUP_FROLL_R"
+
+                    ;; === SABER STANCES (4) ===
+                    "BOTH_SABERFAST_STANCE"
+                    "BOTH_SABERSLOW_STANCE"
+                    "BOTH_SABERDUAL_STANCE"
+                    "BOTH_SABERSTAFF_STANCE"
+
+                    ;; === STYLE 1 - FAST (8) ===
+                    "BOTH_A1_T__B_"
+                    "BOTH_A1__L__R"
+                    "BOTH_A1__R__L"
+                    "BOTH_A1_TL_BR"
+                    "BOTH_A1_TR_BL"
+                    "BOTH_A1_BL_TR"
+                    "BOTH_A1_BR_TL"
+                    "BOTH_A1_SPECIAL"
+
+                    ;; === STYLE 2 - MEDIUM (9) ===
+                    "BOTH_A2_T__B_"
+                    "BOTH_A2__L__R"
+                    "BOTH_A2__R__L"
+                    "BOTH_A2_TL_BR"
+                    "BOTH_A2_TR_BL"
+                    "BOTH_A2_BL_TR"
+                    "BOTH_A2_BR_TL"
+                    "BOTH_A2_SPECIAL"
+                    "BOTH_A2_STABBACK1"
+
+                    ;; === STYLE 3 - STRONG (8) ===
+                    "BOTH_A3_T__B_"
+                    "BOTH_A3__L__R"
+                    "BOTH_A3__R__L"
+                    "BOTH_A3_TL_BR"
+                    "BOTH_A3_TR_BL"
+                    "BOTH_A3_BL_TR"
+                    "BOTH_A3_BR_TL"
+                    "BOTH_A3_SPECIAL"
+
+                    ;; === STYLE 6 - DUAL (10) ===
+                    "BOTH_A6_T__B_"
+                    "BOTH_A6__L__R"
+                    "BOTH_A6__R__L"
+                    "BOTH_A6_TL_BR"
+                    "BOTH_A6_TR_BL"
+                    "BOTH_A6_BL_TR"
+                    "BOTH_A6_BR_TL"
+                    "BOTH_A6_FB"
+                    "BOTH_A6_LR"
+                    "BOTH_A6_SABERPROTECT"
+
+                    ;; === STYLE 7 - STAFF (9) ===
+                    "BOTH_A7_T__B_"
+                    "BOTH_A7__L__R"
+                    "BOTH_A7__R__L"
+                    "BOTH_A7_TL_BR"
+                    "BOTH_A7_TR_BL"
+                    "BOTH_A7_BL_TR"
+                    "BOTH_A7_BR_TL"
+                    "BOTH_A7_HILT"
+                    "BOTH_A7_SOULCAL"
+
+                    ;; === KICKS (11) ===
+                    "BOTH_A7_KICK_F"
+                    "BOTH_A7_KICK_B"
+                    "BOTH_A7_KICK_L"
+                    "BOTH_A7_KICK_R"
+                    "BOTH_A7_KICK_RL"
+                    "BOTH_A7_KICK_BF"
+                    "BOTH_A7_KICK_S"
+                    "BOTH_A7_KICK_F_AIR"
+                    "BOTH_A7_KICK_B_AIR"
+                    "BOTH_A7_KICK_L_AIR"
+                    "BOTH_A7_KICK_R_AIR"
+
+                    ;; === SABER THROW (3) ===
+                    "BOTH_SABERTHROW1START"
+                    "BOTH_SABERTHROW1STOP"
+                    "BOTH_SABERPULL"
+
+                    ;; === MELEE ATTACKS (5) ===
+                    "BOTH_ATTACK2"
+                    "BOTH_ATTACK3"
+                    "BOTH_ATTACK4"
+                    "BOTH_ATTACK10"
+                    "BOTH_ATTACK_BACK"
+
+                    ;; === ACROBATICS (9) ===
+                    "BOTH_BUTTERFLY_FL1"
+                    "BOTH_BUTTERFLY_FR1"
+                    "BOTH_BUTTERFLY_LEFT"
+                    "BOTH_BUTTERFLY_RIGHT"
+                    "BOTH_CARTWHEEL_LEFT"
+                    "BOTH_CARTWHEEL_RIGHT"
+                    "BOTH_ARIAL_F1"
+                    "BOTH_ARIAL_LEFT"
+                    "BOTH_ARIAL_RIGHT"]
         _ (println "  Loading" (count anim-names) "movement animations...")
 
         ;; Load animations
