@@ -1,0 +1,98 @@
+(ns engine.behavior-tree.core
+  "Behavior tree node implementations.
+
+   Provides 4 node types:
+   - :sequence - AND logic, succeeds if ALL children succeed
+   - :fallback - OR logic, succeeds if ANY child succeeds
+   - :condition - Pure predicate, returns success/failure
+   - :action - Performs work, returns success/failure/running"
+  (:require [engine.behavior-tree.protocol :as p]))
+
+;; Default handler for unknown node types
+(defmethod p/tick :default
+  [node _context]
+  (throw (ex-info "Unknown behavior tree node type" {:node node})))
+
+;; =============================================================================
+;; Sequence Node
+;; =============================================================================
+;; AND logic: succeeds if ALL children succeed
+;; Short-circuits on first failure or running
+
+(defmethod p/tick :sequence
+  [node context]
+  (loop [[child-node & remaining] (:children node)]
+    (if-not child-node
+      p/success
+      (let [result (p/tick child-node context)]
+        (case result
+          :success (recur remaining)
+          :failure p/failure
+          :running p/running)))))
+
+(defmethod p/build :sequence
+  [node-type args]
+  (let [[opts children] (p/opts+children args)]
+    (assoc opts
+           :type node-type
+           :children (mapv #(p/build (first %) (rest %)) children))))
+
+;; =============================================================================
+;; Fallback Node
+;; =============================================================================
+;; OR logic: succeeds if ANY child succeeds
+;; Short-circuits on first success or running
+
+(defmethod p/tick :fallback
+  [node context]
+  (loop [[child-node & remaining] (:children node)]
+    (if-not child-node
+      p/failure
+      (let [result (p/tick child-node context)]
+        (case result
+          :success p/success
+          :failure (recur remaining)
+          :running p/running)))))
+
+(defmethod p/build :fallback
+  [node-type args]
+  (let [[opts children] (p/opts+children args)]
+    (assoc opts
+           :type node-type
+           :children (mapv #(p/build (first %) (rest %)) children))))
+
+;; =============================================================================
+;; Condition Node
+;; =============================================================================
+;; Pure predicate: returns success if true, failure if false
+;; Never returns running
+
+(defmethod p/tick :condition
+  [{:keys [condition-fn opts]} context]
+  (if (condition-fn (assoc context :opts opts))
+    p/success
+    p/failure))
+
+(defmethod p/build :condition
+  [node-type args]
+  (let [[opts children] (p/opts+children args)]
+    {:type node-type
+     :opts opts
+     :condition-fn (first children)}))
+
+;; =============================================================================
+;; Action Node
+;; =============================================================================
+;; Performs work and returns result
+;; Can return success, failure, or running
+
+(defmethod p/tick :action
+  [{:keys [action-fn opts]} context]
+  (action-fn (assoc context :opts opts)))
+
+(defmethod p/build :action
+  [node-type args]
+  (let [[opts children] (p/opts+children args)]
+    {:type node-type
+     :opts opts
+     :action-fn (first children)}))

@@ -1,0 +1,32 @@
+(ns engine.behavior-tree.protocol
+  "Behavior tree protocol definitions and constants.
+
+   Provides the core multimethod dispatch for tick/build,
+   and helper functions for DSL parsing.")
+
+;; Result values
+(def success :success)
+(def failure :failure)
+(def running :running)
+
+;; Multimethod for executing a node
+(defmulti tick
+  "Execute the node and return :success, :failure, or :running."
+  (fn [node _context] (:type node)))
+
+;; Multimethod for building nodes from DSL
+(defmulti build
+  "Build a behavior tree node from vector DSL."
+  (fn [type _args] type))
+
+(defn opts+children
+  "Extract options and children from config vector.
+   If first arg is a map, treat as options; otherwise options are empty.
+
+   Examples:
+     (opts+children [{:x 1} child1 child2]) => [{:x 1} (child1 child2)]
+     (opts+children [child1 child2])        => [{} (child1 child2)]"
+  [args]
+  (if (and (seq args) (map? (first args)))
+    [(first args) (rest args)]
+    [{} args]))

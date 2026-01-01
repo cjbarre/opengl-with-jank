@@ -1,5 +1,5 @@
 (ns examples.demo.animation.jka
-  "JKA animation state machine with directional movement animations.
+  "JKA animation state machine implemented as a behavior tree.
 
    Implements authentic JKA movement mechanics:
    - Rolls: crouch + running on ground
@@ -8,7 +8,8 @@
    - Wall flip back: forward into wall + jump
 
    All animation selection is input-driven, not velocity-driven."
-  (:require [engine.3d.animation.interface :as anim]))
+  (:require [engine.3d.animation.interface :as anim]
+            [engine.behavior-tree.interface :as bt]))
 
 ;; =============================================================================
 ;; Animation Name Mappings
@@ -70,35 +71,30 @@
                :right "BOTH_FORCELANDRIGHT1"
                :none "BOTH_FORCELAND1"}
 
-   ;; Rolls - single animation per direction (no :none variant, use forward)
    :roll      {:forward "BOTH_ROLL_F"
                :backward "BOTH_ROLL_B"
                :left "BOTH_ROLL_L"
                :right "BOTH_ROLL_R"
                :none "BOTH_ROLL_F"}
 
-   ;; Flips - acrobatic jumps with direction
    :flip      {:forward "BOTH_FLIP_F"
                :backward "BOTH_FLIP_B"
                :left "BOTH_FLIP_L"
                :right "BOTH_FLIP_R"
                :none "BOTH_FLIP_F"}
 
-   ;; Wall running - only left/right directions apply
-   :wallrun   {:forward "BOTH_WALL_RUN_RIGHT"  ; default to right
+   :wallrun   {:forward "BOTH_WALL_RUN_RIGHT"
                :backward "BOTH_WALL_RUN_RIGHT"
                :left "BOTH_WALL_RUN_LEFT"
                :right "BOTH_WALL_RUN_RIGHT"
                :none "BOTH_WALL_RUN_RIGHT"}
 
-   ;; Wall run flip off - jump while wall running
    :wallrunflip {:forward "BOTH_WALL_RUN_RIGHT_FLIP"
                  :backward "BOTH_WALL_RUN_RIGHT_FLIP"
                  :left "BOTH_WALL_RUN_LEFT_FLIP"
                  :right "BOTH_WALL_RUN_RIGHT_FLIP"
                  :none "BOTH_WALL_RUN_RIGHT_FLIP"}
 
-   ;; Wall flip back - run into wall and flip back
    :wallflipback {:forward "BOTH_WALL_FLIP_BACK1"
                   :backward "BOTH_WALL_FLIP_BACK1"
                   :left "BOTH_WALL_FLIP_LEFT"
@@ -116,49 +112,24 @@
    "BOTH_FORCEJUMP1" "BOTH_FORCEJUMPBACK1" "BOTH_FORCEJUMPLEFT1" "BOTH_FORCEJUMPRIGHT1"
    "BOTH_FORCEINAIR1" "BOTH_FORCEINAIRBACK1" "BOTH_FORCEINAIRLEFT1" "BOTH_FORCEINAIRRIGHT1"
    "BOTH_FORCELAND1" "BOTH_FORCELANDBACK1" "BOTH_FORCELANDLEFT1" "BOTH_FORCELANDRIGHT1"
-   ;; Rolls
    "BOTH_ROLL_F" "BOTH_ROLL_B" "BOTH_ROLL_L" "BOTH_ROLL_R"
-   ;; Flips
    "BOTH_FLIP_F" "BOTH_FLIP_B" "BOTH_FLIP_L" "BOTH_FLIP_R"
-   ;; Wall running
    "BOTH_WALL_RUN_LEFT" "BOTH_WALL_RUN_RIGHT"
    "BOTH_WALL_RUN_LEFT_FLIP" "BOTH_WALL_RUN_RIGHT_FLIP"
    "BOTH_WALL_RUN_LEFT_STOP" "BOTH_WALL_RUN_RIGHT_STOP"
-   ;; Wall flips
    "BOTH_WALL_FLIP_BACK1" "BOTH_WALL_FLIP_LEFT" "BOTH_WALL_FLIP_RIGHT"])
 
 ;; =============================================================================
 ;; Constants
 ;; =============================================================================
 
-(def LAND_DURATION 0.2)           ; Seconds to play landing animation
-(def FLIP_HOLD_TIME 0.3)          ; Seconds jump must be held before flip triggers
-(def WALL_RUN_MIN_HEIGHT 0.5)     ; Minimum height above ground for wall run
+(def LAND_DURATION 0.2)
+(def FLIP_HOLD_TIME 0.3)
+(def WALL_RUN_MIN_HEIGHT 0.5)
 
 ;; =============================================================================
-;; State Machine
+;; Helper Functions
 ;; =============================================================================
-
-(defn create-jka-state
-  "Creates initial JKA animation state"
-  []
-  {:movement-state :idle           ; :idle :walk :run :jump :inair :land :roll :flip :wallrun :wallflipback
-   :direction :forward             ; :forward :backward :left :right :none
-   :current-anim "BOTH_STAND1"
-   :current-time 0.0
-   :was-grounded true
-   :land-timer 0.0                 ; Countdown for landing animation
-   :roll-timer 0.0                 ; Time remaining in roll animation
-   :flip-timer 0.0                 ; Time remaining in flip animation
-   :wallrun-timer 0.0              ; Time remaining in wall run
-   :wallflip-timer 0.0             ; Time remaining in wall flip
-   :air-time 0.0                   ; Time spent in air
-   :was-jump-held false            ; Track jump key state for edge detection
-   :had-movement-this-jump false   ; True if movement keys were held at any point during this jump
-   :flip-ready false               ; True if holding movement+jump on takeoff (for bunny hop flips)
-   :jump-held-since-takeoff true   ; True if jump has been held continuously since leaving ground
-   :has-flipped-this-jump false    ; True if already did a flip during this jump
-   :wallrun-side :none})
 
 (defn direction-from-input
   "Gets direction keyword from input keys.
@@ -179,256 +150,466 @@
       (get state-map direction "BOTH_STAND1")
       "BOTH_STAND1")))
 
-(defn is-locked-anim?
+(defn has-movement-input?
+  "Check if any movement keys are pressed"
+  [{:keys [input]}]
+  (let [{:keys [forward backward left right]} input]
+    (or forward backward left right)))
+
+;; =============================================================================
+;; State Management
+;; =============================================================================
+
+(defn create-jka-state
+  "Creates initial JKA animation state"
+  []
+  {:movement-state :idle
+   :direction :forward
+   :current-anim "BOTH_STAND1"
+   :current-time 0.0
+   :was-grounded true
+   :land-timer 0.0
+   :roll-timer 0.0
+   :flip-timer 0.0
+   :wallrun-timer 0.0
+   :wallflip-timer 0.0
+   :air-time 0.0
+   :was-jump-held false
+   :had-movement-this-jump false
+   :flip-ready false
+   :jump-held-since-takeoff true
+   :has-flipped-this-jump false
+   :wallrun-side :none
+   ;; Derived state (computed pre-tick)
+   :just-landed false
+   :just-jumped false
+   :just-pressed-jump false
+   :can-flip false})
+
+;; =============================================================================
+;; Condition Functions
+;; =============================================================================
+
+(defn locked?
   "Check if we're in an animation that must play to completion"
-  [movement-state timer]
-  (and (or (= movement-state :roll)
-           (= movement-state :flip)
-           (= movement-state :wallrun)
-           (= movement-state :wallrunflip)
-           (= movement-state :wallflipback))
-       (> timer 0.0)))
+  [{:keys [st-memory]}]
+  (let [{:keys [movement-state roll-timer flip-timer wallrun-timer wallflip-timer]} @st-memory
+        timer (case movement-state
+                :roll roll-timer
+                :flip flip-timer
+                :wallrun wallrun-timer
+                (:wallrunflip :wallflipback) wallflip-timer
+                0.0)]
+    (and (#{:roll :flip :wallrun :wallrunflip :wallflipback} movement-state)
+         (> timer 0.0))))
 
-(defn update-jka-state
-  "Updates JKA animation state based on input keys.
-   input: {:forward bool :backward bool :left bool :right bool :grounded bool
-           :crouch bool :jump-held bool :speed float :height float :vy float
-           :wall-left bool :wall-right bool :wall-front bool}
-   Returns updated state."
-  [{:keys [movement-state direction current-anim current-time
-           was-grounded land-timer roll-timer flip-timer wallrun-timer wallflip-timer
-           air-time was-jump-held had-movement-this-jump flip-ready jump-held-since-takeoff has-flipped-this-jump wallrun-side] :as state}
-   {:keys [forward backward left right grounded crouch jump-held speed height vy
-           wall-left wall-right wall-front] :as input}
-   dt
-   anim-durations]  ; map of anim-name -> duration
+(defn just-landed?
+  [{:keys [st-memory]}]
+  (:just-landed @st-memory))
 
-  (let [;; Default values for optional inputs
-        speed (or speed 0.0)
-        height (or height 0.0)
-        vy (or vy 0.0)  ; vertical velocity - positive = rising, negative = falling
-        crouch (or crouch false)
-        jump-held (or jump-held false)
-        wall-left (or wall-left false)
-        wall-right (or wall-right false)
-        wall-front (or wall-front false)
-        air-time (or air-time 0.0)
-        had-movement-this-jump (or had-movement-this-jump false)
-        flip-ready (or flip-ready false)
-        jump-held-since-takeoff (if (nil? jump-held-since-takeoff) true jump-held-since-takeoff)
-        has-flipped-this-jump (or has-flipped-this-jump false)
+(defn just-jumped?
+  [{:keys [st-memory]}]
+  (:just-jumped @st-memory))
 
-        ;; Determine if player is rising or falling
-        ;; JKA uses velocity[2] <= 0 to trigger inair/glide animation
-        is-falling (and (not grounded) (<= vy 0.0))
+(defn just-pressed-jump?
+  [{:keys [st-memory]}]
+  (:just-pressed-jump @st-memory))
 
-        ;; Direction from input keys
-        new-direction (direction-from-input input)
-        has-movement-input (or forward backward left right)
+(defn grounded?
+  [{:keys [input]}]
+  (:grounded input))
 
-        ;; Detect state transitions
+(defn in-air?
+  [{:keys [input]}]
+  (not (:grounded input)))
+
+(defn crouching?
+  [{:keys [input]}]
+  (:crouch input))
+
+(defn forward?
+  [{:keys [input]}]
+  (:forward input))
+
+(defn wall-front?
+  [{:keys [input]}]
+  (:wall-front input))
+
+(defn jump-held?
+  [{:keys [input]}]
+  (:jump-held input))
+
+(defn strafe-into-wall?
+  [{:keys [input]}]
+  (let [{:keys [left right wall-left wall-right]} input]
+    (or (and left wall-left) (and right wall-right))))
+
+(defn in-land-state?
+  [{:keys [st-memory]}]
+  (= (:movement-state @st-memory) :land))
+
+(defn land-timer-active?
+  [{:keys [st-memory]}]
+  (> (:land-timer @st-memory) 0.0))
+
+(defn in-run-state?
+  [{:keys [st-memory]}]
+  (= (:movement-state @st-memory) :run))
+
+(defn in-wallrun-state?
+  [{:keys [st-memory]}]
+  (= (:movement-state @st-memory) :wallrun))
+
+(defn can-flip?
+  [{:keys [st-memory]}]
+  (:can-flip @st-memory))
+
+(defn falling?
+  [{:keys [input]}]
+  (<= (or (:vy input) 0.0) 0.0))
+
+(defn had-movement-this-jump?
+  [{:keys [st-memory]}]
+  (:had-movement-this-jump @st-memory))
+
+(defn no-movement?
+  [ctx]
+  (not (has-movement-input? ctx)))
+
+;; =============================================================================
+;; Action Functions
+;; =============================================================================
+
+(defn set-state!
+  "Helper to update movement state and animation.
+   opts can include: :roll-timer :flip-timer :wallrun-timer :wallflip-timer :wallrun-side"
+  ([st-memory movement-state direction]
+   (set-state! st-memory movement-state direction {}))
+  ([st-memory movement-state direction opts]
+   (let [roll-timer (get opts :roll-timer 0.0)
+         flip-timer (get opts :flip-timer 0.0)
+         wallrun-timer (get opts :wallrun-timer 0.0)
+         wallflip-timer (get opts :wallflip-timer 0.0)
+         wallrun-side (get opts :wallrun-side :none)
+         effective-direction (if (#{:wallrun :wallrunflip} movement-state)
+                               wallrun-side
+                               direction)
+         anim-name (get-animation-name movement-state effective-direction)]
+     (swap! st-memory merge
+            {:movement-state movement-state
+             :direction direction
+             :current-anim anim-name
+             :current-time 0.0
+             :roll-timer roll-timer
+             :flip-timer flip-timer
+             :wallrun-timer wallrun-timer
+             :wallflip-timer wallflip-timer
+             :wallrun-side wallrun-side}))))
+
+(defn continue-locked
+  "Continue playing locked animation"
+  [{:keys [st-memory]}]
+  ;; Just return success, timers are updated in pre-tick
+  bt/success)
+
+(defn start-roll
+  [{:keys [st-memory input anim-durations]}]
+  (let [direction (direction-from-input input)
+        anim-name (get-animation-name :roll direction)
+        duration (get anim-durations anim-name 0.8)]
+    (set-state! st-memory :roll direction {:roll-timer duration})
+    bt/success))
+
+(defn start-land
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)]
+    (set-state! st-memory :land direction)
+    (swap! st-memory assoc :land-timer LAND_DURATION)
+    bt/success))
+
+(defn continue-land
+  [{:keys [st-memory]}]
+  ;; Just return success, timer is updated in pre-tick
+  bt/success)
+
+(defn start-wallflipback
+  [{:keys [st-memory input anim-durations]}]
+  (let [direction (direction-from-input input)
+        duration (get anim-durations "BOTH_WALL_FLIP_BACK1" 0.8)]
+    (set-state! st-memory :wallflipback direction {:wallflip-timer duration})
+    bt/success))
+
+(defn start-wallrun
+  [{:keys [st-memory input anim-durations]}]
+  (let [{:keys [left wall-left]} input
+        side (if (and left wall-left) :left :right)
+        anim-name (if (= side :left) "BOTH_WALL_RUN_LEFT" "BOTH_WALL_RUN_RIGHT")
+        duration (get anim-durations anim-name 1.5)
+        direction (direction-from-input input)]
+    (set-state! st-memory :wallrun direction {:wallrun-timer duration :wallrun-side side})
+    bt/success))
+
+(defn start-wallrunflip
+  [{:keys [st-memory anim-durations]}]
+  (let [{:keys [wallrun-side direction]} @st-memory
+        anim-name (if (= wallrun-side :left) "BOTH_WALL_RUN_LEFT_FLIP" "BOTH_WALL_RUN_RIGHT_FLIP")
+        duration (get anim-durations anim-name 0.8)]
+    (set-state! st-memory :wallrunflip direction {:wallflip-timer duration :wallrun-side wallrun-side})
+    bt/success))
+
+(defn start-flip
+  [{:keys [st-memory input anim-durations]}]
+  (let [direction (direction-from-input input)
+        anim-name (get-animation-name :flip direction)
+        duration (get anim-durations anim-name 0.8)]
+    (set-state! st-memory :flip direction {:flip-timer duration})
+    (swap! st-memory assoc :has-flipped-this-jump true :flip-ready true)
+    bt/success))
+
+(defn start-inair
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)
+        current (:movement-state @st-memory)]
+    ;; Only reset if changing state
+    (when (not= current :inair)
+      (set-state! st-memory :inair direction))
+    bt/success))
+
+(defn start-jump
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)
+        current (:movement-state @st-memory)]
+    ;; Only reset if changing state
+    (when (not= current :jump)
+      (set-state! st-memory :jump direction))
+    bt/success))
+
+(defn start-run
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)
+        current (:movement-state @st-memory)]
+    ;; Only reset if changing state
+    (when (not= current :run)
+      (set-state! st-memory :run direction))
+    bt/success))
+
+(defn start-idle
+  [{:keys [st-memory]}]
+  (let [current (:movement-state @st-memory)]
+    ;; Only reset if changing state
+    (when (not= current :idle)
+      (set-state! st-memory :idle :none)))
+  bt/success)
+
+;; =============================================================================
+;; Behavior Tree Definition
+;; =============================================================================
+
+(def jka-tree-config
+  "JKA animation behavior tree structure.
+   Priority-based: first matching sequence wins (fallback semantics)."
+  [:fallback
+   ;; Priority 1: Locked animations continue
+   [:sequence [:condition locked?] [:action continue-locked]]
+
+   ;; Priority 2: Roll on landing
+   [:sequence [:condition just-landed?] [:condition crouching?]
+              [:condition has-movement-input?] [:action start-roll]]
+
+   ;; Priority 3: Normal landing
+   [:sequence [:condition just-landed?] [:action start-land]]
+
+   ;; Priority 4: Continue landing animation
+   [:sequence [:condition grounded?] [:condition in-land-state?]
+              [:condition land-timer-active?] [:action continue-land]]
+
+   ;; Priority 5: Ground roll (crouch while running)
+   [:sequence [:condition grounded?] [:condition crouching?]
+              [:condition in-run-state?] [:action start-roll]]
+
+   ;; Priority 6: Wall flip back
+   [:sequence [:condition in-air?] [:condition forward?]
+              [:condition wall-front?] [:condition just-pressed-jump?]
+              [:action start-wallflipback]]
+
+   ;; Priority 7: Wall run
+   [:sequence [:condition in-air?] [:condition jump-held?]
+              [:condition strafe-into-wall?] [:action start-wallrun]]
+
+   ;; Priority 8: Wall run flip
+   [:sequence [:condition in-wallrun-state?] [:condition just-pressed-jump?]
+              [:action start-wallrunflip]]
+
+   ;; Priority 9: Flip
+   [:sequence [:condition can-flip?] [:action start-flip]]
+
+   ;; Priority 10: Glide (in air, released movement after having it)
+   [:sequence [:condition in-air?] [:condition falling?]
+              [:condition had-movement-this-jump?] [:condition no-movement?]
+              [:action start-inair]]
+
+   ;; Priority 11: Jump pose (default air state)
+   [:sequence [:condition in-air?] [:action start-jump]]
+
+   ;; Priority 12: Run (grounded with movement)
+   [:sequence [:condition grounded?] [:condition has-movement-input?]
+              [:action start-run]]
+
+   ;; Priority 13: Idle (default)
+   [:action start-idle]])
+
+;; =============================================================================
+;; Pre-tick and Post-tick State Updates
+;; =============================================================================
+
+(defn pre-tick!
+  "Update derived state before running the behavior tree.
+   Computes edge detection, timers, and complex conditions."
+  [st-memory input dt]
+  (let [state @st-memory
+        {:keys [was-grounded was-jump-held air-time had-movement-this-jump
+                flip-ready jump-held-since-takeoff has-flipped-this-jump
+                roll-timer flip-timer wallrun-timer wallflip-timer land-timer
+                movement-state]} state
+        {:keys [grounded jump-held forward backward left right]} input
+        has-movement (or forward backward left right)
+
+        ;; Edge detection
         just-landed (and grounded (not was-grounded))
         just-jumped (and (not grounded) was-grounded)
         just-pressed-jump (and jump-held (not was-jump-held))
 
-        ;; Get current timer for locked animation check
-        current-timer (cond
-                        (= movement-state :roll) roll-timer
-                        (= movement-state :flip) flip-timer
-                        (= movement-state :wallrun) wallrun-timer
-                        (or (= movement-state :wallrunflip)
-                            (= movement-state :wallflipback)) wallflip-timer
-                        :else 0.0)
-
-        ;; Check if we're in a locked animation that must complete
-        locked? (is-locked-anim? movement-state current-timer)
-
-        ;; Update timers (decrement all active timers)
+        ;; Update timers
         new-roll-timer (if (> roll-timer 0.0) (max 0.0 (- roll-timer dt)) 0.0)
         new-flip-timer (if (> flip-timer 0.0) (max 0.0 (- flip-timer dt)) 0.0)
         new-wallrun-timer (if (> wallrun-timer 0.0) (max 0.0 (- wallrun-timer dt)) 0.0)
         new-wallflip-timer (if (> wallflip-timer 0.0) (max 0.0 (- wallflip-timer dt)) 0.0)
-
-        ;; Track air time - reset on each new jump, increment when in air
-        new-air-time (cond
-                       grounded 0.0
-                       just-jumped dt      ; Fresh jump starts at dt, not accumulated
-                       :else (+ air-time dt))
-
-        ;; Track if movement keys were held at any point during this jump
-        ;; Reset when grounded, set to true if movement input detected while in air
-        new-had-movement-this-jump (if grounded
-                                     false
-                                     (or had-movement-this-jump has-movement-input))
-
-        ;; Track if jump has been held continuously since leaving ground
-        ;; On takeoff frame, check if holding jump. Then track continuously.
-        new-jump-held-since-takeoff (cond
-                                      grounded true                           ; Ready for next jump
-                                      just-jumped jump-held                   ; On takeoff, set based on current hold
-                                      (not jump-held) false                   ; Released jump mid-air
-                                      :else jump-held-since-takeoff)          ; Keep current state
-
-        ;; Track if already flipped during this jump - reset when grounded
-        new-has-flipped-this-jump (if grounded false has-flipped-this-jump)
-
-        ;; Flip can trigger when: in air + holding jump continuously + direction + not already flipping
-        ;; Either: waited long enough OR flip was "ready" from previous jump
-        can-flip (and (not grounded)
-                      jump-held
-                      new-jump-held-since-takeoff              ; Must have held jump since takeoff
-                      has-movement-input
-                      (not new-has-flipped-this-jump)          ; Only one flip per jump
-                      (or flip-ready                           ; Ready from bunny hop
-                          (> new-air-time FLIP_HOLD_TIME))     ; Or held long enough this jump
-                      (not= movement-state :flip)              ; Not already flipping
-                      (= flip-timer 0.0))
-
-        ;; Mark that we've flipped if can-flip is true
-        new-has-flipped-this-jump (or new-has-flipped-this-jump can-flip)
-
-        ;; Track flip-ready: becomes true when you've earned a flip (held long enough or triggered one)
-        ;; Stays true as long as you keep holding movement keys (for bunny hop chains)
-        ;; You may release jump briefly to trigger new jumps, but keep movement held
-        new-flip-ready (cond
-                         ;; Became ready: held long enough to earn a flip
-                         can-flip true
-                         ;; Stay ready as long as holding movement (in air or on ground)
-                         has-movement-input flip-ready
-                         ;; Reset when movement keys released
-                         :else false)
-
-        ;; Determine new movement state
-        [new-movement-state new-roll-timer new-flip-timer new-wallrun-timer new-wallflip-timer new-wallrun-side]
-        (cond
-          ;; If locked in animation, continue until timer expires
-          locked?
-          [movement-state new-roll-timer new-flip-timer new-wallrun-timer new-wallflip-timer wallrun-side]
-
-          ;; Just landed - check for roll (crouch + movement input)
-          ;; JKA: Roll triggers on landing if crouching while moving
-          (and just-landed crouch has-movement-input)
-          (let [roll-duration (get anim-durations (get-animation-name :roll new-direction) 0.8)]
-            [:roll roll-duration 0.0 0.0 0.0 :none])
-
-          ;; Just landed - normal landing animation
-          just-landed
-          [:land 0.0 0.0 0.0 0.0 :none]
-
-          ;; Still playing landing animation (only while grounded)
-          (and grounded (= movement-state :land) (> land-timer 0.0))
-          [:land 0.0 0.0 0.0 0.0 :none]
-
-          ;; GROUNDED: Roll initiation (crouch + in run state)
-          ;; JKA checks PM_RunningAnim, not speed - if in run anim and crouch, roll immediately
-          (and grounded crouch (= movement-state :run))
-          (let [roll-duration (get anim-durations (get-animation-name :roll new-direction) 0.8)]
-            [:roll roll-duration 0.0 0.0 0.0 :none])
-
-          ;; IN AIR: Wall flip back (forward + wall in front + just pressed jump)
-          (and (not grounded) forward wall-front just-pressed-jump)
-          (let [flip-duration (get anim-durations "BOTH_WALL_FLIP_BACK1" 0.8)]
-            [:wallflipback 0.0 0.0 0.0 flip-duration :none])
-
-          ;; IN AIR: Wall run initiation (strafe into wall + jump held + not too high)
-          (and (not grounded) jump-held (or (and left wall-left) (and right wall-right)))
-          (let [side (if (and left wall-left) :left :right)
-                wallrun-duration (get anim-durations (if (= side :left)
-                                                       "BOTH_WALL_RUN_LEFT"
-                                                       "BOTH_WALL_RUN_RIGHT") 1.5)]
-            [:wallrun 0.0 0.0 wallrun-duration 0.0 side])
-
-          ;; IN AIR: Wall run flip (during wall run + jump pressed)
-          (and (= movement-state :wallrun) just-pressed-jump)
-          (let [flip-anim (if (= wallrun-side :left)
-                            "BOTH_WALL_RUN_LEFT_FLIP"
-                            "BOTH_WALL_RUN_RIGHT_FLIP")
-                flip-duration (get anim-durations flip-anim 0.8)]
-            [:wallrunflip 0.0 0.0 0.0 flip-duration wallrun-side])
-
-          ;; IN AIR: Flip - triggers when holding jump + direction on a new jump
-          can-flip
-          (let [flip-duration (get anim-durations (get-animation-name :flip new-direction) 0.8)]
-            [:flip 0.0 flip-duration 0.0 0.0 :none])
-
-          ;; IN AIR: Glide/T-pose - triggers when movement keys are released while in air
-          ;; Player jumps with direction held, then releases direction keys -> T-pose glide
-          ;; Only triggers if movement was held at some point during this jump (not just standing jump)
-          (and (not grounded) is-falling new-had-movement-this-jump (not has-movement-input))
-          [:inair 0.0 0.0 0.0 0.0 :none]
-
-          ;; IN AIR: Jump pose - default air state
-          (not grounded)
-          [:jump 0.0 0.0 0.0 0.0 :none]
-
-          ;; GROUNDED: Running
-          has-movement-input
-          [:run 0.0 0.0 0.0 0.0 :none]
-
-          ;; GROUNDED: Idle
-          :else
-          [:idle 0.0 0.0 0.0 0.0 :none])
-
-        ;; Get new animation name
-        ;; For wall run, use the wallrun-side to determine direction
-        effective-direction (if (= new-movement-state :wallrun)
-                              new-wallrun-side
-                              (if (= new-movement-state :wallrunflip)
-                                new-wallrun-side
-                                new-direction))
-        new-anim (get-animation-name new-movement-state effective-direction)
-
-        ;; Animation changed?
-        anim-changed (not= new-anim current-anim)
-
-        ;; Update time (loop within duration, but not for one-shot anims)
-        ;; Jump and inair animations should hold at end, not loop
-        one-shot? (or (= new-movement-state :roll)
-                      (= new-movement-state :flip)
-                      (= new-movement-state :wallrun)
-                      (= new-movement-state :wallrunflip)
-                      (= new-movement-state :wallflipback)
-                      (= new-movement-state :land)
-                      (= new-movement-state :jump)
-                      (= new-movement-state :inair))
-        new-time (if anim-changed
-                   0.0
-                   (let [duration (get anim-durations new-anim 1.0)
-                         next-time (+ current-time dt)]
-                     (if one-shot?
-                       ;; One-shot: clamp at end
-                       (min next-time duration)
-                       ;; Looping: wrap around
-                       (if (and (> duration 0.0) (>= next-time duration))
-                         (let [remainder (- next-time duration)]
-                           (if (>= remainder duration)
-                             (- next-time (* duration (cpp/floor (cpp// (cpp/double next-time) (cpp/double duration)))))
-                             remainder))
-                         next-time))))
-
-        ;; Update land timer
         new-land-timer (cond
                          just-landed LAND_DURATION
-                         (= new-movement-state :land) (max 0.0 (- land-timer dt))
-                         :else 0.0)]
+                         (= movement-state :land) (max 0.0 (- land-timer dt))
+                         :else 0.0)
 
-    {:movement-state new-movement-state
-     :direction new-direction
-     :current-anim new-anim
-     :current-time new-time
-     :was-grounded grounded
-     :land-timer new-land-timer
-     :roll-timer new-roll-timer
-     :flip-timer new-flip-timer
-     :wallrun-timer new-wallrun-timer
-     :wallflip-timer new-wallflip-timer
-     :air-time new-air-time
-     :was-jump-held jump-held
-     :had-movement-this-jump new-had-movement-this-jump
-     :flip-ready new-flip-ready
-     :jump-held-since-takeoff new-jump-held-since-takeoff
-     :has-flipped-this-jump new-has-flipped-this-jump
-     :wallrun-side new-wallrun-side}))
+        ;; Track air time
+        new-air-time (cond
+                       grounded 0.0
+                       just-jumped dt
+                       :else (+ air-time dt))
+
+        ;; Track movement during jump
+        new-had-movement-this-jump (if grounded
+                                     false
+                                     (or had-movement-this-jump has-movement))
+
+        ;; Track jump held since takeoff
+        new-jump-held-since-takeoff (cond
+                                      grounded true
+                                      just-jumped jump-held
+                                      (not jump-held) false
+                                      :else jump-held-since-takeoff)
+
+        ;; Reset flip flag on landing
+        new-has-flipped-this-jump (if grounded false has-flipped-this-jump)
+
+        ;; Compute can-flip
+        can-flip (and (not grounded)
+                      jump-held
+                      new-jump-held-since-takeoff
+                      has-movement
+                      (not new-has-flipped-this-jump)
+                      (or flip-ready (> new-air-time FLIP_HOLD_TIME))
+                      (not= movement-state :flip)
+                      (<= flip-timer 0.0))
+
+        ;; Update flip-ready
+        new-flip-ready (cond
+                         can-flip true
+                         has-movement flip-ready
+                         :else false)]
+
+    (swap! st-memory merge
+           {:roll-timer new-roll-timer
+            :flip-timer new-flip-timer
+            :wallrun-timer new-wallrun-timer
+            :wallflip-timer new-wallflip-timer
+            :land-timer new-land-timer
+            :air-time new-air-time
+            :had-movement-this-jump new-had-movement-this-jump
+            :jump-held-since-takeoff new-jump-held-since-takeoff
+            :has-flipped-this-jump new-has-flipped-this-jump
+            :flip-ready new-flip-ready
+            :can-flip can-flip
+            ;; Edge detection results
+            :just-landed just-landed
+            :just-jumped just-jumped
+            :just-pressed-jump just-pressed-jump})))
+
+(defn post-tick!
+  "Update state after running the behavior tree.
+   Saves was-* state for next frame edge detection."
+  [st-memory input dt anim-durations]
+  (let [{:keys [grounded jump-held]} input
+        state @st-memory
+        {:keys [movement-state current-anim current-time]} state
+
+        ;; Determine if animation is one-shot (holds at end) or looping
+        one-shot? (#{:roll :flip :wallrun :wallrunflip :wallflipback :land :jump :inair} movement-state)
+        duration (get anim-durations current-anim 1.0)
+        next-time (+ current-time dt)
+        new-time (if one-shot?
+                   (min next-time duration)
+                   (if (and (> duration 0.0) (>= next-time duration))
+                     (let [remainder (- next-time duration)]
+                       (if (>= remainder duration)
+                         (- next-time (* duration (cpp/floor (cpp// (cpp/double next-time) (cpp/double duration)))))
+                         remainder))
+                     next-time))]
+
+    (swap! st-memory assoc
+           :was-grounded grounded
+           :was-jump-held jump-held
+           :current-time new-time)))
+
+;; =============================================================================
+;; Main Update Function
+;; =============================================================================
+
+(defn create-jka-behavior-tree
+  "Creates the JKA animation behavior tree."
+  [anim-durations]
+  (bt/build jka-tree-config {:st-memory (atom (create-jka-state))
+                              :anim-durations anim-durations}))
+
+(defn update-jka-state
+  "Updates JKA animation state using behavior tree.
+   Returns the current state map for rendering.
+
+   Backwards-compatible API:
+   - jka-state: Either a behavior tree or a plain state map (with embedded :__bt)
+   - input: Current frame input
+   - dt: Delta time
+   - anim-durations: Animation duration map (used to create bt if needed)"
+  [jka-state input dt anim-durations]
+  (let [;; Get or create behavior tree
+        bt (cond
+             ;; Already a behavior tree object
+             (:tree jka-state) jka-state
+             ;; State map with embedded behavior tree
+             (:__bt jka-state) (:__bt jka-state)
+             ;; Plain state map - create new behavior tree
+             :else (create-jka-behavior-tree anim-durations))
+        ctx (:context bt)
+        st-memory (:st-memory ctx)]
+    ;; Pre-tick: compute derived state
+    (pre-tick! st-memory input dt)
+
+    ;; Run behavior tree with current input
+    (bt/run (assoc bt :context (assoc ctx :input input)))
+
+    ;; Post-tick: update animation time and was-* state
+    (post-tick! st-memory input dt anim-durations)
+
+    ;; Return current state with embedded behavior tree for next call
+    (assoc @st-memory :__bt bt)))
 
 (defn get-time-ratio
   "Gets current animation time as 0.0-1.0 ratio"

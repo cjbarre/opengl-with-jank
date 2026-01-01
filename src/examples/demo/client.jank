@@ -738,9 +738,6 @@ inline bool init_glew_client() {
                 cmd-input (assoc cmd-input
                                  :pitch (:pitch input)
                                  :yaw (:yaw input))]
-            ;; Debug: print input state
-            (when (:forward cmd-input)
-              (println "INPUT: forward=" (:forward cmd-input) "yaw=" (:yaw cmd-input)))
             ;; Run prediction
             (swap! client-state update :pred-state
                    pred/predict cmd-input physics-fn dt)

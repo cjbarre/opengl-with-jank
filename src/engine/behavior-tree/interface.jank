@@ -1,0 +1,82 @@
+(ns engine.behavior-tree.interface
+  "Public API for behavior trees.
+
+   Usage:
+     (def my-tree
+       (bt/build
+         [:fallback
+           [:sequence
+             [:condition grounded?]
+             [:action run-action]]
+           [:action idle-action]]
+         {:st-memory (atom {:state :idle})}))
+
+     (bt/run my-tree)  ; => :success, :failure, or :running"
+  (:require [engine.behavior-tree.protocol :as p]
+            [engine.behavior-tree.core]))
+
+;; Re-export result values for convenience
+(def success p/success)
+(def failure p/failure)
+(def running p/running)
+
+(defn build
+  "Build a behavior tree from vector DSL.
+
+   config: Vector DSL like [:sequence [:condition pred-fn] [:action action-fn]]
+   context: Map passed to all nodes. Can include:
+     - :st-memory - atom for short-term memory (created if not provided)
+     - Any user-defined keys for conditions/actions
+
+   Returns a built tree that can be executed with `run`."
+  [config context]
+  (let [[node-type & args] config]
+    {:tree (p/build node-type args)
+     :context (cond-> context
+                :always (update :st-memory #(or % (atom {}))))}))
+
+(defn run
+  "Execute ('tick') a behavior tree.
+
+   Returns :success, :failure, or :running."
+  [{:keys [tree context]}]
+  (p/tick tree context))
+
+;; =============================================================================
+;; Short-Term Memory Helpers
+;; =============================================================================
+
+(defn get-memory
+  "Get a value from short-term memory at the given path.
+
+   Examples:
+     (get-memory context [:movement-state])
+     (get-memory context [:timers :roll])"
+  [context path]
+  (get-in @(:st-memory context) path))
+
+(defn set-memory!
+  "Set a value in short-term memory at the given path.
+
+   Examples:
+     (set-memory! context [:movement-state] :running)
+     (set-memory! context [:timers :roll] 0.5)"
+  [context path value]
+  (swap! (:st-memory context) assoc-in path value))
+
+(defn update-memory!
+  "Update a value in short-term memory with a function.
+
+   Examples:
+     (update-memory! context [:timer] - dt)
+     (update-memory! context [:count] inc)"
+  [context path f & args]
+  (apply swap! (:st-memory context) update-in path f args))
+
+(defn reset-memory!
+  "Reset the entire short-term memory to a new value.
+
+   Example:
+     (reset-memory! context {:movement-state :idle :timer 0.0})"
+  [context value]
+  (reset! (:st-memory context) value))
