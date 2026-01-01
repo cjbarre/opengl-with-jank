@@ -495,7 +495,7 @@
    ;; Priority 9: Flip (JKA: height threshold + ascending + direction + jump held)
    [:sequence [:condition can-flip?] [:action start-flip]]
 
-   ;; Priority 10: Force jump (Case 3: just jumped + jump held + no forward/back)
+   ;; Priority 10: Force jump (just jumped + jump held + no forward/back)
    ;; This is the T-pose arms-out jump when you release forward/back but hold jump
    ;; Strafe (left/right) is allowed and will use directional force jump animations
    [:sequence [:condition just-jumped?] [:condition jump-held?]
