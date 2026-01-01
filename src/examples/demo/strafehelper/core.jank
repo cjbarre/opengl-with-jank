@@ -2,70 +2,71 @@
   (:require [engine.2d.graphics.interface :as gfx2d]
             [engine.2d.text.interface :as text]))
 
-(cpp/raw "#include <cmath>")
+;; Math constants
+(def PI 3.14159)
+(def TWO_PI 6.28318)
+(def HALF_PI 1.5708)
+(def QUARTER_PI 0.785398)
 
-(cpp/raw "
+;; Pure Jank math functions using cpp/ interop
 
-// Normalize angle to -PI to PI range
-inline float normalize_angle(float a) {
-    while (a > 3.14159f) a -= 6.28318f;
-    while (a < -3.14159f) a += 6.28318f;
-    return a;
-}
+(defn normalize-angle
+  "Normalize angle to -PI to PI range."
+  [a]
+  (let [a (cpp/float a)]
+    (loop [angle a]
+      (cond
+        (cpp/> angle (cpp/float PI))
+        (recur (cpp/- angle (cpp/float TWO_PI)))
 
-// Calculate the velocity angle in XZ plane (returns radians)
-inline float calc_velocity_angle_cpp(float vx, float vz) {
-    if (fabs(vx) < 0.001f && fabs(vz) < 0.001f) {
-        return 0.0f;
-    }
-    return atan2(vz, vx);
-}
+        (cpp/< angle (cpp/float (- PI)))
+        (recur (cpp/+ angle (cpp/float TWO_PI)))
 
-// Normalize yaw to match atan2 range
-inline float normalize_yaw_cpp(float yaw_rad) {
-    return normalize_angle(yaw_rad);
-}
+        :else angle))))
 
-// Calculate horizontal speed
-inline float calc_speed_cpp(float vx, float vz) {
-    return sqrt(vx * vx + vz * vz);
-}
+(defn calc-velocity-angle
+  "Calculate the velocity angle in XZ plane (radians)."
+  [vx vz]
+  (let [vx (cpp/float vx)
+        vz (cpp/float vz)]
+    (if (and (cpp/< (cpp/fabs vx) (cpp/float 0.001))
+             (cpp/< (cpp/fabs vz) (cpp/float 0.001)))
+      (cpp/float 0.0)
+      (cpp/float (cpp/atan2 vz vx)))))
 
-// Calculate optimal strafe angle based on current speed
-// Returns angle in radians (0 to PI/2)
-// When speed > max_speed, optimal angle = acos(max_speed / speed)
-// When speed <= max_speed, any angle works (return PI/4 as default)
-inline float calc_optimal_angle_cpp(float speed, float max_speed) {
-    if (speed <= max_speed || speed < 0.001f) {
-        return 0.785398f; // PI/4 = 45 degrees
-    }
-    float ratio = max_speed / speed;
-    if (ratio > 1.0f) ratio = 1.0f;
-    return acos(ratio);
-}
+(defn calc-speed
+  "Calculate horizontal speed."
+  [vx vz]
+  (let [vx (cpp/float vx)
+        vz (cpp/float vz)]
+    (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx vx) (cpp/* vz vz))))))
 
-// Calculate the minimum strafe angle where you still gain speed
-// This is where velocity_component_in_wish_dir = max_speed
-// angle = acos(max_speed / speed) - same as optimal for Q3 physics
-// But for visual range, we want the full acceleration zone
-inline float calc_min_accel_angle_cpp(float speed, float max_speed) {
-    if (speed <= 0.001f) return 0.0f;
-    if (speed <= max_speed) return 0.0f;
-    return acos(max_speed / speed);
-}
+(defn calc-optimal-angle
+  "Calculate optimal strafe angle for maximum acceleration.
+   Returns angle in radians (0 to PI/2).
+   When speed > max_speed, optimal angle = acos(max_speed / speed).
+   When speed <= max_speed, any angle works (return PI/4 as default)."
+  [speed max-speed]
+  (let [speed (cpp/float speed)
+        max-speed (cpp/float max-speed)]
+    (if (or (cpp/<= speed max-speed)
+            (cpp/< speed (cpp/float 0.001)))
+      (cpp/float QUARTER_PI)
+      (let [ratio (cpp// max-speed speed)
+            ratio (if (cpp/> ratio (cpp/float 1.0))
+                    (cpp/float 1.0)
+                    ratio)]
+        (cpp/float (cpp/acos ratio))))))
 
-// Calculate max angle where you still gain speed
-// This is PI/2 (90 degrees) - you can strafe perpendicular and still gain
-// Actually in Q3 physics, max angle is where speed * cos(angle) = 0
-// which is PI/2, but effective max is limited by how much you can turn
-inline float calc_max_accel_angle_cpp(float speed, float max_speed) {
-    (void)max_speed;
-    if (speed <= 0.001f) return 1.5708f; // PI/2
-    // The max angle where you gain speed is where speed * cos(angle) = max_speed
-    // But since cos can go to 0, the max effective angle is ~PI/2
-    return 1.5708f; // PI/2 = 90 degrees
-}
-")
+(defn calc-min-accel-angle
+  "Calculate minimum angle where you still gain speed."
+  [speed max-speed]
+  (let [speed (cpp/float speed)
+        max-speed (cpp/float max-speed)]
+    (cond
+      (cpp/<= speed (cpp/float 0.001)) (cpp/float 0.0)
+      (cpp/<= speed max-speed) (cpp/float 0.0)
+      :else (cpp/float (cpp/acos (cpp// max-speed speed))))))
 
 ;; Colors for the strafehelper
 (def color-background [0.2 0.2 0.2 0.4])
@@ -85,25 +86,6 @@ inline float calc_max_accel_angle_cpp(float speed, float max_speed) {
    :segments 64
    :max-speed 8.0})
 
-(defn calc-velocity-angle
-  "Calculate the velocity angle in XZ plane (radians)."
-  [vx vz]
-  (cpp/calc_velocity_angle_cpp (cpp/float. vx) (cpp/float. vz)))
-
-(defn calc-speed
-  "Calculate horizontal speed."
-  [vx vz]
-  (cpp/calc_speed_cpp (cpp/float. vx) (cpp/float. vz)))
-
-(defn calc-optimal-angle
-  "Calculate optimal strafe angle for maximum acceleration."
-  [speed max-speed]
-  (cpp/calc_optimal_angle_cpp (cpp/float. speed) (cpp/float. max-speed)))
-
-(defn calc-min-accel-angle
-  "Calculate minimum angle where you still gain speed."
-  [speed max-speed]
-  (cpp/calc_min_accel_angle_cpp (cpp/float. speed) (cpp/float. max-speed)))
 
 (defn render-strafehelper
   "Render the CGaz-style strafehelper.
@@ -125,13 +107,13 @@ inline float calc_max_accel_angle_cpp(float speed, float max_speed) {
         ;; Calculate angles
         speed (calc-speed vx vz)
         vel-angle (calc-velocity-angle vx vz)
-        yaw-rad (cpp/normalize_yaw_cpp (cpp/float (* yaw (/ 3.14159 180.0))))
+        yaw-rad (normalize-angle (* yaw (/ PI 180.0)))
         optimal-angle (calc-optimal-angle speed max-speed)
         min-accel (calc-min-accel-angle speed max-speed)
 
         ;; Calculate velocity angle RELATIVE to view direction
         ;; This is what matters for strafing - the angle between where you look and where you move
-        rel-vel-angle (cpp/normalize_yaw_cpp (cpp/float (- vel-angle yaw-rad)))
+        rel-vel-angle (normalize-angle (- vel-angle yaw-rad))
 
         ;; Arc is fixed on screen, pointing up (-PI/2)
         ;; Velocity line shows angle relative to your view

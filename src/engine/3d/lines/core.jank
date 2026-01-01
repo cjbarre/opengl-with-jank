@@ -1,0 +1,80 @@
+(ns engine.3d.lines.core
+  "Line rendering utilities for skeleton visualization and debug drawing."
+  (:require [engine.gl.constants :as gl]))
+
+(cpp/raw "#include \"gl_wrappers.h\"")
+
+;; C++ helpers for line VAO/VBO management
+;; These are necessary because Jank can't auto-cast to GL types from boxed objects
+(cpp/raw "
+  // Create line VAO and VBO, returns them via output parameters
+  inline void create_line_vao_helper(int max_lines, unsigned int* vao_out, unsigned int* vbo_out) {
+    GLuint vao, vbo;
+    glGenVertexArrays(1, &vao);
+    glGenBuffers(1, &vbo);
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, max_lines * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+    *vao_out = vao;
+    *vbo_out = vbo;
+  }
+
+  // Update line VBO with vertex data
+  inline void update_line_vbo_helper(unsigned int vbo, float* vertices, int line_count) {
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
+  }
+
+  // Bind line VAO
+  inline void bind_line_vao_helper(unsigned int vao) {
+    glBindVertexArray(vao);
+  }
+
+  // Unbind VAO
+  inline void unbind_line_vao_helper() {
+    glBindVertexArray(0);
+  }
+
+  // Draw lines
+  inline void draw_lines_helper(int line_count) {
+    glDrawArrays(GL_LINES, 0, line_count * 2);
+  }
+")
+
+(defn create-line-vao
+  "Creates a VAO and VBO for line rendering.
+   Returns {:vao vao-id :vbo vbo-id :max-lines n}"
+  [{:keys [max-lines]
+    :or {max-lines 128}}]
+  (let [vao-ptr (cpp/new (cpp/type "unsigned int"))
+        vbo-ptr (cpp/new (cpp/type "unsigned int"))
+        _ (cpp/create_line_vao_helper (cpp/int max-lines) vao-ptr vbo-ptr)
+        vao (cpp/* vao-ptr)
+        vbo (cpp/* vbo-ptr)]
+    {:vao vao :vbo vbo :max-lines max-lines}))
+
+(defn update-line-vbo
+  "Updates the VBO with new line vertex data.
+   line-data: map with :vbo key
+   vertices: raw float pointer (from get_vector_data or similar)
+   line-count: number of lines (each line = 2 vertices = 6 floats)"
+  [{:keys [vbo]} vertices line-count]
+  (cpp/update_line_vbo_helper vbo vertices (cpp/int line-count)))
+
+(defn bind-line-vao
+  "Binds the line VAO for rendering."
+  [{:keys [vao]}]
+  (cpp/bind_line_vao_helper vao))
+
+(defn unbind-line-vao
+  "Unbinds the line VAO."
+  []
+  (cpp/unbind_line_vao_helper))
+
+(defn draw-lines
+  "Draws lines. line-count is the number of lines (each line = 2 vertices)."
+  [line-count]
+  (cpp/draw_lines_helper (cpp/int line-count)))

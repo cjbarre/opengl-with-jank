@@ -1,0 +1,34 @@
+(ns engine.3d.lines.interface
+  "Line rendering utilities for skeleton visualization and debug drawing."
+  (:require [engine.3d.lines.core :as core]))
+
+(defn create-line-vao
+  "Creates a VAO and VBO for line rendering.
+   Options:
+     :max-lines - Maximum number of lines (default 128)
+   Returns {:vao vao-id :vbo vbo-id :max-lines n}"
+  [{:keys [_max-lines] :as args}]
+  (core/create-line-vao args))
+
+(defn update-line-vbo
+  "Updates the VBO with new line vertex data.
+   line-data should be the result from create-line-vao.
+   vertices should be a pointer to float data.
+   line-count is the number of lines."
+  [line-data vertices line-count]
+  (core/update-line-vbo line-data vertices line-count))
+
+(defn bind-line-vao
+  "Binds the line VAO for rendering."
+  [line-data]
+  (core/bind-line-vao line-data))
+
+(defn unbind-line-vao
+  "Unbinds the line VAO."
+  []
+  (core/unbind-line-vao))
+
+(defn draw-lines
+  "Draws lines. line-count is the number of lines."
+  [line-count]
+  (core/draw-lines line-count))

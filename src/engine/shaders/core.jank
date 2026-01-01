@@ -34,11 +34,12 @@
   (clet [shader-type (case type
                        :fragment gl/GL_FRAGMENT_SHADER
                        :vertex gl/GL_VERTEX_SHADER
+                       :geometry gl/GL_GEOMETRY_SHADER
                        nil)
          :when (not shader-type)
          :error (throw (ex-info
                         "Invalid shader type"
-                        (assoc args :valid-types [:fragment :vertex])))
+                        (assoc args :valid-types [:fragment :vertex :geometry])))
          source (cpp/unbox (cpp/type "void*") (io/slurp {:path path}))
          sources (cpp/sources source)
          shader (cpp/wrap_glCreateShader shader-type)
@@ -77,6 +78,38 @@
                   (throw (ex-info "Shader program linking failed"
                                   args)))
          _ (cpp/wrap_glDeleteShader vertex-shader)
+         _ (cpp/wrap_glDeleteShader fragment-shader)]
+
+        program))
+
+(defn load-shader-program-with-geometry
+  [{:keys [vertex-shader-path
+           geometry-shader-path
+           fragment-shader-path]
+    :as args}]
+  (clet [vertex-shader (compile-shader
+                        {:path vertex-shader-path
+                         :type :vertex})
+         geometry-shader (compile-shader
+                          {:path geometry-shader-path
+                           :type :geometry})
+         fragment-shader (compile-shader
+                          {:path fragment-shader-path
+                           :type :fragment})
+         program (cpp/wrap_glCreateProgram)
+         _ (cpp/wrap_glAttachShader program vertex-shader)
+         _ (cpp/wrap_glAttachShader program geometry-shader)
+         _ (cpp/wrap_glAttachShader program fragment-shader)
+         _ (cpp/wrap_glLinkProgram program)
+         success? (cpp/int)
+         _ (cpp/wrap_glGetProgramiv program gl/GL_LINK_STATUS (cpp/& success?))
+         :when (cpp/! success?)
+         :error (do
+                  (cpp/log_link_error program)
+                  (throw (ex-info "Shader program linking failed"
+                                  args)))
+         _ (cpp/wrap_glDeleteShader vertex-shader)
+         _ (cpp/wrap_glDeleteShader geometry-shader)
          _ (cpp/wrap_glDeleteShader fragment-shader)]
 
         program))

@@ -37,6 +37,11 @@
   inline int gl_cull_face() { return GL_CULL_FACE; }
   inline int gl_texture0() { return GL_TEXTURE0; }
   inline int gl_unsigned_int() { return GL_UNSIGNED_INT; }
+  inline int gl_geometry_shader() { return GL_GEOMETRY_SHADER; }
+  inline int gl_blend() { return GL_BLEND; }
+  inline int gl_src_alpha() { return GL_SRC_ALPHA; }
+  inline int gl_one_minus_src_alpha() { return GL_ONE_MINUS_SRC_ALPHA; }
+  inline int gl_red() { return GL_RED; }
 
   // GLFW constants
   inline int glfw_press() { return GLFW_PRESS; }
@@ -103,6 +108,11 @@
 (def GL_CULL_FACE (cpp/gl_cull_face))
 (def GL_TEXTURE0 (cpp/gl_texture0))
 (def GL_UNSIGNED_INT (cpp/gl_unsigned_int))
+(def GL_GEOMETRY_SHADER (cpp/gl_geometry_shader))
+(def GL_BLEND (cpp/gl_blend))
+(def GL_SRC_ALPHA (cpp/gl_src_alpha))
+(def GL_ONE_MINUS_SRC_ALPHA (cpp/gl_one_minus_src_alpha))
+(def GL_RED (cpp/gl_red))
 
 ;; GLFW constants
 (def GLFW_PRESS (cpp/glfw_press))

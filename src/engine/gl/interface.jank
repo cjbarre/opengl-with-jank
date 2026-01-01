@@ -1,0 +1,18 @@
+(ns engine.gl.interface
+  (:require [engine.gl.core :as core]))
+
+(defn set-viewport
+  [{:keys [_x _y _width _height] :as args}]
+  (core/set-viewport args))
+
+(defn enable
+  [{:keys [_capability] :as args}]
+  (core/enable args))
+
+(defn disable
+  [{:keys [_capability] :as args}]
+  (core/disable args))
+
+(defn set-blend-func
+  [{:keys [_src _dest] :as args}]
+  (core/set-blend-func args))
