@@ -359,7 +359,12 @@ inline bool init_glew_client() {
         ;; Get animation index and time ratio
         anim-name (:current-anim new-jka-state)
         anim-index (get indices anim-name 0)
-        time-ratio (jka/get-time-ratio new-jka-state durations)]
+        time-ratio (jka/get-time-ratio new-jka-state durations)
+        movement-state (:movement-state new-jka-state)]
+
+    ;; Debug: print animation state for run and inair
+    (when (#{:run :inair} movement-state)
+      (println "ANIM:" movement-state "name=" anim-name "idx=" anim-index "ratio=" time-ratio))
 
     ;; Sample animation
     (anim/sample {:context (:animation/context anim-data)

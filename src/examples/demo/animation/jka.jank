@@ -124,8 +124,12 @@
 ;; =============================================================================
 
 (def LAND_DURATION 0.2)
-(def FLIP_HOLD_TIME 0.3)
 (def WALL_RUN_MIN_HEIGHT 0.5)
+
+;; Height thresholds for force jump (matching JKA's forceJumpHeight)
+;; Player must exceed normal jump height before flip triggers
+(def NORMAL_JUMP_HEIGHT 1.0)  ; Height of a normal jump
+(def GLIDE_VELOCITY_THRESHOLD 64.0)  ; Below this speed, transition to glide (JKA uses 64)
 
 ;; =============================================================================
 ;; Helper Functions
@@ -173,18 +177,17 @@
    :flip-timer 0.0
    :wallrun-timer 0.0
    :wallflip-timer 0.0
-   :air-time 0.0
    :was-jump-held false
-   :had-movement-this-jump false
-   :flip-ready false
-   :jump-held-since-takeoff true
    :has-flipped-this-jump false
    :wallrun-side :none
+   ;; JKA-style height tracking for force jump
+   :force-jump-z-start 0.0  ; Height when jump started
    ;; Derived state (computed pre-tick)
    :just-landed false
    :just-jumped false
    :just-pressed-jump false
-   :can-flip false})
+   :can-flip false
+   :velocity-small false})
 
 ;; =============================================================================
 ;; Condition Functions
@@ -264,17 +267,31 @@
   [{:keys [st-memory]}]
   (:can-flip @st-memory))
 
-(defn falling?
-  [{:keys [input]}]
-  (<= (or (:vy input) 0.0) 0.0))
-
-(defn had-movement-this-jump?
+(defn velocity-small?
+  "Check if velocity is below glide threshold (JKA-style).
+   Only true if already in an air animation (like JKA's inAirAnim flag)."
   [{:keys [st-memory]}]
-  (:had-movement-this-jump @st-memory))
+  (let [{:keys [velocity-small movement-state]} @st-memory]
+    ;; JKA: pm->ps->inAirAnim && VectorLengthSquared < 4096
+    ;; Only transition to glide if already in jump/inair/forcejump state
+    (and velocity-small
+         (#{:jump :inair :forcejump :forceinair} movement-state))))
 
 (defn no-movement?
-  [ctx]
-  (not (has-movement-input? ctx)))
+  "Check if no directional keys are pressed"
+  [{:keys [input]}]
+  (let [{:keys [forward backward left right]} input]
+    (not (or forward backward left right))))
+
+(defn in-forcejump-state?
+  "Check if in force jump state (for transitioning to forceinair)"
+  [{:keys [st-memory]}]
+  (= (:movement-state @st-memory) :forcejump))
+
+(defn in-forceinair-state?
+  "Check if in force inair state"
+  [{:keys [st-memory]}]
+  (= (:movement-state @st-memory) :forceinair))
 
 ;; =============================================================================
 ;; Action Functions
@@ -384,6 +401,34 @@
       (set-state! st-memory :jump direction))
     bt/success))
 
+(defn start-forcejump
+  "Force jump - T-pose arms out, used when jump held but no directional input"
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)
+        current (:movement-state @st-memory)]
+    (when (not= current :forcejump)
+      (set-state! st-memory :forcejump direction))
+    bt/success))
+
+(defn start-forceinair
+  "Force jump in-air pose"
+  [{:keys [st-memory input]}]
+  (let [direction (direction-from-input input)
+        current (:movement-state @st-memory)]
+    (when (not= current :forceinair)
+      (set-state! st-memory :forceinair direction))
+    bt/success))
+
+(defn continue-forcejump
+  "Continue force jump animation while in air"
+  [{:keys [st-memory]}]
+  bt/success)
+
+(defn continue-forceinair
+  "Continue force inair animation"
+  [{:keys [st-memory]}]
+  bt/success)
+
 (defn start-run
   [{:keys [st-memory input]}]
   (let [direction (direction-from-input input)
@@ -440,15 +485,27 @@
    [:sequence [:condition in-wallrun-state?] [:condition just-pressed-jump?]
               [:action start-wallrunflip]]
 
-   ;; Priority 9: Flip
+   ;; Priority 9: Flip (JKA: height threshold + ascending + direction + jump held)
    [:sequence [:condition can-flip?] [:action start-flip]]
 
-   ;; Priority 10: Glide (in air, released movement after having it)
-   [:sequence [:condition in-air?] [:condition falling?]
-              [:condition had-movement-this-jump?] [:condition no-movement?]
+   ;; Priority 10: Force jump (Case 3: just jumped + jump held + no directional input)
+   ;; This is the T-pose arms-out jump when you release movement but hold jump
+   [:sequence [:condition just-jumped?] [:condition jump-held?]
+              [:condition no-movement?] [:action start-forcejump]]
+
+   ;; Priority 11: Continue force jump while in air (don't fall through to regular jump)
+   [:sequence [:condition in-air?] [:condition in-forcejump-state?]
+              [:action continue-forcejump]]
+
+   ;; Priority 12: Force in-air (glide after force jump when velocity small)
+   [:sequence [:condition in-air?] [:condition in-forceinair-state?]
+              [:action continue-forceinair]]
+
+   ;; Priority 13: Glide (JKA: velocity magnitude < 64, transition to inair)
+   [:sequence [:condition in-air?] [:condition velocity-small?]
               [:action start-inair]]
 
-   ;; Priority 11: Jump pose (default air state)
+   ;; Priority 14: Jump pose (default air state with directional input)
    [:sequence [:condition in-air?] [:action start-jump]]
 
    ;; Priority 12: Run (grounded with movement)
@@ -464,14 +521,19 @@
 
 (defn pre-tick!
   "Update derived state before running the behavior tree.
-   Computes edge detection, timers, and complex conditions."
+   Computes edge detection, timers, and complex conditions.
+
+   JKA-style flip logic:
+   - Flip requires: in air, jump held, ascending, past height threshold, has direction input
+
+   JKA-style glide logic:
+   - Glide when horizontal velocity < 64 units/sec"
   [st-memory input dt]
   (let [state @st-memory
-        {:keys [was-grounded was-jump-held air-time had-movement-this-jump
-                flip-ready jump-held-since-takeoff has-flipped-this-jump
+        {:keys [was-grounded was-jump-held has-flipped-this-jump
                 roll-timer flip-timer wallrun-timer wallflip-timer land-timer
-                movement-state]} state
-        {:keys [grounded jump-held forward backward left right]} input
+                movement-state force-jump-z-start]} state
+        {:keys [grounded jump-held forward backward left right height vy speed]} input
         has-movement (or forward backward left right)
 
         ;; Edge detection
@@ -489,42 +551,42 @@
                          (= movement-state :land) (max 0.0 (- land-timer dt))
                          :else 0.0)
 
-        ;; Track air time
-        new-air-time (cond
-                       grounded 0.0
-                       just-jumped dt
-                       :else (+ air-time dt))
+        ;; Track jump start height (JKA: forceJumpZStart)
+        new-force-jump-z-start (cond
+                                 just-jumped (or height 0.0)  ; Record height at takeoff
+                                 grounded 0.0                  ; Reset on ground
+                                 :else force-jump-z-start)     ; Keep tracking
 
-        ;; Track movement during jump
-        new-had-movement-this-jump (if grounded
-                                     false
-                                     (or had-movement-this-jump has-movement))
-
-        ;; Track jump held since takeoff
-        new-jump-held-since-takeoff (cond
-                                      grounded true
-                                      just-jumped jump-held
-                                      (not jump-held) false
-                                      :else jump-held-since-takeoff)
+        ;; Calculate height traveled since jump start
+        cur-height (if (and (not grounded) (> new-force-jump-z-start 0.0))
+                     (- (or height 0.0) new-force-jump-z-start)
+                     0.0)
 
         ;; Reset flip flag on landing
         new-has-flipped-this-jump (if grounded false has-flipped-this-jump)
 
-        ;; Compute can-flip
+        ;; JKA-style can-flip check:
+        ;; 1. In air
+        ;; 2. Jump held (PMF_JUMP_HELD)
+        ;; 3. Still ascending (velocity[2] > 0)
+        ;; 4. Past normal jump height threshold
+        ;; 5. Has directional input NOW (not stored)
+        ;; 6. Haven't already flipped this jump
+        ;; 7. Not already in flip animation
+        ascending (> (or vy 0.0) 0.0)
+        past-height-threshold (> cur-height NORMAL_JUMP_HEIGHT)
         can-flip (and (not grounded)
                       jump-held
-                      new-jump-held-since-takeoff
+                      ascending
+                      past-height-threshold
                       has-movement
                       (not new-has-flipped-this-jump)
-                      (or flip-ready (> new-air-time FLIP_HOLD_TIME))
                       (not= movement-state :flip)
                       (<= flip-timer 0.0))
 
-        ;; Update flip-ready
-        new-flip-ready (cond
-                         can-flip true
-                         has-movement flip-ready
-                         :else false)]
+        ;; JKA-style velocity check for glide transition
+        ;; Transition to INAIR when horizontal speed < 64
+        velocity-small (< (or speed 0.0) GLIDE_VELOCITY_THRESHOLD)]
 
     (swap! st-memory merge
            {:roll-timer new-roll-timer
@@ -532,12 +594,10 @@
             :wallrun-timer new-wallrun-timer
             :wallflip-timer new-wallflip-timer
             :land-timer new-land-timer
-            :air-time new-air-time
-            :had-movement-this-jump new-had-movement-this-jump
-            :jump-held-since-takeoff new-jump-held-since-takeoff
+            :force-jump-z-start new-force-jump-z-start
             :has-flipped-this-jump new-has-flipped-this-jump
-            :flip-ready new-flip-ready
             :can-flip can-flip
+            :velocity-small velocity-small
             ;; Edge detection results
             :just-landed just-landed
             :just-jumped just-jumped
@@ -552,7 +612,7 @@
         {:keys [movement-state current-anim current-time]} state
 
         ;; Determine if animation is one-shot (holds at end) or looping
-        one-shot? (#{:roll :flip :wallrun :wallrunflip :wallflipback :land :jump :inair} movement-state)
+        one-shot? (#{:roll :flip :wallrun :wallrunflip :wallflipback :land :jump :inair :forcejump :forceinair} movement-state)
         duration (get anim-durations current-anim 1.0)
         next-time (+ current-time dt)
         new-time (if one-shot?
@@ -568,6 +628,16 @@
            :was-grounded grounded
            :was-jump-held jump-held
            :current-time new-time)))
+
+;; =============================================================================
+;; Debug Logging
+;; =============================================================================
+
+(def DEBUG_LOG false)
+
+(defn log-debug [& args]
+  (when DEBUG_LOG
+    (println (apply str args))))
 
 ;; =============================================================================
 ;; Main Update Function
@@ -598,12 +668,30 @@
              ;; Plain state map - create new behavior tree
              :else (create-jka-behavior-tree anim-durations))
         ctx (:context bt)
-        st-memory (:st-memory ctx)]
+        st-memory (:st-memory ctx)
+        {:keys [forward backward left right jump-held grounded]} input
+        has-mov (or forward backward left right)]
+
     ;; Pre-tick: compute derived state
     (pre-tick! st-memory input dt)
 
+    (let [pre-state @st-memory
+          {:keys [just-jumped just-landed movement-state]} pre-state]
+      ;; Log when there's interesting input or state changes
+      (when (or has-mov jump-held just-jumped just-landed)
+        (log-debug "INPUT: fwd=" forward " bck=" backward " L=" left " R=" right
+                   " jump=" jump-held " gnd=" grounded
+                   " | PRE: just-jumped=" just-jumped " just-landed=" just-landed
+                   " state=" movement-state)))
+
     ;; Run behavior tree with current input
     (bt/run (assoc bt :context (assoc ctx :input input)))
+
+    (let [post-state @st-memory
+          {:keys [movement-state current-anim]} post-state]
+      ;; Log the result
+      (when (or has-mov jump-held (:just-jumped @st-memory) (:just-landed @st-memory))
+        (log-debug "  -> RESULT: state=" movement-state " anim=" current-anim)))
 
     ;; Post-tick: update animation time and was-* state
     (post-tick! st-memory input dt anim-durations)
