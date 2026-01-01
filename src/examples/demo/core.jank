@@ -56,14 +56,17 @@ inline bool init_glew() {
     return shader;
   }
 
-  inline GLuint create_line_shader_demo(const char* vs, const char* fs) {
+  inline GLuint create_line_shader_demo(const char* vs, const char* gs, const char* fs) {
     GLuint vert = compile_shader_demo(GL_VERTEX_SHADER, vs);
+    GLuint geom = compile_shader_demo(GL_GEOMETRY_SHADER, gs);
     GLuint frag = compile_shader_demo(GL_FRAGMENT_SHADER, fs);
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
+    glAttachShader(prog, geom);
     glAttachShader(prog, frag);
     glLinkProgram(prog);
     glDeleteShader(vert);
+    glDeleteShader(geom);
     glDeleteShader(frag);
     return prog;
   }
@@ -92,23 +95,77 @@ inline bool init_glew() {
   }
 ")
 
-;; Simple line shader for skeleton visualization
+;; Thick line shader for skeleton visualization using geometry shader
 (def line-vertex-shader
   "#version 330 core
    layout (location = 0) in vec3 aPos;
    uniform mat4 model;
    uniform mat4 view;
-   uniform mat4 projection;
+   out vec3 worldPos;
    void main() {
-       gl_Position = projection * view * model * vec4(aPos, 1.0);
+       vec4 wp = model * vec4(aPos, 1.0);
+       worldPos = wp.xyz;
+       gl_Position = view * wp;
+   }")
+
+(def line-geometry-shader
+  "#version 330 core
+   layout (lines) in;
+   layout (triangle_strip, max_vertices = 4) out;
+   uniform mat4 projection;
+   uniform float lineWidth;
+   in vec3 worldPos[];
+   out float edgeDist;
+   out float boneHeight;
+   void main() {
+       vec4 p0 = gl_in[0].gl_Position;
+       vec4 p1 = gl_in[1].gl_Position;
+
+       // Calculate line direction in screen space
+       vec2 dir = normalize(p1.xy/p1.w - p0.xy/p0.w);
+       vec2 normal = vec2(-dir.y, dir.x) * lineWidth * 0.5;
+
+       // Pass bone height for gradient (use average Y)
+       float h = (worldPos[0].y + worldPos[1].y) * 0.5;
+
+       // Emit quad vertices
+       edgeDist = -1.0; boneHeight = h;
+       gl_Position = projection * vec4(p0.xy + normal * p0.w, p0.z, p0.w);
+       EmitVertex();
+
+       edgeDist = 1.0; boneHeight = h;
+       gl_Position = projection * vec4(p0.xy - normal * p0.w, p0.z, p0.w);
+       EmitVertex();
+
+       edgeDist = -1.0; boneHeight = h;
+       gl_Position = projection * vec4(p1.xy + normal * p1.w, p1.z, p1.w);
+       EmitVertex();
+
+       edgeDist = 1.0; boneHeight = h;
+       gl_Position = projection * vec4(p1.xy - normal * p1.w, p1.z, p1.w);
+       EmitVertex();
+
+       EndPrimitive();
    }")
 
 (def line-fragment-shader
   "#version 330 core
    out vec4 FragColor;
    uniform vec3 lineColor;
+   uniform vec3 lineColor2;
+   in float edgeDist;
+   in float boneHeight;
    void main() {
-       FragColor = vec4(lineColor, 1.0);
+       // Gradient based on bone height (feet to head)
+       float t = clamp(boneHeight * 0.5 + 0.5, 0.0, 1.0);
+       vec3 color = mix(lineColor, lineColor2, t);
+
+       // Soft edge falloff for anti-aliasing
+       float alpha = 1.0 - smoothstep(0.7, 1.0, abs(edgeDist));
+
+       // Slight glow at center
+       float glow = 1.0 + 0.3 * (1.0 - abs(edgeDist));
+       FragColor = vec4(color * glow, alpha);
    }")
 
 (cpp/raw
@@ -357,13 +414,20 @@ inline bool init_glew() {
     (cpp/wrap_glUseProgram line-shader)
     (let [projection-m-loc (cpp/wrap_glGetUniformLocation line-shader "projection")]
       (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m)))
-    ;; Set line color to cyan
-    (cpp/wrap_glUniform3f (cpp/glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
+    ;; Set line width and colors for thick stylized bones
+    (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
+    (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
+    (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)
+    ;; Enable blending for soft edges
+    (cpp/glEnable (cpp/int 0x0BE2))  ;; GL_BLEND
+    (cpp/glBlendFunc (cpp/int 0x0302) (cpp/int 0x0303))  ;; GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
     (camera-system (assoc context :shader line-shader))
     (doseq [e (vals (:entities @state))]
       (when (contains? (:tags e) :animated)
         (transform-system (assoc context :shader line-shader) e)
-        (render-skeleton-system context e)))))
+        (render-skeleton-system context e)))
+    ;; Disable blending after skeleton rendering
+    (cpp/glDisable (cpp/int 0x0BE2))))
 
 (defn update-cursor
   [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
