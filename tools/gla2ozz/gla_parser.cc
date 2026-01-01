@@ -306,9 +306,11 @@ uint32_t GlaParser::ReadFrameIndex(int frame, int bone) const {
 
     // Read 3-byte little-endian index
     const uint8_t* p = m_frame_data + offset;
-    return static_cast<uint32_t>(p[0]) |
+    uint32_t idx = static_cast<uint32_t>(p[0]) |
            (static_cast<uint32_t>(p[1]) << 8) |
            (static_cast<uint32_t>(p[2]) << 16);
+
+    return idx;
 }
 
 void GlaParser::DecompressBone(const CompressedBone& comp,

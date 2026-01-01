@@ -332,17 +332,6 @@ class GlaImporter : public ozz::animation::offline::OzzImporter {
                 world_rot_ozz[j] = coord_convert::NormalizeQuaternion(
                     coord_convert::ConvertQuaternion(world_rot_jka));
 
-                // Debug: print world transform for first frame, key joints
-                const char* joint_name = _skeleton.joint_names()[j];
-                bool is_key_joint = (j < 3 || strstr(joint_name, "humerus") != nullptr);
-                if (f == 0 && is_key_joint) {
-                    printf("  [%s] Joint[%d] '%s' GLA bone %d, frame %d:\n",
-                           clip->name.c_str(), j, joint_name, gla_bone, gla_frame);
-                    printf("    JKA world: (%.2f, %.2f, %.2f)\n",
-                           world_pos_jka.x, world_pos_jka.y, world_pos_jka.z);
-                    printf("    OZZ world: (%.4f, %.4f, %.4f)\n",
-                           world_pos_ozz[j].x, world_pos_ozz[j].y, world_pos_ozz[j].z);
-                }
             }
 
             // Phase 2: Compute local transforms using ozz's parent hierarchy
