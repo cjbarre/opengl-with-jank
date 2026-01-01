@@ -31,6 +31,7 @@
                      :velocity [0.0 0.0 0.0]
                      :grounded? true
                      :jump-z-start nil
+                     :backflip-jump? false
                      :pitch 0.0
                      :yaw INITIAL_YAW}
    :server-state nil               ; Last received server state

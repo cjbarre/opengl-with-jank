@@ -20,6 +20,8 @@
 
 (def GRAVITY 25.6)
 (def JUMP_VELOCITY 7.2)
+(def BACKFLIP_BOOST 4.1)         ; JKA: 128/225 * JUMP_VELOCITY = extra boost for backflip
+(def BACKFLIP_VELOCITY 11.3)     ; JUMP_VELOCITY + BACKFLIP_BOOST (no force jump thrust)
 (def FORCE_JUMP_STRENGTH 26.88)  ; Level 3 force jump
 (def FORCE_JUMP_HEIGHT 12.3)     ; Level 3 max height
 (def GROUND_ACCEL 10.0)
@@ -107,7 +109,7 @@
 (defn simulate-physics
   "Run one physics tick for an entity.
 
-   entity-state: Map with :position, :velocity, :grounded?, :jump-z-start
+   entity-state: Map with :position, :velocity, :grounded?, :jump-z-start, :backflip-jump?
    input: Map with :forward, :backward, :left, :right, :jump-held, :yaw, :pitch
    delta-time: Time step in seconds
    collision-mesh: Optional collision mesh for ground detection
@@ -115,7 +117,11 @@
    Returns updated entity state."
   [entity-state input delta-time collision-mesh]
   (let [{:keys [position velocity grounded? jump-z-start]} entity-state
-        {:keys [jump-held pitch yaw]} input
+        ;; Default backflip-jump? to false if not present (nil would break logic)
+        backflip-jump? (if (contains? entity-state :backflip-jump?)
+                         (:backflip-jump? entity-state)
+                         false)
+        {:keys [forward backward left right jump-held pitch yaw]} input
         [px py pz] position
         [vx vy vz] velocity
 
@@ -123,6 +129,11 @@
         ground-y (when collision-mesh
                    (collision/raycast-ground collision-mesh [px py pz]))
         is-grounded (and ground-y (<= py (+ ground-y 0.2)))
+
+        ;; Clear backflip flag on landing (only when actually landing, not just near ground)
+        ;; Must be falling (vy <= 0) and grounded to count as landing
+        actually-landed (and is-grounded (<= vy 0))
+        backflip-jump? (if actually-landed false backflip-jump?)
 
         ;; Calculate wish direction from input
         [wish-x wish-z] (calc-wish-direction input)
@@ -139,14 +150,24 @@
         ;; Clear jump-z-start when not holding jump
         jump-z-start (if (not jump-held) nil jump-z-start)
 
+        ;; Backflip detection (JKA: backward + jump + grounded + no strafe)
+        ;; Backflip gets boosted velocity but NO force jump thrust
+        is-backflip (and is-grounded jump-held (nil? jump-z-start)
+                         backward (not forward) (not left) (not right))
+
         ;; Initial jump (grounded + button pressed + not already jumping)
-        [vy is-grounded jump-z-start]
+        ;; Use BACKFLIP_VELOCITY for backflips, JUMP_VELOCITY for normal jumps
+        [vy is-grounded jump-z-start backflip-jump?]
         (if (and is-grounded jump-held (nil? jump-z-start))
-          [JUMP_VELOCITY false py]
-          [vy is-grounded jump-z-start])
+          (if is-backflip
+            [BACKFLIP_VELOCITY false py true]   ; Backflip: boosted velocity, flag set
+            [JUMP_VELOCITY false py false])     ; Normal: regular velocity
+          [vy is-grounded jump-z-start backflip-jump?])
 
         ;; Force Jump thrust (JKA Metroid-style)
+        ;; Skip force jump thrust if this is a backflip jump
         vy (if (and (not is-grounded)
+                    (not backflip-jump?)  ; Backflips don't get force jump
                     jump-held
                     jump-z-start
                     (> vy 0))
@@ -172,15 +193,17 @@
         ;; Clamp to ground (raycast collision)
         ground-y-at-new-pos (when collision-mesh
                               (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
-        [new-py vy is-grounded] (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
-                                  [ground-y-at-new-pos 0.0 true]
-                                  [new-py vy is-grounded])]
+        [new-py vy is-grounded backflip-jump?]
+        (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
+          [ground-y-at-new-pos 0.0 true false]  ; Clear backflip flag on landing
+          [new-py vy is-grounded backflip-jump?])]
 
     ;; Return updated entity state
     {:position [new-px new-py new-pz]
      :velocity [vx vy vz]
      :grounded? is-grounded
      :jump-z-start jump-z-start
+     :backflip-jump? backflip-jump?
      :pitch pitch
      :yaw yaw}))
 
@@ -195,6 +218,7 @@
    :velocity (:physics/velocity entity [0.0 0.0 0.0])
    :grounded? (:physics/grounded entity true)
    :jump-z-start (:physics/jump-z-start entity)
+   :backflip-jump? (:physics/backflip-jump entity false)
    :pitch (:transform/pitch entity 0.0)
    :yaw (:transform/yaw entity 0.0)})
 
@@ -231,6 +255,7 @@
    :physics/velocity (:velocity physics-state)
    :physics/grounded (:grounded? physics-state)
    :physics/jump-z-start (:jump-z-start physics-state)
+   :physics/backflip-jump (:backflip-jump? physics-state)
    :transform/pitch (:pitch physics-state)
    :transform/yaw (:yaw physics-state)})
 
@@ -258,6 +283,7 @@
    :pitch (:pitch physics-state)
    :yaw (:yaw physics-state)
    :grounded? (:grounded? physics-state)
+   :backflip-jump? (:backflip-jump? physics-state false)
    :animation-index (:animation-index physics-state 0)
    :animation-time (:animation-time physics-state 0.0)})
 
@@ -268,5 +294,6 @@
    :velocity (:velocity network-state)
    :grounded? (:grounded? network-state)
    :jump-z-start nil  ; Not transmitted, reconstructed locally
+   :backflip-jump? (:backflip-jump? network-state false)
    :pitch (:pitch network-state)
    :yaw (:yaw network-state)})

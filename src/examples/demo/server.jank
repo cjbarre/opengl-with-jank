@@ -61,6 +61,7 @@
              :physics/velocity [0.0 0.0 0.0]
              :physics/grounded true
              :physics/jump-z-start nil
+             :physics/backflip-jump false
              :tags #{:networked :player}
              :animation/current-index 0
              :animation/time 0.0}))

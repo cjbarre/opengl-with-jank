@@ -12,7 +12,7 @@
   "Create a network-transmittable entity state.
 
    Contains only the data needed for rendering and physics reconciliation."
-  [{:keys [id position velocity pitch yaw grounded?
+  [{:keys [id position velocity pitch yaw grounded? backflip-jump?
            animation-index animation-time]}]
   {:id id
    :position position         ; [x y z]
@@ -20,6 +20,7 @@
    :pitch pitch               ; camera/look pitch
    :yaw yaw                   ; camera/look yaw
    :grounded? grounded?       ; on ground?
+   :backflip-jump? (or backflip-jump? false)
    :animation-index animation-index
    :animation-time animation-time})
 
@@ -33,6 +34,7 @@
     :pitch (:transform/pitch entity)
     :yaw (:transform/yaw entity)
     :grounded? (:physics/grounded entity)
+    :backflip-jump? (:physics/backflip-jump entity false)
     :animation-index (:animation/current-index entity)
     :animation-time (:animation/time entity)}))
 
