@@ -132,8 +132,7 @@
 ;; =============================================================================
 
 (def LAND_DURATION 0.2)           ; Seconds to play landing animation
-(def ROLL_SPEED_THRESHOLD 8.0)    ; Minimum speed to initiate roll (JKA uses 200 units ~= 8.0 in our scale)
-(def FORCE_JUMP_HEIGHT 2.0)       ; Height above jump start to trigger force jump (normal jump ~1.5)
+(def FLIP_HOLD_TIME 0.3)          ; Seconds jump must be held before flip triggers
 (def WALL_RUN_MIN_HEIGHT 0.5)     ; Minimum height above ground for wall run
 
 ;; =============================================================================
@@ -153,9 +152,12 @@
    :flip-timer 0.0                 ; Time remaining in flip animation
    :wallrun-timer 0.0              ; Time remaining in wall run
    :wallflip-timer 0.0             ; Time remaining in wall flip
-   :force-jump-active false        ; Whether force jump has been activated
-   :jump-start-height 0.0          ; Height when jump started (for force jump detection)
+   :air-time 0.0                   ; Time spent in air
    :was-jump-held false            ; Track jump key state for edge detection
+   :had-movement-this-jump false   ; True if movement keys were held at any point during this jump
+   :flip-ready false               ; True if holding movement+jump on takeoff (for bunny hop flips)
+   :jump-held-since-takeoff true   ; True if jump has been held continuously since leaving ground
+   :has-flipped-this-jump false    ; True if already did a flip during this jump
    :wallrun-side :none})
 
 (defn direction-from-input
@@ -195,7 +197,7 @@
    Returns updated state."
   [{:keys [movement-state direction current-anim current-time
            was-grounded land-timer roll-timer flip-timer wallrun-timer wallflip-timer
-           force-jump-active jump-start-height was-jump-held wallrun-side] :as state}
+           air-time was-jump-held had-movement-this-jump flip-ready jump-held-since-takeoff has-flipped-this-jump wallrun-side] :as state}
    {:keys [forward backward left right grounded crouch jump-held speed height vy
            wall-left wall-right wall-front] :as input}
    dt
@@ -210,6 +212,11 @@
         wall-left (or wall-left false)
         wall-right (or wall-right false)
         wall-front (or wall-front false)
+        air-time (or air-time 0.0)
+        had-movement-this-jump (or had-movement-this-jump false)
+        flip-ready (or flip-ready false)
+        jump-held-since-takeoff (if (nil? jump-held-since-takeoff) true jump-held-since-takeoff)
+        has-flipped-this-jump (or has-flipped-this-jump false)
 
         ;; Determine if player is rising or falling
         ;; JKA uses velocity[2] <= 0 to trigger inair/glide animation
@@ -242,24 +249,54 @@
         new-wallrun-timer (if (> wallrun-timer 0.0) (max 0.0 (- wallrun-timer dt)) 0.0)
         new-wallflip-timer (if (> wallflip-timer 0.0) (max 0.0 (- wallflip-timer dt)) 0.0)
 
-        ;; Check for force jump activation (passed normal jump height while holding jump)
-        ;; Track if force jump is JUST activating this frame (for flip trigger)
-        force-jump-activating (and (not grounded)
-                                   (not force-jump-active)
-                                   jump-held
-                                   (> (- height jump-start-height) FORCE_JUMP_HEIGHT))
+        ;; Track air time - reset on each new jump, increment when in air
+        new-air-time (cond
+                       grounded 0.0
+                       just-jumped dt      ; Fresh jump starts at dt, not accumulated
+                       :else (+ air-time dt))
 
-        new-force-jump-active (cond
-                                ;; Reset on landing
-                                grounded false
-                                ;; Already active
-                                force-jump-active true
-                                ;; Activating this frame
-                                force-jump-activating true
-                                :else false)
+        ;; Track if movement keys were held at any point during this jump
+        ;; Reset when grounded, set to true if movement input detected while in air
+        new-had-movement-this-jump (if grounded
+                                     false
+                                     (or had-movement-this-jump has-movement-input))
 
-        ;; Track jump start height
-        new-jump-start-height (if just-jumped height jump-start-height)
+        ;; Track if jump has been held continuously since leaving ground
+        ;; On takeoff frame, check if holding jump. Then track continuously.
+        new-jump-held-since-takeoff (cond
+                                      grounded true                           ; Ready for next jump
+                                      just-jumped jump-held                   ; On takeoff, set based on current hold
+                                      (not jump-held) false                   ; Released jump mid-air
+                                      :else jump-held-since-takeoff)          ; Keep current state
+
+        ;; Track if already flipped during this jump - reset when grounded
+        new-has-flipped-this-jump (if grounded false has-flipped-this-jump)
+
+        ;; Flip can trigger when: in air + holding jump continuously + direction + not already flipping
+        ;; Either: waited long enough OR flip was "ready" from previous jump
+        can-flip (and (not grounded)
+                      jump-held
+                      new-jump-held-since-takeoff              ; Must have held jump since takeoff
+                      has-movement-input
+                      (not new-has-flipped-this-jump)          ; Only one flip per jump
+                      (or flip-ready                           ; Ready from bunny hop
+                          (> new-air-time FLIP_HOLD_TIME))     ; Or held long enough this jump
+                      (not= movement-state :flip)              ; Not already flipping
+                      (= flip-timer 0.0))
+
+        ;; Mark that we've flipped if can-flip is true
+        new-has-flipped-this-jump (or new-has-flipped-this-jump can-flip)
+
+        ;; Track flip-ready: becomes true when you've earned a flip (held long enough or triggered one)
+        ;; Stays true as long as you keep holding movement keys (for bunny hop chains)
+        ;; You may release jump briefly to trigger new jumps, but keep movement held
+        new-flip-ready (cond
+                         ;; Became ready: held long enough to earn a flip
+                         can-flip true
+                         ;; Stay ready as long as holding movement (in air or on ground)
+                         has-movement-input flip-ready
+                         ;; Reset when movement keys released
+                         :else false)
 
         ;; Determine new movement state
         [new-movement-state new-roll-timer new-flip-timer new-wallrun-timer new-wallflip-timer new-wallrun-side]
@@ -268,9 +305,9 @@
           locked?
           [movement-state new-roll-timer new-flip-timer new-wallrun-timer new-wallflip-timer wallrun-side]
 
-          ;; Just landed - check for roll (crouch + was moving fast)
-          ;; Note: Roll triggers on landing if crouching AND was moving fast
-          (and just-landed crouch has-movement-input (> speed ROLL_SPEED_THRESHOLD))
+          ;; Just landed - check for roll (crouch + movement input)
+          ;; JKA: Roll triggers on landing if crouching while moving
+          (and just-landed crouch has-movement-input)
           (let [roll-duration (get anim-durations (get-animation-name :roll new-direction) 0.8)]
             [:roll roll-duration 0.0 0.0 0.0 :none])
 
@@ -278,12 +315,13 @@
           just-landed
           [:land 0.0 0.0 0.0 0.0 :none]
 
-          ;; Still playing landing animation
-          (and (= movement-state :land) (> land-timer 0.0))
+          ;; Still playing landing animation (only while grounded)
+          (and grounded (= movement-state :land) (> land-timer 0.0))
           [:land 0.0 0.0 0.0 0.0 :none]
 
-          ;; GROUNDED: Roll initiation (crouch + running fast)
-          (and grounded crouch has-movement-input (> speed ROLL_SPEED_THRESHOLD))
+          ;; GROUNDED: Roll initiation (crouch + in run state)
+          ;; JKA checks PM_RunningAnim, not speed - if in run anim and crouch, roll immediately
+          (and grounded crouch (= movement-state :run))
           (let [roll-duration (get anim-durations (get-animation-name :roll new-direction) 0.8)]
             [:roll roll-duration 0.0 0.0 0.0 :none])
 
@@ -308,22 +346,18 @@
                 flip-duration (get anim-durations flip-anim 0.8)]
             [:wallrunflip 0.0 0.0 0.0 flip-duration wallrun-side])
 
-          ;; IN AIR: Flip - triggers when force jump JUST activates while holding a direction
-          ;; This is the authentic JKA behavior - flips happen automatically, not on second jump
-          (and (not grounded) force-jump-activating has-movement-input)
+          ;; IN AIR: Flip - triggers when holding jump + direction on a new jump
+          can-flip
           (let [flip-duration (get anim-durations (get-animation-name :flip new-direction) 0.8)]
             [:flip 0.0 flip-duration 0.0 0.0 :none])
 
-          ;; IN AIR: Force jump in air (no direction = just the force jump pose)
-          (and (not grounded) new-force-jump-active)
-          [:forceinair 0.0 0.0 0.0 0.0 :none]
-
-          ;; IN AIR: Glide/T-pose - only when FALLING and NOT holding jump
-          ;; JKA: velocity[2] <= 0 && !(PMF_JUMP_HELD)
-          (and (not grounded) is-falling (not jump-held))
+          ;; IN AIR: Glide/T-pose - triggers when movement keys are released while in air
+          ;; Player jumps with direction held, then releases direction keys -> T-pose glide
+          ;; Only triggers if movement was held at some point during this jump (not just standing jump)
+          (and (not grounded) is-falling new-had-movement-this-jump (not has-movement-input))
           [:inair 0.0 0.0 0.0 0.0 :none]
 
-          ;; IN AIR: Jump pose - when rising OR holding jump
+          ;; IN AIR: Jump pose - default air state
           (not grounded)
           [:jump 0.0 0.0 0.0 0.0 :none]
 
@@ -348,12 +382,15 @@
         anim-changed (not= new-anim current-anim)
 
         ;; Update time (loop within duration, but not for one-shot anims)
+        ;; Jump and inair animations should hold at end, not loop
         one-shot? (or (= new-movement-state :roll)
                       (= new-movement-state :flip)
                       (= new-movement-state :wallrun)
                       (= new-movement-state :wallrunflip)
                       (= new-movement-state :wallflipback)
-                      (= new-movement-state :land))
+                      (= new-movement-state :land)
+                      (= new-movement-state :jump)
+                      (= new-movement-state :inair))
         new-time (if anim-changed
                    0.0
                    (let [duration (get anim-durations new-anim 1.0)
@@ -385,9 +422,12 @@
      :flip-timer new-flip-timer
      :wallrun-timer new-wallrun-timer
      :wallflip-timer new-wallflip-timer
-     :force-jump-active new-force-jump-active
-     :jump-start-height new-jump-start-height
+     :air-time new-air-time
      :was-jump-held jump-held
+     :had-movement-this-jump new-had-movement-this-jump
+     :flip-ready new-flip-ready
+     :jump-held-since-takeoff new-jump-held-since-takeoff
+     :has-flipped-this-jump new-has-flipped-this-jump
      :wallrun-side new-wallrun-side}))
 
 (defn get-time-ratio
