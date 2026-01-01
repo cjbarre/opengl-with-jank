@@ -362,8 +362,8 @@ inline bool init_glew_client() {
         time-ratio (jka/get-time-ratio new-jka-state durations)
         movement-state (:movement-state new-jka-state)]
 
-    ;; Debug: print animation state for run and inair
-    (when (#{:run :inair} movement-state)
+    ;; Debug: print animation state for run, inair, and flip
+    (when (#{:run :inair :flip} movement-state)
       (println "ANIM:" movement-state "name=" anim-name "idx=" anim-index "ratio=" time-ratio))
 
     ;; Sample animation

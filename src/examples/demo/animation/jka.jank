@@ -113,7 +113,7 @@
    "BOTH_FORCEINAIR1" "BOTH_FORCEINAIRBACK1" "BOTH_FORCEINAIRLEFT1" "BOTH_FORCEINAIRRIGHT1"
    "BOTH_FORCELAND1" "BOTH_FORCELANDBACK1" "BOTH_FORCELANDLEFT1" "BOTH_FORCELANDRIGHT1"
    "BOTH_ROLL_F" "BOTH_ROLL_B" "BOTH_ROLL_L" "BOTH_ROLL_R"
-   "BOTH_FLIP_F" "BOTH_FLIP_B" "BOTH_FLIP_L" "BOTH_FLIP_R"
+   "BOTH_FLIP_F" "BOTH_FLIP_B" "BOTH_FLIP_L" "BOTH_FLIP_R" "BOTH_FLIP_BACK1"
    "BOTH_WALL_RUN_LEFT" "BOTH_WALL_RUN_RIGHT"
    "BOTH_WALL_RUN_LEFT_FLIP" "BOTH_WALL_RUN_RIGHT_FLIP"
    "BOTH_WALL_RUN_LEFT_STOP" "BOTH_WALL_RUN_RIGHT_STOP"
@@ -300,6 +300,11 @@
   [{:keys [st-memory]}]
   (= (:movement-state @st-memory) :forceinair))
 
+(defn backward?
+  "Check if backward key is pressed"
+  [{:keys [input]}]
+  (:backward input))
+
 ;; =============================================================================
 ;; Action Functions
 ;; =============================================================================
@@ -388,6 +393,22 @@
         duration (get anim-durations anim-name 0.8)]
     (set-state! st-memory :flip direction {:flip-timer duration})
     (swap! st-memory assoc :has-flipped-this-jump true :flip-ready true)
+    bt/success))
+
+(defn start-backflip
+  "Ground-initiated backflip (JKA: press back + jump from ground)
+   Uses BOTH_FLIP_BACK1 which is different from the mid-air BOTH_FLIP_B"
+  [{:keys [st-memory anim-durations]}]
+  (let [anim-name "BOTH_FLIP_BACK1"
+        duration (get anim-durations anim-name 0.8)]
+    ;; Use :backflip state to distinguish from mid-air flip
+    (swap! st-memory merge
+           {:movement-state :flip
+            :direction :backward
+            :current-anim anim-name
+            :current-time 0.0
+            :flip-timer duration
+            :has-flipped-this-jump true})
     bt/success))
 
 (defn start-inair
@@ -479,7 +500,12 @@
    [:sequence [:condition grounded?] [:condition crouching?]
               [:condition in-run-state?] [:action start-roll]]
 
-   ;; Priority 6: Wall flip back
+   ;; Priority 6: Ground backflip (JKA: backward + jump from ground)
+   ;; Use just-jumped? since grounded becomes false on the same frame
+   [:sequence [:condition just-jumped?] [:condition backward?]
+              [:condition jump-held?] [:action start-backflip]]
+
+   ;; Priority 7: Wall flip back
    [:sequence [:condition in-air?] [:condition forward?]
               [:condition wall-front?] [:condition just-pressed-jump?]
               [:action start-wallflipback]]
@@ -641,7 +667,7 @@
 ;; Debug Logging
 ;; =============================================================================
 
-(def DEBUG_LOG false)
+(def DEBUG_LOG true)
 
 (defn log-debug [& args]
   (when DEBUG_LOG
