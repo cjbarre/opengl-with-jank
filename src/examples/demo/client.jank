@@ -249,15 +249,25 @@ inline bool init_glew_client() {
         (assoc anim-data :animation/time 0.0 :animation/current-index 0)))))
 
 (defn render-skeleton-entity
-  "Render a player entity as line skeleton at the given position."
-  [line-shader line-vao line-vbo anim-data position yaw]
+  "Render a player entity as line skeleton at the given position.
+   Applies JKA-style lean based on strafe input."
+  [line-shader line-vao line-vbo anim-data position yaw input]
   (let [[px py pz] position
-        ctx (:animation/context anim-data)]
+        ctx (:animation/context anim-data)
+        ;; Lean based on strafe input keys directly
+        ;; Left strafe = lean left (negative roll), Right strafe = lean right (positive roll)
+        lean-amount (cond
+                      (:left input) -12.0
+                      (:right input) 12.0
+                      :else 0.0)]
     ;; Set model matrix (offset Y by 0.5 to align with ground)
     (let [model-m (-> (cpp/identity_matrix)
                       (cpp/glm.translate (math/gimmie :vec3 [px (+ py 0.5) pz]))
                       (cpp/glm.rotate (cpp/glm.radians (cpp/float (- 90.0 yaw)))
-                                      (math/gimmie :vec3 [0.0 1.0 0.0])))
+                                      (math/gimmie :vec3 [0.0 1.0 0.0]))
+                      ;; Apply lean (roll around forward axis)
+                      (cpp/glm.rotate (cpp/glm.radians (cpp/float lean-amount))
+                                      (math/gimmie :vec3 [0.0 0.0 1.0])))
           model-m-loc (cpp/wrap_glGetUniformLocation line-shader "model")]
       (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                               (cpp/glm.value_ptr model-m)))
@@ -527,7 +537,7 @@ inline bool init_glew_client() {
 
 (defn draw-world
   "Draw the game world."
-  [{:keys [shader line-shader line-vao line-vbo level-model player-anim-data client-state delta-time] :as context}]
+  [{:keys [shader line-shader line-vao line-vbo level-model player-anim-data client-state delta-time input] :as context}]
   (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
   (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
@@ -572,7 +582,7 @@ inline bool init_glew_client() {
 
       ;; Render local player (line skeleton)
       (when player-anim-data
-        (render-skeleton-entity line-shader line-vao line-vbo @player-anim-data local-pos local-yaw))
+        (render-skeleton-entity line-shader line-vao line-vbo @player-anim-data local-pos local-yaw input))
 
       ;; Render remote players (interpolated, line skeleton)
       (let [interp-state (:interp-state state)
@@ -598,7 +608,8 @@ inline bool init_glew_client() {
                     (anim/sample {:context (:animation/context remote-anim)
                                   :animation-index anim-index
                                   :time-ratio time-ratio})
-                    (render-skeleton-entity line-shader line-vao line-vbo remote-anim pos (or yaw 0.0))))))))))))
+                    ;; Remote players don't have input, so no lean
+                    (render-skeleton-entity line-shader line-vao line-vbo remote-anim pos (or yaw 0.0) {})))))))))))
 
 ;; =============================================================================
 ;; Main Client Loop
@@ -697,10 +708,10 @@ inline bool init_glew_client() {
                            (:grounded? render-state)
                            ;; If no grounded info, infer: grounded if not moving vertically
                            (< (abs vy) 0.1))]
-            (swap! anim-data-atom update-player-animation input grounded dt))))
+            (swap! anim-data-atom update-player-animation input grounded dt)))
 
-      ;; Render
-      (draw-world context)
+        ;; Render (pass input for lean effect)
+        (draw-world (assoc context :input input)))
 
       ;; Render debug overlay
       (when (:debug/overlay-visible @client-state)
