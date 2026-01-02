@@ -11,10 +11,6 @@
  "#define STBI_NO_THREAD_LOCALS 1
   #include \"stb_image.h\"")
 
-(cpp/raw
- "inline void* voidify_stbi_uc (stbi_uc*  x) {
-    return (void*) x;
-  }")
 
 ;; Using centralized GL constants from engine.gl.constants
 
@@ -58,8 +54,8 @@
             0
             (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
             gl/GL_UNSIGNED_BYTE
-            (cpp/voidify_stbi_uc data))
+            (cpp/cast (cpp/type "void*") data))
          _ (cpp/wrap_glGenerateMipmap gl/GL_TEXTURE_2D)
-         _ (cpp/stbi_image_free (cpp/voidify_stbi_uc data))]
+         _ (cpp/stbi_image_free (cpp/cast (cpp/type "void*") data))]
 
         texture))

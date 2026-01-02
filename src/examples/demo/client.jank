@@ -743,16 +743,14 @@ inline bool init_glew_client() {
 ;; Entry Point
 ;; =============================================================================
 
-;; Address parsing helpers (inline C++ due to string conversion requirements)
+;; Address parsing helpers (C++ due to std::string method overload ambiguity)
 (cpp/raw "
   #include <string>
   #include <cstdlib>
 
   inline std::string parse_host_helper(const char* addr) {
     std::string s(addr);
-    // Strip tcp:// prefix
     if (s.rfind(\"tcp://\", 0) == 0) s = s.substr(6);
-    // Find last colon for port
     auto pos = s.rfind(':');
     if (pos != std::string::npos) {
       return s.substr(0, pos);

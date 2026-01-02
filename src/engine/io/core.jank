@@ -8,6 +8,8 @@
   #include <dirent.h>
   #include <string.h>")
 
+;; Helper for void* to char* cast (cpp/cast doesn't support this)
+;; Helper for dirent->d_name access (d_name is a fixed-size array, not a pointer)
 (cpp/raw
  "inline char* charify_void (void* buffer) {
     return static_cast<char*>(buffer);

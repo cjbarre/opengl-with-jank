@@ -13,11 +13,7 @@
             [engine.3d.collision.interface :as collision]))
 
 (cpp/raw "#include <thread>
-          #include <chrono>
-
-          inline void server_sleep_ms(int ms) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(ms));
-          }")
+          #include <chrono>")
 
 ;; =============================================================================
 ;; Constants
@@ -192,7 +188,8 @@
 (defn sleep-ms
   "Sleep for the given number of milliseconds."
   [ms]
-  (cpp/server_sleep_ms (cpp/int ms)))
+  (cpp/std.this_thread.sleep_for
+   (cpp/std.chrono.milliseconds (cpp/int ms))))
 
 (defn load-level-collision
   "Load level collision mesh."

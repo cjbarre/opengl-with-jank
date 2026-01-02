@@ -8,34 +8,23 @@
   #include <cstring>
   #include <string>")
 
-;; C helper functions for ENet
+;; C helper functions for ENet - only keeping what requires struct init, NULL pointers, or complex logic
 (cpp/raw
- "inline bool enet_init_wrapper() {
-    return enet_initialize() == 0;
+ "// Client needs NULL pointer as first arg (NULL -> pointer cast not supported)
+  inline ENetHost* create_client_host() {
+    return enet_host_create(NULL, 1, 2, 0, 0);
   }
 
-  inline void enet_shutdown_wrapper() {
-    enet_deinitialize();
-  }
-
+  // Server needs struct init with memset + field assignment
   inline ENetHost* create_server_host(uint16_t port, size_t max_clients) {
     ENetAddress addr;
     memset(&addr, 0, sizeof(addr));
-    // Use IPv4-mapped IPv6 address for dual-stack support
-    // ::ffff:0.0.0.0 accepts both IPv4 and IPv6 connections
     addr.host = in6addr_any;
     addr.port = port;
     return enet_host_create(&addr, max_clients, 2, 0, 0);
   }
 
-  inline ENetHost* create_client_host() {
-    return enet_host_create(NULL, 1, 2, 0, 0);
-  }
-
-  inline void destroy_host_wrapper(ENetHost* host) {
-    enet_host_destroy(host);
-  }
-
+  // Connect needs struct field assignment
   inline ENetPeer* connect_to_host(ENetHost* host, const char* hostname, uint16_t port) {
     ENetAddress addr;
     enet_address_set_host(&addr, hostname);
@@ -43,14 +32,7 @@
     return enet_host_connect(host, &addr, 2, 0);
   }
 
-  inline void disconnect_peer_wrapper(ENetPeer* peer) {
-    enet_peer_disconnect(peer, 0);
-  }
-
-  inline void disconnect_peer_now_wrapper(ENetPeer* peer) {
-    enet_peer_disconnect_now(peer, 0);
-  }
-
+  // Packet send needs ternary + conditional
   inline int send_packet(ENetPeer* peer, const char* data, size_t len, int channel, bool reliable) {
     uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
     ENetPacket* packet = enet_packet_create(data, len, flags);
@@ -58,6 +40,7 @@
     return enet_peer_send(peer, channel, packet);
   }
 
+  // Broadcast needs ternary + conditional
   inline void broadcast_packet(ENetHost* host, const char* data, size_t len, int channel, bool reliable) {
     uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
     ENetPacket* packet = enet_packet_create(data, len, flags);
@@ -66,19 +49,7 @@
     }
   }
 
-  inline int host_service_wrapper(ENetHost* host, ENetEvent* event, uint32_t timeout) {
-    return enet_host_service(host, event, timeout);
-  }
-
-  inline int get_event_type(ENetEvent* event) {
-    return event->type;
-  }
-
-  inline ENetPeer* get_event_peer(ENetEvent* event) {
-    return event->peer;
-  }
-
-  // Returns a null-terminated copy of packet data (caller must free)
+  // Data copy needs malloc + memcpy + null terminate
   inline char* get_event_data_copy(ENetEvent* event) {
     if (event->packet && event->packet->data && event->packet->dataLength > 0) {
       size_t len = event->packet->dataLength;
@@ -92,21 +63,26 @@
     return nullptr;
   }
 
+  // Peer ID needs pointer arithmetic
+  inline uint32_t get_peer_id(ENetPeer* peer) {
+    if (peer && peer->host) {
+      return (uint32_t)(peer - peer->host->peers);
+    }
+    return 0;
+  }
+
+  // Destroy event packet (field access returns reference, can't use in when)
   inline void destroy_event_packet(ENetEvent* event) {
     if (event->packet) {
       enet_packet_destroy(event->packet);
     }
   }
 
+  // Free data copy (char* to void* cast not supported)
   inline void free_data_copy(char* data) {
-    if (data) free(data);
-  }
-
-  inline uint32_t get_peer_id(ENetPeer* peer) {
-    if (peer && peer->host) {
-      return (uint32_t)(peer - peer->host->peers);
+    if (data) {
+      free(data);
     }
-    return 0;
   }")
 
 ;; Lifecycle
@@ -114,12 +90,12 @@
 (defn init!
   "Initialize ENet. Must be called before any other networking functions."
   []
-  (cpp/enet_init_wrapper))
+  (cpp/== (cpp/enet_initialize) (cpp/int 0)))
 
 (defn shutdown!
   "Shutdown ENet. Call when done with networking."
   []
-  (cpp/enet_shutdown_wrapper))
+  (cpp/enet_deinitialize))
 
 ;; Host management
 
@@ -143,7 +119,7 @@
 (defn destroy-host
   "Destroy a host and free its resources."
   [host]
-  (cpp/destroy_host_wrapper (cpp/unbox (cpp/type "ENetHost*") host)))
+  (cpp/enet_host_destroy (cpp/unbox (cpp/type "ENetHost*") host)))
 
 ;; Connection management
 
@@ -160,12 +136,12 @@
 (defn disconnect
   "Gracefully disconnect a peer."
   [peer]
-  (cpp/disconnect_peer_wrapper (cpp/unbox (cpp/type "ENetPeer*") peer)))
+  (cpp/enet_peer_disconnect (cpp/unbox (cpp/type "ENetPeer*") peer) 0))
 
 (defn disconnect-now
   "Immediately disconnect a peer without waiting for acknowledgment."
   [peer]
-  (cpp/disconnect_peer_now_wrapper (cpp/unbox (cpp/type "ENetPeer*") peer)))
+  (cpp/enet_peer_disconnect_now (cpp/unbox (cpp/type "ENetPeer*") peer) 0))
 
 ;; Messaging
 
@@ -215,10 +191,10 @@
            first-poll true]
       ;; First iteration uses timeout-ms, subsequent use 0
       (let [timeout (if first-poll (cpp/int timeout-ms) (cpp/int 0))
-            result (cpp/host_service_wrapper host* event timeout)]
+            result (cpp/enet_host_service host* event timeout)]
         (if (> result 0)
-          (let [event-type (cpp/get_event_type event)
-                peer-ptr (cpp/get_event_peer event)
+          (let [event-type (cpp/.-type event)
+                peer-ptr (cpp/.-peer event)
                 peer-id (cpp/get_peer_id peer-ptr)
                 evt (cond
                       ;; ENET_EVENT_TYPE_CONNECT = 1

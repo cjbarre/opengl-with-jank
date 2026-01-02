@@ -91,15 +91,6 @@
               indices-data (parse-indices (cpp/box (cpp/& primitive)))]
           (merge attribute-data indices-data))))}))
 
-(cpp/raw
- "inline cgltf_float* get_node_translation_headless(cgltf_node* node) {
-    return node->translation;
-  }")
-
-(cpp/raw
- "inline cgltf_float* get_node_scale_headless(cgltf_node* node) {
-    return node->scale;
-  }")
 
 (cpp/raw
  "inline bool node_is_colonly_headless(cgltf_node* node) {
@@ -110,6 +101,14 @@
     size_t slen = 8;
     if (len < slen) return false;
     return strcmp(str + len - slen, suffix) == 0;
+  }
+
+  inline cgltf_float* get_node_translation_headless (cgltf_node* node) {
+    return node->translation;
+  }
+
+  inline cgltf_float* get_node_scale_headless (cgltf_node* node) {
+    return node->scale;
   }")
 
 (defn parse-node

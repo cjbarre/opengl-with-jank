@@ -142,6 +142,7 @@
               material-data (parse-material (cpp/box (cpp/& primitive)))]
           (merge attribute-data indices-data material-data))))}))
 
+
 (cpp/raw
  "inline cgltf_float* get_node_translation (cgltf_node* node) {
   return node->translation;
