@@ -3,12 +3,12 @@ set -euo pipefail
 
 # Build Linux distribution from macOS via SSH to VM
 # Supports both ARM64 and x86_64 architectures (auto-detected on remote)
+# Requires SSH key authentication (add key to ssh-agent or use default key)
 #
 # Usage: ./scripts/build-linux [options] [game]
 #   game          Game to compile (default: demo)
 #   --ip IP       VM IP address (default: auto-detect or 192.168.64.4)
-#   --user USER   SSH user (default: root)
-#   --pass PASS   SSH password (default: root)
+#   --user USER   SSH user (default: cjbarre)
 #   --sync-only   Only sync files, don't compile
 #   --no-sync     Skip file sync, just compile
 #   --help        Show this help
@@ -25,23 +25,22 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults
 VM_IP=""
-VM_USER="cam"
-VM_PASS="cam"
+VM_USER="cjbarre"
 GAME="demo"
 SYNC_ONLY=false
 NO_SYNC=false
 REMOTE_DIR="~/opengl-with-jank"
+JANK_HOME="/home/cjbarre/jank"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ip) VM_IP="$2"; shift 2 ;;
         --user) VM_USER="$2"; shift 2 ;;
-        --pass) VM_PASS="$2"; shift 2 ;;
         --sync-only) SYNC_ONLY=true; shift ;;
         --no-sync) NO_SYNC=true; shift ;;
         --help)
-            sed -n '3,14p' "$0" | sed 's/^# //'
+            sed -n '3,13p' "$0" | sed 's/^# //'
             exit 0
             ;;
         -*) echo "Unknown option: $1"; exit 1 ;;
@@ -50,12 +49,6 @@ while [[ $# -gt 0 ]]; do
 done
 
 NAMESPACE="examples.${GAME}.core"
-
-# Check for sshpass
-if ! command -v sshpass &> /dev/null; then
-    echo "ERROR: sshpass is required. Install with: brew install sshpass"
-    exit 1
-fi
 
 # Auto-detect VM IP if not provided
 if [[ -z "$VM_IP" ]]; then
@@ -74,19 +67,19 @@ if [[ -z "$VM_IP" ]]; then
     fi
 fi
 
-# SSH helper
+# SSH helper (assumes SSH key is loaded in ssh-agent or default key exists)
 ssh_cmd() {
-    sshpass -p "$VM_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$VM_USER@$VM_IP" "$@"
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$VM_USER@$VM_IP" "$@"
 }
 
 scp_cmd() {
-    sshpass -p "$VM_PASS" scp -o StrictHostKeyChecking=no -r "$@"
+    scp -o StrictHostKeyChecking=no -r "$@"
 }
 
 # Test connection
 echo "Testing connection to $VM_USER@$VM_IP..."
 if ! ssh_cmd "echo 'Connected'" &>/dev/null; then
-    echo "ERROR: Cannot connect to VM. Check IP/credentials."
+    echo "ERROR: Cannot connect to VM. Ensure SSH key is loaded (ssh-add) and VM IP is correct."
     exit 1
 fi
 echo "Connected successfully."
@@ -95,6 +88,9 @@ echo "Connected successfully."
 if [[ "$NO_SYNC" != true ]]; then
     echo ""
     echo "=== Syncing files to VM ==="
+
+    echo "Creating remote directory structure..."
+    ssh_cmd "mkdir -p $REMOTE_DIR/src $REMOTE_DIR/include $REMOTE_DIR/scripts $REMOTE_DIR/libs"
 
     echo "Syncing src/..."
     scp_cmd "$PROJECT_DIR/src/"* "$VM_USER@$VM_IP:$REMOTE_DIR/src/"
@@ -112,7 +108,6 @@ if [[ "$NO_SYNC" != true ]]; then
     scp_cmd "$PROJECT_DIR/fonts" "$VM_USER@$VM_IP:$REMOTE_DIR/"
 
     echo "Syncing libs/glm (header-only math library)..."
-    ssh_cmd "mkdir -p $REMOTE_DIR/libs"
     scp_cmd "$PROJECT_DIR/libs/glm" "$VM_USER@$VM_IP:$REMOTE_DIR/libs/"
 
     echo "Files synced."
@@ -123,27 +118,127 @@ if [[ "$SYNC_ONLY" == true ]]; then
     exit 0
 fi
 
-# Compile on VM
+# Detect remote architecture
+REMOTE_ARCH=$(ssh_cmd "uname -m")
+case "$REMOTE_ARCH" in
+    aarch64|arm64) LINUX_ARCH="arm64"; LIBS_ARCH="linux-arm64"; SYS_LIB="/usr/lib/aarch64-linux-gnu" ;;
+    x86_64|amd64) LINUX_ARCH="x86_64"; LIBS_ARCH="linux-x86_64"; SYS_LIB="/usr/lib/x86_64-linux-gnu" ;;
+    *) LINUX_ARCH="$REMOTE_ARCH"; LIBS_ARCH="linux-$REMOTE_ARCH"; SYS_LIB="/usr/lib" ;;
+esac
+echo "Detected remote architecture: $REMOTE_ARCH -> $LIBS_ARCH"
+
+# Build required libraries if missing
 echo ""
-echo "=== Compiling $GAME on Linux ARM64 ==="
+echo "=== Checking/building required libraries ==="
 
 ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
-# Set library path
-export LD_LIBRARY_PATH="\$PWD/libs/linux-arm64/glfw/lib:\$PWD/libs/linux-arm64/ozz-animation/lib:\$PWD/libs/linux-arm64/stb/lib:\$PWD/libs/linux-arm64/enet/lib:\$PWD/libs/linux-arm64/cgltf/lib:/usr/lib/aarch64-linux-gnu"
+LIBS_ARCH="$LIBS_ARCH"
+
+# Build enet if missing
+if [ ! -f "libs/\$LIBS_ARCH/enet/lib/libenet.so" ]; then
+    echo "Building enet..."
+    mkdir -p libs/\$LIBS_ARCH/enet/lib
+    cat > /tmp/enet_impl.c << 'IMPL'
+#define ENET_IMPLEMENTATION
+#include "enet.h"
+IMPL
+    gcc -shared -fPIC -o libs/\$LIBS_ARCH/enet/lib/libenet.so /tmp/enet_impl.c -Iinclude
+    echo "enet built successfully"
+else
+    echo "enet already exists"
+fi
+
+# Build cgltf if missing
+if [ ! -f "libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so" ]; then
+    echo "Building cgltf..."
+    mkdir -p libs/\$LIBS_ARCH/cgltf/lib
+    cat > /tmp/cgltf_impl.c << 'IMPL'
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
+IMPL
+    gcc -shared -fPIC -o libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so /tmp/cgltf_impl.c -Iinclude
+    echo "cgltf built successfully"
+else
+    echo "cgltf already exists"
+fi
+
+# Build stb if missing (force rebuild to include stb_truetype)
+if [ ! -f "libs/\$LIBS_ARCH/stb/lib/libstb_all.so" ] || ! nm libs/\$LIBS_ARCH/stb/lib/libstb_all.so 2>/dev/null | grep -q stbtt_BakeFontBitmap; then
+    echo "Building stb (image + truetype)..."
+    mkdir -p libs/\$LIBS_ARCH/stb/lib
+    cat > /tmp/stb_impl.c << 'IMPL'
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+IMPL
+    gcc -shared -fPIC -o libs/\$LIBS_ARCH/stb/lib/libstb_all.so /tmp/stb_impl.c -Iinclude -lm
+    echo "stb built successfully"
+else
+    echo "stb already exists"
+fi
+
+# Build ozz-animation if missing
+if [ ! -f "libs/\$LIBS_ARCH/ozz-animation/lib/libozz_animation_r.so" ]; then
+    echo "Building ozz-animation (this may take a while)..."
+    mkdir -p libs/\$LIBS_ARCH/ozz-animation/lib
+    mkdir -p libs/\$LIBS_ARCH/ozz-animation/include
+
+    # Clone if not present
+    if [ ! -d "third_party/ozz-animation" ]; then
+        git clone --depth 1 https://github.com/guillaumeblanc/ozz-animation.git third_party/ozz-animation
+    fi
+
+    # Build ozz-animation
+    cd third_party/ozz-animation
+    mkdir -p build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -Dozz_build_samples=OFF -Dozz_build_howtos=OFF -Dozz_build_tests=OFF
+    make -j\$(nproc) ozz_animation ozz_base ozz_geometry
+    cd ../../..
+
+    # Copy built libraries
+    cp third_party/ozz-animation/build/src/animation/runtime/libozz_animation_r.so libs/\$LIBS_ARCH/ozz-animation/lib/
+    cp third_party/ozz-animation/build/src/base/libozz_base_r.so libs/\$LIBS_ARCH/ozz-animation/lib/
+    cp third_party/ozz-animation/build/src/geometry/runtime/libozz_geometry_r.so libs/\$LIBS_ARCH/ozz-animation/lib/
+
+    # Copy headers
+    cp -r third_party/ozz-animation/include/ozz libs/\$LIBS_ARCH/ozz-animation/include/
+
+    echo "ozz-animation built successfully"
+else
+    echo "ozz-animation already exists"
+fi
+EOF
+
+# Compile on VM
+echo ""
+echo "=== Compiling $GAME on Linux $LINUX_ARCH ==="
+
+ssh_cmd bash << EOF
+set -e
+cd $REMOTE_DIR
+
+LIBS_ARCH="$LIBS_ARCH"
+SYS_LIB="$SYS_LIB"
+
+# Set library path (use system glfw, project ozz/stb/enet/cgltf)
+export LD_LIBRARY_PATH="\$PWD/libs/\$LIBS_ARCH/ozz-animation/lib:\$PWD/libs/\$LIBS_ARCH/stb/lib:\$PWD/libs/\$LIBS_ARCH/enet/lib:\$PWD/libs/\$LIBS_ARCH/cgltf/lib:\$SYS_LIB"
+
+# Add jank to PATH
+export PATH="$JANK_HOME/compiler+runtime/build:\$PATH"
 
 echo "Running jank compile..."
 jank \\
-  -I libs/linux-arm64/glfw/include -I libs/glm -I include -I third_party/ozz-animation/include \\
-  -L libs/linux-arm64/glfw/lib -lglfw \\
-  -L libs/linux-arm64/ozz-animation/lib -lozz_animation_r -lozz_base_r -lozz_geometry_r \\
-  -L libs/linux-arm64/stb/lib -lstb_all \\
-  -L libs/linux-arm64/enet/lib -lenet \\
-  -L libs/linux-arm64/cgltf/lib -lcgltf \\
-  -I/usr/include -L/usr/lib/aarch64-linux-gnu -lGL -lGLEW \\
-  --module-path /opt/jank/compiler+runtime/src/jank:src compile $NAMESPACE -o $GAME
+  -I libs/\$LIBS_ARCH/ozz-animation/include -I libs/glm -I include \\
+  -L libs/\$LIBS_ARCH/ozz-animation/lib -lozz_animation_r -lozz_base_r -lozz_geometry_r \\
+  -L libs/\$LIBS_ARCH/stb/lib -lstb_all \\
+  -L libs/\$LIBS_ARCH/enet/lib -lenet \\
+  -L libs/\$LIBS_ARCH/cgltf/lib -lcgltf \\
+  -I/usr/include -L\$SYS_LIB -lglfw -lGL -lGLEW \\
+  --module-path $JANK_HOME/compiler+runtime/src/jank:src compile $NAMESPACE -o $GAME
 
 echo "Compilation successful!"
 ls -lh $GAME
@@ -157,6 +252,8 @@ ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
+LIBS_ARCH="$LIBS_ARCH"
+
 # Clean and create dist structure
 rm -rf dist
 mkdir -p dist/bin dist/lib
@@ -165,11 +262,14 @@ mkdir -p dist/bin dist/lib
 cp $GAME dist/bin/
 
 # Copy game libraries (use -a to preserve symlinks)
-cp -a libs/linux-arm64/glfw/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/ozz-animation/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/stb/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/enet/lib/*.so* dist/lib/ 2>/dev/null || true
-cp -a libs/linux-arm64/cgltf/lib/*.so* dist/lib/ 2>/dev/null || true
+# System libraries (glfw, GL, GLEW)
+cp -a /usr/lib/x86_64-linux-gnu/libglfw.so* dist/lib/ 2>/dev/null || cp -a /usr/lib/aarch64-linux-gnu/libglfw.so* dist/lib/ 2>/dev/null || true
+cp -a /usr/lib/x86_64-linux-gnu/libGLEW.so* dist/lib/ 2>/dev/null || cp -a /usr/lib/aarch64-linux-gnu/libGLEW.so* dist/lib/ 2>/dev/null || true
+# Project libraries
+cp -a libs/\$LIBS_ARCH/ozz-animation/lib/*.so* dist/lib/ 2>/dev/null || true
+cp -a libs/\$LIBS_ARCH/stb/lib/*.so* dist/lib/ 2>/dev/null || true
+cp -a libs/\$LIBS_ARCH/enet/lib/*.so* dist/lib/ 2>/dev/null || true
+cp -a libs/\$LIBS_ARCH/cgltf/lib/*.so* dist/lib/ 2>/dev/null || true
 
 # Copy assets
 cp -r shaders dist/
@@ -195,8 +295,8 @@ source scripts/platform/common.sh
 bundle_all_dependencies dist
 
 # Bundle jank runtime resources for JIT compilation
-JANK_LLVM=/opt/jank/compiler+runtime/build/llvm-install/usr/local
-JANK_DIR=/opt/jank/compiler+runtime
+JANK_LLVM=$JANK_HOME/compiler+runtime/build/llvm-install/usr/local
+JANK_DIR=$JANK_HOME/compiler+runtime
 
 mkdir -p dist/lib/jank/0.1/bin dist/lib/jank/0.1/include dist/lib/jank/0.1/lib/clang dist/lib/jank/0.1/src
 
@@ -215,9 +315,12 @@ ln -sf libLLVM.so.22.0git dist/lib/libLLVM.so
 cp -R \$JANK_LLVM/lib/clang/22 dist/lib/jank/0.1/lib/clang/
 
 # Copy libc++ headers
-cp -R \$JANK_LLVM/include/c++ dist/lib/jank/0.1/include/
+cp -R \$JANK_LLVM/include/c++ dist/lib/jank/0.1/include/ 2>/dev/null || true
 if [ -d "\$JANK_LLVM/include/aarch64-unknown-linux-gnu" ]; then
     cp -R \$JANK_LLVM/include/aarch64-unknown-linux-gnu dist/lib/jank/0.1/include/
+fi
+if [ -d "\$JANK_LLVM/include/x86_64-unknown-linux-gnu" ]; then
+    cp -R \$JANK_LLVM/include/x86_64-unknown-linux-gnu dist/lib/jank/0.1/include/
 fi
 
 # Copy jank headers and stdlib
@@ -226,16 +329,18 @@ cp -R \$JANK_DIR/src/jank/* dist/lib/jank/0.1/src/
 
 # Bundle GCC libstdc++ headers for fully standalone distribution
 mkdir -p dist/lib/jank/0.1/include/c++
-cp -R /usr/include/c++/14 dist/lib/jank/0.1/include/c++/
+cp -R /usr/include/c++/14 dist/lib/jank/0.1/include/c++/ 2>/dev/null || cp -R /usr/include/c++/13 dist/lib/jank/0.1/include/c++/ 2>/dev/null || true
 
 # Detect architecture and copy appropriate platform-specific headers
 ARCH=\$(uname -m)
 if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
     mkdir -p dist/lib/jank/0.1/include/aarch64-linux-gnu/c++
-    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || \
+    cp -R /usr/include/aarch64-linux-gnu/c++/13 dist/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
 elif [ "\$ARCH" = "x86_64" ]; then
     mkdir -p dist/lib/jank/0.1/include/x86_64-linux-gnu/c++
-    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
+    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || \
+    cp -R /usr/include/x86_64-linux-gnu/c++/13 dist/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
 fi
 
 # Fix clang rpath

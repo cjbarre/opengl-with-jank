@@ -3,12 +3,12 @@ set -euo pipefail
 
 # Build Linux headless server distribution from macOS via SSH to VM
 # Supports both ARM64 and x86_64 architectures (auto-detected on remote)
+# Requires SSH key authentication (add key to ssh-agent or use default key)
 #
 # Usage: ./scripts/build-linux-server [options] [game]
 #   game          Game to compile (default: demo)
 #   --ip IP       VM IP address (default: auto-detect or 192.168.64.4)
-#   --user USER   SSH user (default: root)
-#   --pass PASS   SSH password (default: root)
+#   --user USER   SSH user (default: cjbarre)
 #   --sync-only   Only sync files, don't compile
 #   --no-sync     Skip file sync, just compile
 #   --help        Show this help
@@ -25,23 +25,22 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Defaults
 VM_IP=""
-VM_USER="cam"
-VM_PASS="cam"
+VM_USER="cjbarre"
 GAME="demo"
 SYNC_ONLY=false
 NO_SYNC=false
 REMOTE_DIR="~/opengl-with-jank"
+JANK_HOME="/home/cjbarre/jank"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --ip) VM_IP="$2"; shift 2 ;;
         --user) VM_USER="$2"; shift 2 ;;
-        --pass) VM_PASS="$2"; shift 2 ;;
         --sync-only) SYNC_ONLY=true; shift ;;
         --no-sync) NO_SYNC=true; shift ;;
         --help)
-            sed -n '3,14p' "$0" | sed 's/^# //'
+            sed -n '3,13p' "$0" | sed 's/^# //'
             exit 0
             ;;
         -*) echo "Unknown option: $1"; exit 1 ;;
@@ -51,12 +50,6 @@ done
 
 NAMESPACE="examples.${GAME}.server"
 OUTPUT="${GAME}-server"
-
-# Check for sshpass
-if ! command -v sshpass &> /dev/null; then
-    echo "ERROR: sshpass is required. Install with: brew install sshpass"
-    exit 1
-fi
 
 # Auto-detect VM IP if not provided
 if [[ -z "$VM_IP" ]]; then
@@ -75,19 +68,19 @@ if [[ -z "$VM_IP" ]]; then
     fi
 fi
 
-# SSH helper
+# SSH helper (assumes SSH key is loaded in ssh-agent or default key exists)
 ssh_cmd() {
-    sshpass -p "$VM_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$VM_USER@$VM_IP" "$@"
+    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 "$VM_USER@$VM_IP" "$@"
 }
 
 scp_cmd() {
-    sshpass -p "$VM_PASS" scp -o StrictHostKeyChecking=no -r "$@"
+    scp -o StrictHostKeyChecking=no -r "$@"
 }
 
 # Test connection
 echo "Testing connection to $VM_USER@$VM_IP..."
 if ! ssh_cmd "echo 'Connected'" &>/dev/null; then
-    echo "ERROR: Cannot connect to VM. Check IP/credentials."
+    echo "ERROR: Cannot connect to VM. Ensure SSH key is loaded (ssh-add) and VM IP is correct."
     exit 1
 fi
 echo "Connected successfully."
@@ -96,6 +89,9 @@ echo "Connected successfully."
 if [[ "$NO_SYNC" != true ]]; then
     echo ""
     echo "=== Syncing files to VM ==="
+
+    echo "Creating remote directory structure..."
+    ssh_cmd "mkdir -p $REMOTE_DIR/src $REMOTE_DIR/include $REMOTE_DIR/scripts $REMOTE_DIR/libs"
 
     echo "Syncing src/..."
     scp_cmd "$PROJECT_DIR/src/"* "$VM_USER@$VM_IP:$REMOTE_DIR/src/"
@@ -110,7 +106,6 @@ if [[ "$NO_SYNC" != true ]]; then
     scp_cmd "$PROJECT_DIR/models" "$VM_USER@$VM_IP:$REMOTE_DIR/"
 
     echo "Syncing libs/glm (header-only math library)..."
-    ssh_cmd "mkdir -p $REMOTE_DIR/libs"
     scp_cmd "$PROJECT_DIR/libs/glm" "$VM_USER@$VM_IP:$REMOTE_DIR/libs/"
 
     echo "Files synced."
@@ -121,28 +116,69 @@ if [[ "$SYNC_ONLY" == true ]]; then
     exit 0
 fi
 
-# Compile on VM
+# Detect remote architecture
+REMOTE_ARCH=$(ssh_cmd "uname -m")
+case "$REMOTE_ARCH" in
+    aarch64|arm64) LINUX_ARCH="arm64"; LIBS_ARCH="linux-arm64" ;;
+    x86_64|amd64) LINUX_ARCH="x86_64"; LIBS_ARCH="linux-x86_64" ;;
+    *) LINUX_ARCH="$REMOTE_ARCH"; LIBS_ARCH="linux-$REMOTE_ARCH" ;;
+esac
+echo "Detected remote architecture: $REMOTE_ARCH -> $LIBS_ARCH"
+
+# Build required libraries if missing
 echo ""
-echo "=== Compiling $OUTPUT on Linux ARM64 ==="
+echo "=== Checking/building required libraries ==="
 
 ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
-# Set library path for server dependencies
-export LD_LIBRARY_PATH="\$PWD/libs/linux-arm64/enet/lib:\$PWD/libs/linux-arm64/cgltf/lib"
+LIBS_ARCH="$LIBS_ARCH"
 
-echo "Running jank compile (headless server)..."
-# libenet.so is built from the bundled single-header include/enet.h
-jank \\
-  -I libs/glm -I include \\
-  -L libs/linux-arm64/enet/lib -lenet \\
-  -L libs/linux-arm64/cgltf/lib -lcgltf \\
-  --module-path src compile $NAMESPACE -o $OUTPUT
+# Build enet if missing
+if [ ! -f "libs/\$LIBS_ARCH/enet/lib/libenet.so" ]; then
+    echo "Building enet..."
+    mkdir -p libs/\$LIBS_ARCH/enet/lib
+    cat > /tmp/enet_impl.c << 'IMPL'
+#define ENET_IMPLEMENTATION
+#include "enet.h"
+IMPL
+    gcc -shared -fPIC -o libs/\$LIBS_ARCH/enet/lib/libenet.so /tmp/enet_impl.c -Iinclude
+    echo "enet built successfully"
+else
+    echo "enet already exists"
+fi
 
-echo "Compilation successful!"
-ls -lh $OUTPUT
+# Build cgltf if missing
+if [ ! -f "libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so" ]; then
+    echo "Building cgltf..."
+    mkdir -p libs/\$LIBS_ARCH/cgltf/lib
+    cat > /tmp/cgltf_impl.c << 'IMPL'
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
+IMPL
+    gcc -shared -fPIC -o libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so /tmp/cgltf_impl.c -Iinclude
+    echo "cgltf built successfully"
+else
+    echo "cgltf already exists"
+fi
 EOF
+
+# Compile on VM
+echo ""
+echo "=== Compiling $OUTPUT on Linux $LINUX_ARCH ==="
+
+ssh_cmd "cd $REMOTE_DIR && \
+export LD_LIBRARY_PATH=\"\$PWD/libs/$LIBS_ARCH/enet/lib:\$PWD/libs/$LIBS_ARCH/cgltf/lib\" && \
+export PATH=\"$JANK_HOME/compiler+runtime/build:\$PATH\" && \
+echo 'Running jank compile (headless server)...' && \
+jank \
+  -I libs/glm -I include \
+  -L libs/$LIBS_ARCH/enet/lib -lenet \
+  -L libs/$LIBS_ARCH/cgltf/lib -lcgltf \
+  --module-path $JANK_HOME/compiler+runtime/src/jank:src compile $NAMESPACE -o $OUTPUT && \
+echo 'Compilation successful!' && \
+ls -lh $OUTPUT"
 
 # Package distribution
 echo ""
@@ -152,6 +188,14 @@ ssh_cmd bash << EOF
 set -e
 cd $REMOTE_DIR
 
+# Detect architecture for library paths
+ARCH=\$(uname -m)
+case "\$ARCH" in
+    aarch64|arm64) LIBS_ARCH="linux-arm64" ;;
+    x86_64|amd64) LIBS_ARCH="linux-x86_64" ;;
+    *) LIBS_ARCH="linux-\$ARCH" ;;
+esac
+
 # Clean and create dist structure
 rm -rf dist-server
 mkdir -p dist-server/bin dist-server/lib dist-server/lib/jank/0.1/bin dist-server/lib/jank/0.1/include dist-server/lib/jank/0.1/lib/clang dist-server/lib/jank/0.1/src
@@ -160,11 +204,11 @@ mkdir -p dist-server/bin dist-server/lib dist-server/lib/jank/0.1/bin dist-serve
 cp $OUTPUT dist-server/bin/
 
 # Copy server libraries (minimal - no graphics)
-cp libs/linux-arm64/enet/lib/libenet.so dist-server/lib/
-cp libs/linux-arm64/cgltf/lib/libcgltf.so dist-server/lib/
+cp libs/\$LIBS_ARCH/enet/lib/libenet.so dist-server/lib/ 2>/dev/null || echo "Warning: libenet.so not found"
+cp libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so dist-server/lib/ 2>/dev/null || echo "Warning: libcgltf.so not found"
 
 # Copy clang for JIT
-JANK_LLVM=/opt/jank/compiler+runtime/build/llvm-install/usr/local
+JANK_LLVM=$JANK_HOME/compiler+runtime/build/llvm-install/usr/local
 cp \$JANK_LLVM/bin/clang-22 dist-server/lib/jank/0.1/bin/
 ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang++
 ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang
@@ -179,7 +223,7 @@ ln -sf libLLVM.so.22.0git dist-server/lib/libLLVM.so
 cp -R \$JANK_LLVM/lib/clang/22 dist-server/lib/jank/0.1/lib/clang/
 
 # Copy libc++ headers (both generic and platform-specific)
-cp -R \$JANK_LLVM/include/c++ dist-server/lib/jank/0.1/include/
+cp -R \$JANK_LLVM/include/c++ dist-server/lib/jank/0.1/include/ 2>/dev/null || true
 # Copy platform-specific headers (contains __config_site)
 if [ -d "\$JANK_LLVM/include/aarch64-unknown-linux-gnu" ]; then
     cp -R \$JANK_LLVM/include/aarch64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
@@ -189,23 +233,24 @@ if [ -d "\$JANK_LLVM/include/x86_64-unknown-linux-gnu" ]; then
 fi
 
 # Copy jank headers and stdlib
-JANK_DIR=/opt/jank/compiler+runtime
+JANK_DIR=$JANK_HOME/compiler+runtime
 cp -R \$JANK_DIR/include/cpp/jank dist-server/lib/jank/0.1/include/
 cp -R \$JANK_DIR/src/jank/* dist-server/lib/jank/0.1/src/
 
 # Bundle GCC libstdc++ headers for fully standalone distribution
 # These are needed by clang for JIT compilation at runtime
 mkdir -p dist-server/lib/jank/0.1/include/c++
-cp -R /usr/include/c++/14 dist-server/lib/jank/0.1/include/c++/
+cp -R /usr/include/c++/14 dist-server/lib/jank/0.1/include/c++/ 2>/dev/null || cp -R /usr/include/c++/13 dist-server/lib/jank/0.1/include/c++/ 2>/dev/null || true
 
 # Detect architecture and copy appropriate platform-specific headers
-ARCH=\$(uname -m)
 if [ "\$ARCH" = "aarch64" ] || [ "\$ARCH" = "arm64" ]; then
     mkdir -p dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++
-    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
+    cp -R /usr/include/aarch64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || \
+    cp -R /usr/include/aarch64-linux-gnu/c++/13 dist-server/lib/jank/0.1/include/aarch64-linux-gnu/c++/ 2>/dev/null || true
 elif [ "\$ARCH" = "x86_64" ]; then
     mkdir -p dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++
-    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
+    cp -R /usr/include/x86_64-linux-gnu/c++/14 dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || \
+    cp -R /usr/include/x86_64-linux-gnu/c++/13 dist-server/lib/jank/0.1/include/x86_64-linux-gnu/c++/ 2>/dev/null || true
 fi
 
 # Copy models (needed for collision mesh)
