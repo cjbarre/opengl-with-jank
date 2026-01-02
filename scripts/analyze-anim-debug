@@ -6,7 +6,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-echo "=== Running JKA Skeleton Viewer ==="
+echo "=== Running Player Skeleton Viewer ==="
 echo ""
 
 # Run viewer with timeout to capture initial debug output
@@ -23,9 +23,9 @@ fi
 OUTPUT_FILE="/tmp/anim-debug.txt"
 
 if [ -n "$TIMEOUT_CMD" ]; then
-    $TIMEOUT_CMD 3s ./bin/run jka-skeleton 2>&1 | tee "$OUTPUT_FILE" || true
+    $TIMEOUT_CMD 3s ./bin/run player-skeleton 2>&1 | tee "$OUTPUT_FILE" || true
 else
-    ./bin/run jka-skeleton 2>&1 | tee "$OUTPUT_FILE" &
+    ./bin/run player-skeleton 2>&1 | tee "$OUTPUT_FILE" &
     PID=$!
     sleep 3
     kill $PID 2>/dev/null || true

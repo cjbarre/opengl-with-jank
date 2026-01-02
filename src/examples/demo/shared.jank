@@ -15,17 +15,17 @@
 ")
 
 ;; =============================================================================
-;; Physics Constants (JKA-style)
+;; Physics Constants
 ;; =============================================================================
 
 (def GRAVITY 25.6)
 (def JUMP_VELOCITY 7.2)
-(def BACKFLIP_BOOST 4.1)         ; JKA: 128/225 * JUMP_VELOCITY = extra boost for backflip
+(def BACKFLIP_BOOST 4.1)         ; Extra boost for backflip
 (def BACKFLIP_VELOCITY 11.3)     ; JUMP_VELOCITY + BACKFLIP_BOOST (no force jump thrust)
 (def FORCE_JUMP_STRENGTH 26.88)  ; Level 3 force jump
 (def FORCE_JUMP_HEIGHT 12.3)     ; Level 3 max height
 (def GROUND_ACCEL 10.0)
-(def AIR_ACCEL 1.0)              ; 10:1 ratio for JKA feel
+(def AIR_ACCEL 1.0)              ; 10:1 ratio for air control
 (def FRICTION 6.0)
 (def STOP_SPEED 2.5)
 (def MAX_SPEED 8.0)
@@ -36,7 +36,7 @@
 ;; =============================================================================
 
 (defn pm-friction
-  "JKA-style friction - reduces horizontal velocity.
+  "Friction - reduces horizontal velocity.
    Returns [new-vx new-vz]."
   [vx vz friction stopspeed dt]
   (let [vx-f (cpp/float vx)
@@ -54,7 +54,7 @@
          (double (cpp/* vz-f scale))]))))
 
 (defn pm-accelerate
-  "JKA-style acceleration toward wish direction.
+  "Acceleration toward wish direction.
    Returns [new-vx new-vz]."
   [vx vz dx dz wishspeed accel dt]
   (let [dx-f (cpp/float dx)
@@ -150,7 +150,7 @@
         ;; Clear jump-z-start when not holding jump
         jump-z-start (if (not jump-held) nil jump-z-start)
 
-        ;; Backflip detection (JKA: backward + jump + grounded + no strafe)
+        ;; Backflip detection (backward + jump + grounded + no strafe)
         ;; Backflip gets boosted velocity but NO force jump thrust
         is-backflip (and is-grounded jump-held (nil? jump-z-start)
                          backward (not forward) (not left) (not right))
@@ -164,7 +164,7 @@
             [JUMP_VELOCITY false py false])     ; Normal: regular velocity
           [vy is-grounded jump-z-start backflip-jump?])
 
-        ;; Force Jump thrust (JKA Metroid-style)
+        ;; Force Jump thrust (Metroid-style)
         ;; Skip force jump thrust if this is a backflip jump
         vy (if (and (not is-grounded)
                     (not backflip-jump?)  ; Backflips don't get force jump

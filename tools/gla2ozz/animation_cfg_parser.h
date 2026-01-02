@@ -1,4 +1,4 @@
-// Animation.cfg parser for Jedi Academy
+// Animation.cfg parser
 // Parses animation clip definitions from animation.cfg files
 
 #ifndef ANIMATION_CFG_PARSER_H_

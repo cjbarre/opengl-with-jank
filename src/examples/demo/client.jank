@@ -18,7 +18,7 @@
             [engine.2d.text.interface :as text]
             [engine.2d.graphics.interface :as gfx2d]
             [engine.3d.animation.interface :as anim]
-            [examples.demo.animation.jka :as jka]
+            [examples.demo.animation.player :as player]
             [examples.demo.strafehelper.interface :as strafehelper]
             [engine.gl.constants :as gl]
             [engine.gl.interface :as gl-state]))
@@ -111,58 +111,58 @@ inline bool init_glew_client() {
 ;; =============================================================================
 
 (defn init-player-animation
-  "Initialize JKA player animation system for line skeleton rendering"
+  "Initialize player animation system for line skeleton rendering"
   []
-  (println "Initializing JKA player animation...")
+  (println "Initializing player animation...")
   (let [ctx (anim/create-context)
-        base-path "models/player/jka/"
+        base-path "models/player/animations/"
 
-        ;; Load JKA skeleton
+        ;; Load skeleton
         skeleton-info (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                            :context ctx})
         _ (println "  Skeleton loaded:" (:num-joints skeleton-info) "joints")
 
-        ;; Load JKA movement animations
-        anim-data (jka/load-jka-animations ctx base-path)
+        ;; Load movement animations
+        anim-data (player/load-player-animations ctx base-path)
         _ (println "  Animations loaded:" (count (:indices anim-data)))
 
         ;; Sample initial animation
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
 
-        ;; Create JKA animation state
-        jka-state (jka/create-jka-state)]
+        ;; Create player animation state
+        player-state (player/create-player-state)]
 
     (println "  Ready for line skeleton rendering!")
     {:animation/context ctx
      :animation/indices (:indices anim-data)
      :animation/durations (:durations anim-data)
-     :animation/jka-state jka-state
+     :animation/player-state player-state
      :animation/time 0.0
      :num-joints (:num-joints skeleton-info)}))
 
 (defn init-remote-player-animation
-  "Initialize JKA animation context for a remote player."
+  "Initialize animation context for a remote player."
   []
   (let [ctx (anim/create-context)
-        base-path "models/player/jka/"
+        base-path "models/player/animations/"
 
-        ;; Load JKA skeleton
+        ;; Load skeleton
         _ (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                :context ctx})
 
-        ;; Load JKA movement animations
-        anim-data (jka/load-jka-animations ctx base-path)
+        ;; Load movement animations
+        anim-data (player/load-player-animations ctx base-path)
 
         ;; Sample initial animation
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
 
-        ;; Create JKA animation state
-        jka-state (jka/create-jka-state)]
+        ;; Create player animation state
+        player-state (player/create-player-state)]
 
     {:animation/context ctx
      :animation/indices (:indices anim-data)
      :animation/durations (:durations anim-data)
-     :animation/jka-state jka-state}))
+     :animation/player-state player-state}))
 
 (defn ensure-remote-player-anim
   "Ensure a remote player has an animation context.
@@ -213,7 +213,7 @@ inline bool init_glew_client() {
 
 (defn render-skeleton-entity
   "Render a player entity as line skeleton at the given position.
-   Applies JKA-style lean based on strafe input."
+   Applies lean based on strafe input."
   [line-shader line-vao line-vbo anim-data position yaw input]
   (let [[px py pz] position
         ctx (:animation/context anim-data)
@@ -247,26 +247,26 @@ inline bool init_glew_client() {
       (cpp/wrap_glBindVertexArray (cpp/int 0)))))
 
 (defn update-player-animation
-  "Update JKA animation state machine based on input keys and grounded state.
+  "Update player animation state machine based on input keys and grounded state.
    Input should include: forward, backward, left, right, jump-held, crouch, speed, height, grounded
    Optional: wall-left, wall-right, wall-front (for wall mechanics)"
   [anim-data input grounded delta-time]
-  (let [;; Get current JKA state
-        jka-state (or (:animation/jka-state anim-data) (jka/create-jka-state))
+  (let [;; Get current player state
+        player-state (or (:animation/player-state anim-data) (player/create-player-state))
         indices (:animation/indices anim-data {})
         durations (:animation/durations anim-data {})
 
         ;; Input already has :grounded from caller, just use it directly
         ;; The caller (update loop) now builds the complete input with speed, height, etc.
 
-        ;; Update JKA state machine
-        new-jka-state (jka/update-jka-state jka-state input delta-time durations)
+        ;; Update player state machine
+        new-player-state (player/update-player-state player-state input delta-time durations)
 
         ;; Get animation index and time ratio
-        anim-name (:current-anim new-jka-state)
+        anim-name (:current-anim new-player-state)
         anim-index (get indices anim-name 0)
-        time-ratio (jka/get-time-ratio new-jka-state durations)
-        movement-state (:movement-state new-jka-state)]
+        time-ratio (player/get-time-ratio new-player-state durations)
+        movement-state (:movement-state new-player-state)]
 
     ;; Debug: print animation state for run, inair, and flip
     (when (#{:run :inair :flip} movement-state)
@@ -278,7 +278,7 @@ inline bool init_glew_client() {
                   :time-ratio time-ratio})
 
     ;; Return updated anim-data
-    (assoc anim-data :animation/jka-state new-jka-state)))
+    (assoc anim-data :animation/player-state new-player-state)))
 
 ;; =============================================================================
 ;; Client State

@@ -13,25 +13,24 @@ echo "=== ANIMATION PIPELINE TEST ==="
 echo ""
 
 # Step 1: Make sure GLA is extracted
-if [ ! -f /tmp/jka-extract/models/players/_humanoid/_humanoid.gla ]; then
+if [ ! -f /tmp/gla-extract/models/players/_humanoid/_humanoid.gla ]; then
     echo "Step 1: Extracting GLA file..."
-    mkdir -p /tmp/jka-extract
-    unzip -o "/Users/cam/Library/Application Support/Steam/steamapps/common/Jedi Academy/SWJKJA.app/Contents/base/assets1.pk3" \
-        "models/players/_humanoid/*" -d /tmp/jka-extract
+    echo "NOTE: You need to extract the GLA file from your source to /tmp/gla-extract/"
+    exit 1
 fi
 
 # Step 2: Convert with debug output
 echo "Step 2: Converting BOTH_STAND1 with debug..."
 cd /tmp
 ./Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/build/gla2ozz \
-    --file="/tmp/jka-extract/models/players/_humanoid/_humanoid.gla" \
+    --file="/tmp/gla-extract/models/players/_humanoid/_humanoid.gla" \
     --config_file=/Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/test_stand1_only.json 2>&1 \
     | tee /tmp/converter-output.txt
 
 # Step 3: Copy converted files
 echo ""
 echo "Step 3: Copying converted files..."
-cp /tmp/BOTH_STAND1.ozz /tmp/humanoid.ozz /Users/cam/Documents/code/opengl-with-jank/models/player/jka/
+cp /tmp/BOTH_STAND1.ozz /tmp/humanoid.ozz /Users/cam/Documents/code/opengl-with-jank/models/player/animations/
 
 # Step 4: Extract key data from converter
 echo ""

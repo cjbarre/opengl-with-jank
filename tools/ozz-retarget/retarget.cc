@@ -1,5 +1,5 @@
 // ozz-retarget - Retarget animations between different skeleton formats
-// Converts JKA animations to Mixamo skeleton format
+// Converts animations between different skeleton formats
 
 #include <cstring>
 #include <fstream>

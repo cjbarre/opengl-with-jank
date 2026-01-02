@@ -11,7 +11,7 @@
             [engine.2d.graphics.interface :as gfx2d]
             [engine.3d.animation.interface :as anim]
             [examples.demo.animation.state :as anim-state]
-            [examples.demo.animation.jka :as jka]
+            [examples.demo.animation.player :as player]
             [examples.demo.strafehelper.interface :as strafehelper]
             [examples.demo.server :as server]
             [examples.demo.client :as client]
@@ -82,13 +82,13 @@ inline bool init_glew() {
 
 ;; Using centralized GLFW constants from engine.gl.constants
 
-;; JKA-style physics constants (scaled for game world)
+;; Physics constants (scaled for game world)
 (def GRAVITY 25.6)
 (def JUMP_VELOCITY 7.2)
 (def FORCE_JUMP_STRENGTH 26.88)  ;; Level 3 force jump strength (840 scaled)
 (def FORCE_JUMP_HEIGHT 12.3)     ;; Level 3 max height above jump start (384 scaled)
 (def GROUND_ACCEL 10.0)
-(def AIR_ACCEL 1.0)       ;; Key for JKA feel: 10:1 ratio
+(def AIR_ACCEL 1.0)       ;; 10:1 ratio for air control
 (def FRICTION 6.0)
 (def STOP_SPEED 2.5)
 (def MAX_SPEED 8.0)
@@ -229,7 +229,7 @@ inline bool init_glew() {
       (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m)))))
 
 (defn update-animations
-  "Updates JKA animation state machine and samples current animation."
+  "Updates player animation state machine and samples current animation."
   [{:keys [state delta-time]}]
   (let [dt-raw (math/*-> :float delta-time)
         dt (double dt-raw)]
@@ -239,23 +239,23 @@ inline bool init_glew() {
               grounded (:physics/grounded entity true)
               yaw (:transform/yaw entity 0.0)
 
-              ;; Get current JKA state
-              jka-state (or (:animation/jka-state entity) (jka/create-jka-state))
+              ;; Get current player animation state
+              player-state (or (:animation/player-state entity) (player/create-player-state))
               indices (:animation/indices entity {})
               durations (:animation/durations entity {})
 
-              ;; Build physics state for JKA state machine
+              ;; Build physics state for animation state machine
               physics {:velocity velocity
                        :grounded grounded
                        :yaw yaw}
 
-              ;; Update JKA state machine
-              new-jka-state (jka/update-jka-state jka-state physics dt durations)
+              ;; Update player state machine
+              new-player-state (player/update-player-state player-state physics dt durations)
 
               ;; Get animation index and time ratio
-              anim-name (:current-anim new-jka-state)
+              anim-name (:current-anim new-player-state)
               anim-index (get indices anim-name 0)
-              time-ratio (jka/get-time-ratio new-jka-state durations)]
+              time-ratio (player/get-time-ratio new-player-state durations)]
 
           ;; Sample animation
           (anim/sample {:context (:animation/context entity)
@@ -263,7 +263,7 @@ inline bool init_glew() {
                         :time-ratio time-ratio})
 
           ;; Update entity state
-          (swap! state assoc-in [:entities id :animation/jka-state] new-jka-state))))))
+          (swap! state assoc-in [:entities id :animation/player-state] new-player-state))))))
 
 (cpp/raw
  "inline void upload_identity_bones(GLint loc, int count) {
@@ -405,38 +405,38 @@ inline bool init_glew() {
                     (update :tags (fnil conj #{}) :render))))))
 
 (defn init-player-animation
-  "Initialize JKA player animation system for line skeleton rendering"
+  "Initialize player animation system for line skeleton rendering"
   []
   (let [ctx (anim/create-context)
-        base-path "models/player/jka/"
+        base-path "models/player/animations/"
 
-        ;; Load JKA skeleton (53 joints)
+        ;; Load skeleton (53 joints)
         skeleton-info (anim/load-skeleton {:path (str base-path "humanoid.ozz")
                                            :context ctx})
-        _ (println "JKA Animation system initializing...")
+        _ (println "Animation system initializing...")
         _ (println "  Skeleton loaded:" (:num-joints skeleton-info) "joints")
 
-        ;; Load all JKA movement animations
-        anim-data (jka/load-jka-animations ctx base-path)
+        ;; Load all movement animations
+        anim-data (player/load-player-animations ctx base-path)
         _ (println "  Animations loaded:" (count (:indices anim-data)))
 
         ;; Sample initial animation (BOTH_STAND1)
         _ (anim/sample {:context ctx :animation-index 0 :time-ratio 0.0})
 
-        ;; Create JKA animation state
-        jka-state (jka/create-jka-state)]
+        ;; Create player animation state
+        player-state (player/create-player-state)]
 
     (println "  Ready for line skeleton rendering!")
     {:animation/context ctx
      :animation/indices (:indices anim-data)      ; {"BOTH_STAND1" 0, ...}
      :animation/durations (:durations anim-data)  ; {"BOTH_STAND1" 0.5, ...}
-     :animation/jka-state jka-state
+     :animation/player-state player-state
      :animation/time 0.0
      :num-joints (:num-joints skeleton-info)}))
 
 (defmethod handle-event :player/spawned
   [state {{:keys [id] :as event} :event}]
-  (let [;; Load JKA animation system for line skeleton rendering
+  (let [;; Load player animation system for line skeleton rendering
         animation-data (init-player-animation)]
     (update state :entities assoc id
             (-> event
@@ -452,7 +452,7 @@ inline bool init_glew() {
                         [:transform :camera :animated])))))
 
 (defn pm-friction
-  "JKA-style friction - reduces horizontal velocity"
+  "Friction - reduces horizontal velocity"
   [vx vz friction stopspeed dt]
   (let [vx-f (cpp/float vx)
         vz-f (cpp/float vz)
@@ -468,7 +468,7 @@ inline bool init_glew() {
         [(cpp/* vx-f scale) (cpp/* vz-f scale)]))))
 
 (defn pm-accelerate
-  "JKA-style acceleration toward wish direction"
+  "Acceleration toward wish direction"
   [vx vz dx dz wishspeed accel dt]
   (let [dx-f (cpp/float dx)
         dz-f (cpp/float dz)
@@ -540,7 +540,7 @@ inline bool init_glew() {
           [JUMP_VELOCITY false py]  ;; Start jump, record starting Y
           [vy is-grounded jump-z-start])
 
-        ;; Force Jump thrust (JKA Metroid-style)
+        ;; Force Jump thrust (Metroid-style)
         ;; Thrust scales down as you approach max height
         ;; Formula: vy = (maxHeight - curHeight) / maxHeight * strength / 10 + JUMP_VELOCITY
         vy (if (and (not is-grounded)

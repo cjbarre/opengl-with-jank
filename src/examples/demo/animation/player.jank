@@ -1,7 +1,7 @@
-(ns examples.demo.animation.jka
-  "JKA animation state machine implemented as a behavior tree.
+(ns examples.demo.animation.player
+  "Player animation state machine implemented as a behavior tree.
 
-   Implements authentic JKA movement mechanics:
+   Implements movement mechanics:
    - Rolls: crouch + running on ground
    - Flips: force jump + direction in air
    - Wall runs: jump toward wall + strafe
@@ -126,10 +126,10 @@
 (def LAND_DURATION 0.2)
 (def WALL_RUN_MIN_HEIGHT 0.5)
 
-;; Height thresholds for force jump (matching JKA's forceJumpHeight)
+;; Height thresholds for force jump
 ;; Player must exceed normal jump height before flip triggers
 (def NORMAL_JUMP_HEIGHT 1.0)  ; Height of a normal jump
-(def GLIDE_VELOCITY_THRESHOLD 64.0)  ; Below this speed, transition to glide (JKA uses 64)
+(def GLIDE_VELOCITY_THRESHOLD 64.0)  ; Below this speed, transition to glide
 
 ;; =============================================================================
 ;; Helper Functions
@@ -164,8 +164,8 @@
 ;; State Management
 ;; =============================================================================
 
-(defn create-jka-state
-  "Creates initial JKA animation state"
+(defn create-player-state
+  "Creates initial player animation state"
   []
   {:movement-state :idle
    :direction :forward
@@ -180,7 +180,7 @@
    :was-jump-held false
    :has-flipped-this-jump false
    :wallrun-side :none
-   ;; JKA-style height tracking for force jump
+   ;; Height tracking for force jump
    :force-jump-z-start 0.0  ; Height when jump started
    ;; Derived state (computed pre-tick)
    :just-landed false
@@ -268,11 +268,10 @@
   (:can-flip @st-memory))
 
 (defn velocity-small?
-  "Check if velocity is below glide threshold (JKA-style).
-   Only true if already in an air animation (like JKA's inAirAnim flag)."
+  "Check if velocity is below glide threshold.
+   Only true if already in an air animation."
   [{:keys [st-memory]}]
   (let [{:keys [velocity-small movement-state]} @st-memory]
-    ;; JKA: pm->ps->inAirAnim && VectorLengthSquared < 4096
     ;; Only transition to glide if already in jump/inair/forcejump state
     (and velocity-small
          (#{:jump :inair :forcejump :forceinair} movement-state))))
@@ -285,7 +284,7 @@
 
 (defn no-forward-backward?
   "Check if no forward/backward keys are pressed (strafe OK).
-   JKA uses force jump when not moving forward/back but strafe is allowed."
+   Force jump when not moving forward/back but strafe is allowed."
   [{:keys [input]}]
   (let [{:keys [forward backward]} input]
     (not (or forward backward))))
@@ -396,7 +395,7 @@
     bt/success))
 
 (defn start-backflip
-  "Ground-initiated backflip (JKA: press back + jump from ground)
+  "Ground-initiated backflip (press back + jump from ground).
    Uses BOTH_FLIP_BACK1 which is different from the mid-air BOTH_FLIP_B"
   [{:keys [st-memory anim-durations]}]
   (let [anim-name "BOTH_FLIP_BACK1"
@@ -478,8 +477,8 @@
 ;; Behavior Tree Definition
 ;; =============================================================================
 
-(def jka-tree-config
-  "JKA animation behavior tree structure.
+(def player-tree-config
+  "Player animation behavior tree structure.
    Priority-based: first matching sequence wins (fallback semantics)."
   [:fallback
    ;; Priority 1: Locked animations continue
@@ -500,7 +499,7 @@
    [:sequence [:condition grounded?] [:condition crouching?]
               [:condition in-run-state?] [:action start-roll]]
 
-   ;; Priority 6: Ground backflip (JKA: backward + jump from ground)
+   ;; Priority 6: Ground backflip (backward + jump from ground)
    ;; Use just-jumped? since grounded becomes false on the same frame
    [:sequence [:condition just-jumped?] [:condition backward?]
               [:condition jump-held?] [:action start-backflip]]
@@ -518,7 +517,7 @@
    [:sequence [:condition in-wallrun-state?] [:condition just-pressed-jump?]
               [:action start-wallrunflip]]
 
-   ;; Priority 9: Flip (JKA: height threshold + ascending + direction + jump held)
+   ;; Priority 9: Flip (height threshold + ascending + direction + jump held)
    [:sequence [:condition can-flip?] [:action start-flip]]
 
    ;; Priority 10: Force jump (just jumped + jump held + no forward/back)
@@ -535,7 +534,7 @@
    [:sequence [:condition in-air?] [:condition in-forceinair-state?]
               [:action continue-forceinair]]
 
-   ;; Priority 13: Glide (JKA: velocity magnitude < 64, transition to inair)
+   ;; Priority 13: Glide (velocity magnitude < 64, transition to inair)
    [:sequence [:condition in-air?] [:condition velocity-small?]
               [:action start-inair]]
 
@@ -557,10 +556,10 @@
   "Update derived state before running the behavior tree.
    Computes edge detection, timers, and complex conditions.
 
-   JKA-style flip logic:
+   Flip logic:
    - Flip requires: in air, jump held, ascending, past height threshold, has direction input
 
-   JKA-style glide logic:
+   Glide logic:
    - Glide when horizontal velocity < 64 units/sec"
   [st-memory input dt]
   (let [state @st-memory
@@ -585,7 +584,7 @@
                          (= movement-state :land) (max 0.0 (- land-timer dt))
                          :else 0.0)
 
-        ;; Track jump start height (JKA: forceJumpZStart)
+        ;; Track jump start height
         new-force-jump-z-start (cond
                                  just-jumped (or height 0.0)  ; Record height at takeoff
                                  grounded 0.0                  ; Reset on ground
@@ -599,9 +598,9 @@
         ;; Reset flip flag on landing
         new-has-flipped-this-jump (if grounded false has-flipped-this-jump)
 
-        ;; JKA-style can-flip check:
+        ;; Can-flip check:
         ;; 1. In air
-        ;; 2. Jump held (PMF_JUMP_HELD)
+        ;; 2. Jump held
         ;; 3. Still ascending (velocity[2] > 0)
         ;; 4. Past normal jump height threshold
         ;; 5. Has directional input NOW (not stored)
@@ -618,7 +617,7 @@
                       (not= movement-state :flip)
                       (<= flip-timer 0.0))
 
-        ;; JKA-style velocity check for glide transition
+        ;; Velocity check for glide transition
         ;; Transition to INAIR when horizontal speed < 64
         velocity-small (< (or speed 0.0) GLIDE_VELOCITY_THRESHOLD)]
 
@@ -677,30 +676,30 @@
 ;; Main Update Function
 ;; =============================================================================
 
-(defn create-jka-behavior-tree
-  "Creates the JKA animation behavior tree."
+(defn create-player-behavior-tree
+  "Creates the player animation behavior tree."
   [anim-durations]
-  (bt/build jka-tree-config {:st-memory (atom (create-jka-state))
-                              :anim-durations anim-durations}))
+  (bt/build player-tree-config {:st-memory (atom (create-player-state))
+                                 :anim-durations anim-durations}))
 
-(defn update-jka-state
-  "Updates JKA animation state using behavior tree.
+(defn update-player-state
+  "Updates player animation state using behavior tree.
    Returns the current state map for rendering.
 
    Backwards-compatible API:
-   - jka-state: Either a behavior tree or a plain state map (with embedded :__bt)
+   - player-state: Either a behavior tree or a plain state map (with embedded :__bt)
    - input: Current frame input
    - dt: Delta time
    - anim-durations: Animation duration map (used to create bt if needed)"
-  [jka-state input dt anim-durations]
+  [player-state input dt anim-durations]
   (let [;; Get or create behavior tree
         bt (cond
              ;; Already a behavior tree object
-             (:tree jka-state) jka-state
+             (:tree player-state) player-state
              ;; State map with embedded behavior tree
-             (:__bt jka-state) (:__bt jka-state)
+             (:__bt player-state) (:__bt player-state)
              ;; Plain state map - create new behavior tree
-             :else (create-jka-behavior-tree anim-durations))
+             :else (create-player-behavior-tree anim-durations))
         ctx (:context bt)
         st-memory (:st-memory ctx)
         {:keys [forward backward left right jump-held grounded]} input
@@ -745,8 +744,8 @@
 ;; Animation Loading Helper
 ;; =============================================================================
 
-(defn load-jka-animations
-  "Loads all JKA movement animations and returns index map"
+(defn load-player-animations
+  "Loads all player movement animations and returns index map"
   [ctx base-path]
   (loop [names MOVEMENT_ANIMATIONS
          idx 0

@@ -1,6 +1,6 @@
 {
-  "description": "JKA _humanoid skeleton to Mixamo skeleton bone mapping",
-  "source_skeleton": "models/player/jka/humanoid.ozz",
+  "description": "Humanoid skeleton to Mixamo skeleton bone mapping",
+  "source_skeleton": "models/player/animations/humanoid.ozz",
   "target_skeleton": "models/player/mixamo_skeleton.ozz",
   "mappings": [
     {"target": "mixamorig:Hips", "source": "pelvis"},

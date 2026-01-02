@@ -1,5 +1,5 @@
-(ns examples.jka-skeleton.core
-  "JKA Skeleton Viewer - Displays all converted Jedi Academy animations
+(ns examples.player-skeleton.core
+  "Player Skeleton Viewer - Displays all converted animations
    with category-based navigation (TAB cycles categories, 1-9 selects within)"
   (:require [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
@@ -15,7 +15,7 @@
 #include <iostream>
 
 // GLEW initialization for Linux
-inline bool init_glew_jka() {
+inline bool init_glew_player() {
 #ifndef __APPLE__
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
@@ -44,7 +44,7 @@ inline bool init_glew_jka() {
 (cpp/raw "#include \"animation_types.h\"")
 
 (cpp/raw "
-  inline void framebuffer_size_callback_jka(GLFWwindow* window, int width, int height) {
+  inline void framebuffer_size_callback_player(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
   }
@@ -148,11 +148,11 @@ inline bool init_glew_jka() {
       (println "Window creation failed")
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
-    (when (cpp/! (cpp/init_glew_jka))
+    (when (cpp/! (cpp/init_glew_player))
       (println "GLEW initialization failed")
       (cpp/exit 1))
     (cpp/glfwSwapInterval 1)
-    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_jka)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_player)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
@@ -317,10 +317,10 @@ inline bool init_glew_jka() {
 ")
 
 (defn load-animations
-  "Load skeleton and animations from jka directory"
+  "Load skeleton and animations from player animations directory"
   []
-  (println "Loading JKA skeleton and animations...")
-  (let [base-path "models/player/jka/"
+  (println "Loading skeleton and animations...")
+  (let [base-path "models/player/animations/"
         ctx (anim/create-context)
 
         ;; Load skeleton
@@ -743,12 +743,12 @@ inline bool init_glew_jka() {
 
 (defn -main
   []
-  (println "=== JKA Skeleton Viewer ===")
+  (println "=== Player Skeleton Viewer ===")
   (println "Controls: LEFT/RIGHT arrows, 1-9 keys, ESC to exit")
   (println "")
 
   (let [_ (cpp/glfwInit)
-        window (setup-window {:width 1280 :height 720 :name "JKA Skeleton Viewer"})
+        window (setup-window {:width 1280 :height 720 :name "Player Skeleton Viewer"})
 
         ;; Create shaders
         line-shader (cpp/create_line_shader line-vertex-shader line-fragment-shader)

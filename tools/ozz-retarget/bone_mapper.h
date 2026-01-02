@@ -14,7 +14,7 @@ namespace retarget {
 // Represents a single bone mapping from target to source skeleton
 struct BoneMapping {
     std::string target_bone;           // Mixamo bone name
-    std::vector<std::string> source_bones;  // JKA bone name(s) - can be multiple for combined bones
+    std::vector<std::string> source_bones;  // Source bone name(s) - can be multiple for combined bones
     bool combine_rotations = false;    // If true, multiply rotations of source bones
     ozz::math::Quaternion correction;  // Rotation correction to apply to world rotation
     bool has_correction = false;       // Whether a correction was specified

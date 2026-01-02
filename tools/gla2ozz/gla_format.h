@@ -1,4 +1,4 @@
-// GLA (Ghoul2 Animation) file format structures for Jedi Academy
+// GLA (Ghoul2 Animation) file format structures
 // Reference: OpenJK codemp/rd-common/mdx_format.h
 
 #ifndef GLA_FORMAT_H_

@@ -1,5 +1,5 @@
 // GLA file parser
-// Parses Jedi Academy Ghoul2 animation files
+// Parses Ghoul2 animation files
 
 #ifndef GLA_PARSER_H_
 #define GLA_PARSER_H_

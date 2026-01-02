@@ -1,4 +1,4 @@
-// gla2ozz - Convert Jedi Academy GLA animations to ozz-animation format
+// gla2ozz - Convert GLA animations to ozz-animation format
 // Uses ozz's OzzImporter framework for integration with CLI and config system
 
 #include <cstring>

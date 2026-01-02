@@ -1,5 +1,5 @@
 // Coordinate system conversion utilities
-// JKA uses Z-up right-handed, ozz uses Y-up right-handed
+// GLA uses Z-up right-handed, ozz uses Y-up right-handed
 
 #ifndef COORDINATE_CONVERT_H_
 #define COORDINATE_CONVERT_H_
@@ -9,12 +9,12 @@
 
 namespace coord_convert {
 
-// Scale factor: JKA uses approximately 8 units per foot (~inch scale)
+// Scale factor: GLA uses approximately 8 units per foot (~inch scale)
 // Convert to meters: 1 inch = 0.0254 meters
 constexpr float SCALE_FACTOR = 0.0254f;
 
 // Convert position from Z-up right-handed to Y-up right-handed
-// JKA: +X right, +Y forward, +Z up
+// GLA: +X right, +Y forward, +Z up
 // ozz/OpenGL: +X right, +Y up, -Z forward
 // Mapping: (x, y, z) -> (x, z, -y)
 inline ozz::math::Float3 ConvertPosition(float x, float y, float z) {
