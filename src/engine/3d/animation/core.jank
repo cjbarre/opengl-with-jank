@@ -440,6 +440,7 @@
     for (int i = 0; i < num_joints && line_count < max_lines; ++i) {
       int parent = parents[i];
       if (parent < 0) continue;  // Root has no parent
+      if (parent == 0) continue;  // Skip bones connected to root (model_root) - avoids vertical line to origin
 
       float child_pos[3], parent_pos[3];
       get_joint_position(ctx, i, child_pos);

@@ -2,27 +2,33 @@
   (:require [engine.2d.graphics.interface :as gfx2d]
             [engine.2d.text.interface :as text]))
 
+;; C++ math implementation to avoid jank numeric conversion issues
+(cpp/raw
+ "#include <math.h>
+
+  inline float normalize_angle_cpp(float a) {
+    const float PI = 3.14159265358979f;
+    const float TWO_PI = 6.28318530717959f;
+    while (a > PI) a -= TWO_PI;
+    while (a < -PI) a += TWO_PI;
+    return a;
+  }
+
+  inline float deg_to_rad(float deg) {
+    return deg * 0.0174532925199433f; // PI / 180
+  }")
+
 ;; Math constants
 (def PI 3.14159)
 (def TWO_PI 6.28318)
 (def HALF_PI 1.5708)
 (def QUARTER_PI 0.785398)
 
-;; Pure Jank math functions using cpp/ interop
-
+;; Use C++ implementation for normalize-angle
 (defn normalize-angle
   "Normalize angle to -PI to PI range."
   [a]
-  (let [a (cpp/float a)]
-    (loop [angle a]
-      (cond
-        (cpp/> angle (cpp/float PI))
-        (recur (cpp/- angle (cpp/float TWO_PI)))
-
-        (cpp/< angle (cpp/float (- PI)))
-        (recur (cpp/+ angle (cpp/float TWO_PI)))
-
-        :else angle))))
+  (cpp/normalize_angle_cpp (cpp/float a)))
 
 (defn calc-velocity-angle
   "Calculate the velocity angle in XZ plane (radians)."
@@ -107,7 +113,7 @@
         ;; Calculate angles
         speed (calc-speed vx vz)
         vel-angle (calc-velocity-angle vx vz)
-        yaw-rad (normalize-angle (* yaw (/ PI 180.0)))
+        yaw-rad (normalize-angle (cpp/deg_to_rad (cpp/float yaw)))
         optimal-angle (calc-optimal-angle speed max-speed)
         min-accel (calc-min-accel-angle speed max-speed)
 

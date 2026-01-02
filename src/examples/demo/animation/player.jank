@@ -666,7 +666,7 @@
 ;; Debug Logging
 ;; =============================================================================
 
-(def DEBUG_LOG true)
+(def DEBUG_LOG false)
 
 (defn log-debug [& args]
   (when DEBUG_LOG

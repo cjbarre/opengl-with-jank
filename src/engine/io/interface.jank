@@ -17,6 +17,6 @@
    Returns a vector of filename strings, sorted alphabetically.
 
    Example:
-     (list-dir {:path \"models/player/jka/\" :extension \".ozz\" :exclude #{\"humanoid\"}})"
+     (list-dir {:path \"models/player/animations/\" :extension \".ozz\" :exclude #{\"skeleton\"}})"
   [args]
   (core/list-dir args))

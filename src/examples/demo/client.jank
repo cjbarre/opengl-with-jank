@@ -10,6 +10,7 @@
             [examples.demo.networking.interpolation :as interp]
             [examples.demo.networking.prediction :as pred]
             [examples.demo.shared :as shared]
+            [examples.demo.camera :as camera]
             [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
@@ -268,10 +269,6 @@ inline bool init_glew_client() {
         time-ratio (player/get-time-ratio new-player-state durations)
         movement-state (:movement-state new-player-state)]
 
-    ;; Debug: print animation state for run, inair, and flip
-    (when (#{:run :inair :flip} movement-state)
-      (println "ANIM:" movement-state "name=" anim-name "idx=" anim-index "ratio=" time-ratio))
-
     ;; Sample animation
     (anim/sample {:context (:animation/context anim-data)
                   :animation-index anim-index
@@ -293,6 +290,7 @@ inline bool init_glew_client() {
    :pred-state (pred/make-prediction-state)
    :remote-players {}              ; player-id -> animation data
    :level-collision nil
+   :camera-state (camera/create-state)  ; Third-person camera with damping
    :debug/overlay-visible true
    :strafehelper/visible false
    :f3-was-pressed false
@@ -480,44 +478,21 @@ inline bool init_glew_client() {
     (when model
       ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
 
-(defn render-camera
-  "Set up camera view based on player position."
-  [shader position yaw pitch]
-  (let [[px py pz] position
-        distance 2.5
-        height 1.0
-        look-offset 1.2
-        yaw-rad (cpp/glm.radians (cpp/float yaw))
-        pitch-rad (cpp/glm.radians (cpp/float pitch))
-        offset-x (cpp/* (cpp/- (cpp/float 0.0) (cpp/cos yaw-rad))
-                        (cpp/* (cpp/float distance) (cpp/cos pitch-rad)))
-        offset-z (cpp/* (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad))
-                        (cpp/* (cpp/float distance) (cpp/cos pitch-rad)))
-        offset-y (cpp/+ (cpp/float height)
-                        (cpp/* (cpp/float distance) (cpp/sin pitch-rad)))
-        camera-pos (cpp/glm.vec3
-                    (cpp/+ (cpp/float px) offset-x)
-                    (cpp/+ (cpp/float py) offset-y)
-                    (cpp/+ (cpp/float pz) offset-z))
-        look-target (cpp/glm.vec3 (cpp/float px)
-                                  (cpp/+ (cpp/float py) (cpp/float look-offset))
-                                  (cpp/float pz))
-        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
-        view-m (cpp/glm.lookAt camera-pos look-target camera-up)
-        view-m-loc (cpp/wrap_glGetUniformLocation shader "view")]
-    (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) gl/GL_FALSE
-                            (cpp/glm.value_ptr view-m))))
-
 (defn draw-world
   "Draw the game world."
   [{:keys [shader line-shader line-vao line-vbo level-model player-anim-data client-state delta-time input] :as context}]
   (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
   (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
-  (let [projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
+  (let [fov (:fov camera/default-config 90.0)
+        projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float fov))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                                           (cpp/float 0.1)
-                                          (cpp/float 100.0))]
+                                          (cpp/float 100.0))
+        ;; Get delta time in milliseconds
+        dt-sec (math/*-> :float delta-time)
+        dt-ms (* (double dt-sec) 1000.0)]
+
     ;; Render level with basic shader
     (cpp/wrap_glUseProgram shader)
     (let [projection-m-loc (cpp/wrap_glGetUniformLocation shader "projection")]
@@ -531,10 +506,17 @@ inline bool init_glew_client() {
           render-state (pred/get-render-state pred-state)
           local-pos (or (:position render-state) [0.0 50.0 0.0])
           local-yaw (or (:yaw render-state) 0.0)
-          local-pitch (or (:pitch render-state) 0.0)]
+          local-pitch (or (:pitch render-state) 0.0)
 
-      ;; Set up camera from local player
-      (render-camera shader local-pos local-yaw local-pitch)
+          ;; Update camera with damping (sets view uniform on shader)
+          new-cam-state (camera/update-camera shader
+                                              (:camera-state state)
+                                              camera/default-config
+                                              local-pos
+                                              local-yaw
+                                              local-pitch
+                                              dt-ms)
+          _ (swap! client-state assoc :camera-state new-cam-state)]
 
       ;; Render level
       (when level-model
@@ -556,8 +538,14 @@ inline bool init_glew_client() {
       ;; Enable blending for soft edges
       (gl-state/enable {:capability gl/GL_BLEND})
       (gl-state/set-blend-func {:src gl/GL_SRC_ALPHA :dest gl/GL_ONE_MINUS_SRC_ALPHA})
-      ;; Set camera for line shader
-      (render-camera line-shader local-pos local-yaw local-pitch)
+      ;; Set camera for line shader (same damped position)
+      (camera/update-camera line-shader
+                            (:camera-state @client-state)
+                            camera/default-config
+                            local-pos
+                            local-yaw
+                            local-pitch
+                            0.0)  ;; 0 delta-ms to reuse same position
 
       ;; Render local player (line skeleton)
       (when player-anim-data

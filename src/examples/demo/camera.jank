@@ -1,0 +1,148 @@
+(ns examples.demo.camera
+  "Third-person camera with exponential damping."
+  (:require [engine.math.interface :as math]))
+
+(cpp/raw "#include \"gl_wrappers.h\"
+          #include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>
+          #include <math.h>")
+
+;; =============================================================================
+;; Configuration
+;; =============================================================================
+
+(def default-config
+  {:range 1.4           ; Distance behind player
+   :vert-offset 0.5     ; Height above player
+   :look-offset 1.0     ; Height to look at (upper back/neck)
+   :camera-damp 1.0     ; Position damping (1=instant, 0=frozen)
+   :target-damp 1.0     ; Focus target damping (1=instant)
+   :fov 90.0})          ; Field of view
+
+;; Damping interval in ms
+(def DAMP_INTERVAL 50.0)
+
+;; =============================================================================
+;; State
+;; =============================================================================
+
+(defn create-state
+  "Create initial camera state."
+  []
+  {:cur-target-x 0.0
+   :cur-target-y 0.0
+   :cur-target-z 0.0
+   :cur-loc-x 0.0
+   :cur-loc-y 0.0
+   :cur-loc-z 0.0
+   :initialized false})
+
+;; =============================================================================
+;; Damping
+;; =============================================================================
+
+(defn damp-value
+  "Apply exponential damping to a single value.
+   Formula: new = ideal + (current - ideal) * ratio
+   Where ratio = (1 - dampValue)^(deltaMs/interval)"
+  [ideal current damp-val delta-ms]
+  (let [ratio (cpp/pow (cpp/- (cpp/double 1.0) (cpp/double damp-val))
+                       (cpp// (cpp/double delta-ms) (cpp/double DAMP_INTERVAL)))]
+    ;; Lerp: ideal + (current - ideal) * ratio
+    (cpp/+ (cpp/double ideal)
+           (cpp/* (cpp/- (cpp/double current) (cpp/double ideal))
+                  ratio))))
+
+;; =============================================================================
+;; Camera Update
+;; =============================================================================
+
+(defn update-camera
+  "Update camera with damping and set view uniform on shader.
+   Returns new camera state.
+
+   Parameters:
+   - shader: OpenGL shader program to set view uniform on
+   - state: Camera state from create-state
+   - config: Camera config (use default-config)
+   - position: Player position [x y z]
+   - yaw: Player yaw (degrees)
+   - pitch: Camera pitch (degrees)
+   - delta-ms: Frame time in milliseconds"
+  [shader state config position yaw pitch delta-ms]
+  (let [[px py pz] position
+        range-val (:range config)
+        vert-offset (:vert-offset config)
+        look-offset (:look-offset config)
+        camera-damp (:camera-damp config)
+        target-damp (:target-damp config)
+
+        ;; Convert to radians
+        yaw-rad (cpp/glm.radians (cpp/float yaw))
+        pitch-rad (cpp/glm.radians (cpp/float pitch))
+
+        ;; Calculate ideal target (where camera looks)
+        ideal-target-x (double px)
+        ideal-target-y (+ (double py) look-offset)
+        ideal-target-z (double pz)
+
+        ;; Calculate ideal camera location (spherical coords behind player)
+        cos-yaw (cpp/cos yaw-rad)
+        sin-yaw (cpp/sin yaw-rad)
+        cos-pitch (cpp/cos pitch-rad)
+        sin-pitch (cpp/sin pitch-rad)
+
+        offset-x (cpp/* (cpp/- (cpp/float 0.0) cos-yaw)
+                        (cpp/* (cpp/float range-val) cos-pitch))
+        offset-z (cpp/* (cpp/- (cpp/float 0.0) sin-yaw)
+                        (cpp/* (cpp/float range-val) cos-pitch))
+        offset-y (cpp/+ (cpp/float vert-offset)
+                        (cpp/* (cpp/float range-val) sin-pitch))
+
+        ideal-loc-x (+ (double px) (double offset-x))
+        ideal-loc-y (+ (double py) (double offset-y))
+        ideal-loc-z (+ (double pz) (double offset-z))
+
+        ;; Apply damping (or snap on first frame)
+        first-frame? (not (:initialized state))
+
+        cur-target-x (if first-frame?
+                       ideal-target-x
+                       (damp-value ideal-target-x (:cur-target-x state) target-damp delta-ms))
+        cur-target-y (if first-frame?
+                       ideal-target-y
+                       (damp-value ideal-target-y (:cur-target-y state) target-damp delta-ms))
+        cur-target-z (if first-frame?
+                       ideal-target-z
+                       (damp-value ideal-target-z (:cur-target-z state) target-damp delta-ms))
+
+        cur-loc-x (if first-frame?
+                    ideal-loc-x
+                    (damp-value ideal-loc-x (:cur-loc-x state) camera-damp delta-ms))
+        cur-loc-y (if first-frame?
+                    ideal-loc-y
+                    (damp-value ideal-loc-y (:cur-loc-y state) camera-damp delta-ms))
+        cur-loc-z (if first-frame?
+                    ideal-loc-z
+                    (damp-value ideal-loc-z (:cur-loc-z state) camera-damp delta-ms))
+
+        ;; Build and set view matrix
+        camera-pos (cpp/glm.vec3 (cpp/float cur-loc-x)
+                                 (cpp/float cur-loc-y)
+                                 (cpp/float cur-loc-z))
+        look-target (cpp/glm.vec3 (cpp/float cur-target-x)
+                                  (cpp/float cur-target-y)
+                                  (cpp/float cur-target-z))
+        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
+        view-m (cpp/glm.lookAt camera-pos look-target camera-up)
+        view-m-loc (cpp/wrap_glGetUniformLocation shader "view")
+        _ (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) 0 (cpp/glm.value_ptr view-m))]
+
+    {:cur-target-x cur-target-x
+     :cur-target-y cur-target-y
+     :cur-target-z cur-target-z
+     :cur-loc-x cur-loc-x
+     :cur-loc-y cur-loc-y
+     :cur-loc-z cur-loc-z
+     :initialized true}))

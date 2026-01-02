@@ -1,6 +1,5 @@
 (ns engine.shaders.core
   (:require [engine.macros :refer [clet]]
-            [engine.io.interface :as io]
             [engine.gl.constants :as gl]))
 
 (cpp/raw
@@ -8,11 +7,47 @@
   #include <GLFW/glfw3.h>
   #include <stdlib.h>")
 
+;; Compile shader entirely in C++ to avoid jank memory handling issues
 (cpp/raw
- "inline char **sources(void* source) {
-    char **arr = (char **) malloc(sizeof(char *));
-    arr[0] = (char*) source;
-    return arr;
+ "inline GLuint compile_shader_from_file(const char* path, GLenum shader_type) {
+    // Read file
+    FILE* f = fopen(path, \"rb\");
+    if (!f) {
+      fprintf(stderr, \"Failed to open shader: %s\\n\", path);
+      return 0;
+    }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    char* source = (char*)malloc(size + 1);
+    if (!source) {
+      fclose(f);
+      return 0;
+    }
+    fread(source, 1, size, f);
+    source[size] = '\\0';
+    fclose(f);
+
+    // Compile shader
+    GLuint shader = glCreateShader(shader_type);
+    const char* sources[1] = { source };
+    glShaderSource(shader, 1, sources, nullptr);
+    glCompileShader(shader);
+
+    free(source);
+
+    // Check compilation
+    GLint success;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+    if (!success) {
+      char info_log[512];
+      glGetShaderInfoLog(shader, 512, NULL, info_log);
+      fprintf(stderr, \"Shader compilation failed: %s\\n%s\\n\", path, info_log);
+      return 0;
+    }
+
+    return shader;
   }")
 
 (cpp/raw
@@ -31,30 +66,18 @@
 
 (defn compile-shader
   [{:keys [path type] :as args}]
-  (clet [shader-type (case type
-                       :fragment gl/GL_FRAGMENT_SHADER
-                       :vertex gl/GL_VERTEX_SHADER
-                       :geometry gl/GL_GEOMETRY_SHADER
-                       nil)
-         :when (not shader-type)
-         :error (throw (ex-info
-                        "Invalid shader type"
-                        (assoc args :valid-types [:fragment :vertex :geometry])))
-         source (cpp/unbox (cpp/type "void*") (io/slurp {:path path}))
-         sources (cpp/sources source)
-         shader (cpp/wrap_glCreateShader shader-type)
-         _ (cpp/wrap_glShaderSource shader (cpp/int 1) sources cpp/nullptr)
-         _ (cpp/wrap_glCompileShader shader)
-         success? (cpp/int)
-         _ (cpp/wrap_glGetShaderiv shader gl/GL_COMPILE_STATUS (cpp/& success?))
-         :when (cpp/! success?)
-         :error (do (cpp/log_compilation_error shader)
-                    (throw (ex-info "Shader compilation failed"
-                                    args)))
-         _ (cpp/free source)
-         _ (cpp/free (cpp/cast (cpp/type "void*") sources))]
-
-        shader))
+  (let [shader-type (case type
+                      :fragment gl/GL_FRAGMENT_SHADER
+                      :vertex gl/GL_VERTEX_SHADER
+                      :geometry gl/GL_GEOMETRY_SHADER
+                      nil)]
+    (when (not shader-type)
+      (throw (ex-info "Invalid shader type"
+                      (assoc args :valid-types [:fragment :vertex :geometry]))))
+    (let [shader (cpp/compile_shader_from_file path shader-type)]
+      (when (= shader 0)
+        (throw (ex-info "Shader compilation failed" args)))
+      shader)))
 
 (defn load-shader-program
   [{:keys [vertex-shader-path
