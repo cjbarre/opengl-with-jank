@@ -8,15 +8,19 @@ A 3D game engine and multiplayer demo built with [Jank](https://jank-lang.org/) 
 
 ```bash
 git clone --recursive <repo-url>
-./bin/setup      # Build dependencies (ozz-animation, OpenGL stub)
-./bin/run        # Run the demo in JIT mode
+./bin/setup            # Build dependencies (ozz-animation, OpenGL stub)
+./bin/run demo server  # Start server on port 7777
+./bin/run demo client  # Connect to server (in another terminal)
 ```
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `./bin/run` | Run demo in JIT mode |
+| `./bin/run demo` | Run demo (shows usage) |
+| `./bin/run demo server` | Start multiplayer server on port 7777 |
+| `./bin/run demo client` | Connect to localhost:7777 |
+| `./bin/run demo client <ip>` | Connect to specific server |
 | `./bin/run my-game` | Run a different example |
 | `./bin/compile` | AOT compile to standalone executable |
 | `./bin/compile-server` | Compile headless dedicated server |
@@ -32,8 +36,8 @@ git clone --recursive <repo-url>
 ```
 src/
 ├── engine/                  # Reusable game engine
-│   ├── 2d/                  # 2D graphics and text rendering
-│   ├── 3d/                  # 3D rendering subsystems
+│   ├── gfx2d/               # 2D graphics and text rendering
+│   ├── gfx3d/               # 3D rendering subsystems
 │   │   ├── animation/       # ozz-animation integration, skinning
 │   │   ├── collision/       # Raycast ground detection
 │   │   ├── geometry/        # Shapes, VBO/EBO management
