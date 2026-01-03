@@ -1,6 +1,6 @@
-(ns engine.3d.lines.interface
+(ns engine.gfx3d.lines.interface
   "Line rendering utilities for skeleton visualization and debug drawing."
-  (:require [engine.3d.lines.core :as core]))
+  (:require [engine.gfx3d.lines.core :as core]))
 
 (defn create-line-vao
   "Creates a VAO and VBO for line rendering.

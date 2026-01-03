@@ -1,8 +1,13 @@
-(ns engine.3d.animation.core
+(ns engine.gfx3d.animation.core
   (:require [engine.macros :refer [clet]]))
 
 ;; Include ozz-animation headers and define C++ helper structures
-(cpp/raw "#include \"animation_types.h\"")
+(cpp/raw "#include \"animation_types.h\"
+
+  // Factory function to avoid copy construction issues
+  inline AnimationContext* create_animation_context() {
+    return new AnimationContext();
+  }")
 (cpp/raw
  "#include <iostream>
   #include \"ozz/animation/runtime/animation.h\"
@@ -604,7 +609,7 @@
 (defn create-context
   "Creates an animation context for runtime animation"
   []
-  (let [ctx (cpp/new cpp/AnimationContext)]
+  (let [ctx (cpp/create_animation_context)]
     (cpp/box ctx)))
 
 ;; Load skeleton from file
@@ -616,10 +621,10 @@
     (when (cpp/! skeleton)
       (throw (ex-info "Failed to load skeleton" {:path path})))
     ;; Use helper function since cpp/= on member access doesn't work
-    (cpp/set_context_skeleton ctx skeleton)
+    (do (cpp/set_context_skeleton ctx skeleton) nil)
     (let [num-joints (cpp/get_skeleton_num_joints skeleton)
-          num-soa-joints (cpp/get_skeleton_num_soa_joints skeleton)]
-      (cpp/.init ctx num-soa-joints num-joints)
+          num-soa-joints (cpp/get_skeleton_num_soa_joints skeleton)
+          _ (do (cpp/.init ctx num-soa-joints num-joints) nil)]
       {:num-joints num-joints
        :num-soa-joints num-soa-joints})))
 
@@ -632,7 +637,7 @@
     (when (cpp/! animation)
       (throw (ex-info "Failed to load animation" {:path path})))
     ;; Use helper function to add animation to context
-    (cpp/add_context_animation ctx animation)
+    (do (cpp/add_context_animation ctx animation) nil)
     (let [animations (cpp/& (cpp/.-animations ctx))]
       {:index (cpp/- (cpp/.size animations) (cpp/size_t 1))
        :duration (cpp/get_animation_duration animation)
@@ -721,9 +726,9 @@
         meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
         joint-count (cpp/get_mesh_joint_remap_count meshes-ptr (cpp/int mesh-index))
         ;; Allocate buffer on heap so it survives function return
-        buffer (cpp/new (cpp/type "std::vector<float>"))]
-    (cpp/.resize buffer (cpp/* joint-count (cpp/int 16)))
-    (cpp/compute_skinning_matrices ctx meshes-ptr (cpp/int mesh-index) (cpp/.data buffer))
+        buffer (cpp/new (cpp/type "std::vector<float>"))
+        _ (do (cpp/.resize buffer (cpp/* joint-count (cpp/int 16))) nil)
+        _ (do (cpp/compute_skinning_matrices ctx meshes-ptr (cpp/int mesh-index) (cpp/.data buffer)) nil)]
     {:joint-count joint-count
      :matrices (cpp/box buffer)}))
 
@@ -752,11 +757,11 @@
   (let [ctx (cpp/unbox cpp/AnimationContext* context)
         max-l (or max-lines 128)
         ;; Allocate buffer: 2 vertices per line * 3 floats per vertex = 6 floats per line
-        buffer (cpp/new (cpp/type "std::vector<float>"))]
-    (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6)))
-    (let [line-count (cpp/build_skeleton_lines ctx (cpp/.data buffer) (cpp/int max-l))]
-      {:line-count line-count
-       :vertices (cpp/box buffer)})))
+        buffer (cpp/new (cpp/type "std::vector<float>"))
+        _ (do (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6))) nil)
+        line-count (cpp/build_skeleton_lines ctx (cpp/.data buffer) (cpp/int max-l))]
+    {:line-count line-count
+     :vertices (cpp/box buffer)}))
 
 (defn build-skeleton-lines-rest-pose
   "Builds line vertices for skeleton REST POSE (bind pose) visualization.
@@ -766,11 +771,11 @@
   [{:keys [context max-lines]}]
   (let [ctx (cpp/unbox cpp/AnimationContext* context)
         max-l (or max-lines 128)
-        buffer (cpp/new (cpp/type "std::vector<float>"))]
-    (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6)))
-    (let [line-count (cpp/build_skeleton_lines_rest_pose ctx (cpp/.data buffer) (cpp/int max-l))]
-      {:line-count line-count
-       :vertices (cpp/box buffer)})))
+        buffer (cpp/new (cpp/type "std::vector<float>"))
+        _ (do (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6))) nil)
+        line-count (cpp/build_skeleton_lines_rest_pose ctx (cpp/.data buffer) (cpp/int max-l))]
+    {:line-count line-count
+     :vertices (cpp/box buffer)}))
 
 (defn build-joint-points
   "Builds point vertices for joint debug visualization.
@@ -779,8 +784,8 @@
   (let [ctx (cpp/unbox cpp/AnimationContext* context)
         max-p (or max-points 128)
         ;; Allocate buffer: 3 floats per point
-        buffer (cpp/new (cpp/type "std::vector<float>"))]
-    (cpp/.resize buffer (cpp/* (cpp/int max-p) (cpp/int 3)))
-    (let [point-count (cpp/build_joint_points ctx (cpp/.data buffer) (cpp/int max-p))]
-      {:point-count point-count
-       :vertices (cpp/box buffer)})))
+        buffer (cpp/new (cpp/type "std::vector<float>"))
+        _ (do (cpp/.resize buffer (cpp/* (cpp/int max-p) (cpp/int 3))) nil)
+        point-count (cpp/build_joint_points ctx (cpp/.data buffer) (cpp/int max-p))]
+    {:point-count point-count
+     :vertices (cpp/box buffer)}))

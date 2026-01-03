@@ -1,5 +1,5 @@
-(ns engine.2d.graphics.interface
-  (:require [engine.2d.graphics.core :as core]))
+(ns engine.gfx2d.graphics.interface
+  (:require [engine.gfx2d.graphics.core :as core]))
 
 (defn init-graphics2d
   "Initialize 2D graphics. Call once at startup.

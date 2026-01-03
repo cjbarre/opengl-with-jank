@@ -1,4 +1,4 @@
-(ns engine.3d.gltf.headless
+(ns engine.gfx3d.gltf.headless
   "Headless glTF loader for server-side use.
    Only loads mesh data (positions, indices) without GPU operations.
    Use this for collision detection, physics, etc."

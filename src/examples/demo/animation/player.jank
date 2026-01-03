@@ -8,7 +8,7 @@
    - Wall flip back: forward into wall + jump
 
    All animation selection is input-driven, not velocity-driven."
-  (:require [engine.3d.animation.interface :as anim]
+  (:require [engine.gfx3d.animation.interface :as anim]
             [engine.behavior-tree.interface :as bt]))
 
 ;; =============================================================================

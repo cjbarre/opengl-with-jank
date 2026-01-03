@@ -1,4 +1,4 @@
-(ns engine.2d.graphics.core
+(ns engine.gfx2d.graphics.core
   (:require [engine.shaders.interface :as shaders]
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))
@@ -193,35 +193,41 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
         ;; Return map of closures - they use the global C++ state
         {:begin-2d
          (fn [screen-width screen-height]
-           (cpp/begin_2d_impl (cpp/int screen-width) (cpp/int screen-height)))
+           (cpp/begin_2d_impl (cpp/int screen-width) (cpp/int screen-height))
+           nil)
 
          :end-2d
          (fn []
-           (cpp/end_2d_impl))
+           (cpp/end_2d_impl)
+           nil)
 
          :set-color
          (fn [[r g b a]]
            (cpp/set_color_impl (cpp/float. r)
                                (cpp/float. g)
                                (cpp/float. b)
-                               (cpp/float. a)))
+                               (cpp/float. a))
+           nil)
 
          :render-line
          (fn [x1 y1 x2 y2 thickness]
            (cpp/render_line_impl (cpp/float. x1) (cpp/float. y1)
                                  (cpp/float. x2) (cpp/float. y2)
-                                 (cpp/float. thickness)))
+                                 (cpp/float. thickness))
+           nil)
 
          :render-arc-outline
          (fn [cx cy radius start-angle end-angle segments thickness]
            (cpp/render_arc_outline_impl (cpp/float. cx) (cpp/float. cy)
                                         (cpp/float. radius)
                                         (cpp/float. start-angle) (cpp/float. end-angle)
-                                        (cpp/int segments) (cpp/float. thickness)))
+                                        (cpp/int segments) (cpp/float. thickness))
+           nil)
 
          :render-filled-arc
          (fn [cx cy radius start-angle end-angle segments]
            (cpp/render_filled_arc_impl (cpp/float. cx) (cpp/float. cy)
                                        (cpp/float. radius)
                                        (cpp/float. start-angle) (cpp/float. end-angle)
-                                       (cpp/int segments)))}))
+                                       (cpp/int segments))
+           nil)}))

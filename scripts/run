@@ -61,4 +61,4 @@ eval jank \
   -L"$LIBS_DIR/enet/lib" $ENET_LIB \
   -L"$LIBS_DIR/cgltf/lib" $CGLTF_LIB \
   $OPENGL_FLAGS \
-  --module-path $(clojure -Spath) run-main "$NAMESPACE" $ARGS
+  --module-path $(clojure -Spath) run-main "$NAMESPACE" -- $ARGS

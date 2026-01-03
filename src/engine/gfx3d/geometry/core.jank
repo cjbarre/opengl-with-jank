@@ -1,4 +1,4 @@
-(ns engine.3d.geometry.core
+(ns engine.gfx3d.geometry.core
   (:require [engine.shaders.interface :as shaders]
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))
@@ -141,11 +141,12 @@
         {:vao vao
          :vbo vbo
          :ebo ebo
-         :draw #(cpp/wrap_glDrawElements
-                 gl/GL_TRIANGLES
-                 cpp/textured_rectangle_2D_indices_size
-                 gl/GL_UNSIGNED_INT
-                 (cpp/voidify_int (cpp/int 0)))}))
+         :draw #(do (cpp/wrap_glDrawElements
+                      gl/GL_TRIANGLES
+                      cpp/textured_rectangle_2D_indices_size
+                      gl/GL_UNSIGNED_INT
+                      (cpp/voidify_int (cpp/int 0)))
+                    nil)}))
 
 (defn textured-cube-3D
   []
@@ -184,4 +185,5 @@
 
         {:vao vao
          :vbo vbo
-         :draw #(cpp/wrap_glDrawArrays gl/GL_TRIANGLES (cpp/int 0) (cpp/int 36))}))
+         :draw #(do (cpp/wrap_glDrawArrays gl/GL_TRIANGLES (cpp/int 0) (cpp/int 36))
+                    nil)}))

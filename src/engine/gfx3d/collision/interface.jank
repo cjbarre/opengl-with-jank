@@ -1,5 +1,5 @@
-(ns engine.3d.collision.interface
-  (:require [engine.3d.collision.core :as core]))
+(ns engine.gfx3d.collision.interface
+  (:require [engine.gfx3d.collision.core :as core]))
 
 (defn prepare-collision-mesh
   "Convert Jank collision data to C++ vectors for fast raycast.

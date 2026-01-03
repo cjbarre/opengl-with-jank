@@ -1,4 +1,4 @@
-(ns engine.3d.textures.core
+(ns engine.gfx3d.textures.core
   (:require [engine.io.interface :as io]
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))

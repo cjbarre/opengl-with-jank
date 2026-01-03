@@ -147,4 +147,5 @@
 
 (defn bind-vertex-array-object
   [{:keys [vertex-array-object-id]}]
-  (cpp/wrap_glBindVertexArray vertex-array-object-id))
+  (cpp/wrap_glBindVertexArray vertex-array-object-id)
+  nil)

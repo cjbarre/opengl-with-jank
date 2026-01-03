@@ -1,7 +1,7 @@
-(ns engine.3d.animation.mesh
+(ns engine.gfx3d.animation.mesh
   "Creates OpenGL buffers from ozz mesh data for GPU skinning"
   (:require [engine.shaders.interface :as shaders]
-            [engine.3d.animation.core :as core]
+            [engine.gfx3d.animation.core :as core]
             [engine.gl.constants :as gl]))
 
 (cpp/raw

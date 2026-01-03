@@ -9,8 +9,8 @@
   (:require [engine.networking.protocol :as net]
             [examples.demo.networking.snapshot :as snapshot]
             [examples.demo.shared :as shared]
-            [engine.3d.gltf.headless :as gltf]
-            [engine.3d.collision.interface :as collision]))
+            [engine.gfx3d.gltf.headless :as gltf]
+            [engine.gfx3d.collision.interface :as collision]))
 
 (cpp/raw "#include <thread>
           #include <chrono>")
@@ -189,7 +189,8 @@
   "Sleep for the given number of milliseconds."
   [ms]
   (cpp/std.this_thread.sleep_for
-   (cpp/std.chrono.milliseconds (cpp/int ms))))
+   (cpp/std.chrono.milliseconds (cpp/int ms)))
+  nil)
 
 (defn load-level-collision
   "Load level collision mesh."

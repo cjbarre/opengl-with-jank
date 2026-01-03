@@ -6,7 +6,7 @@
    - Physics simulation functions
    - Entity state manipulation")
 
-(require '[engine.3d.collision.interface :as collision])
+(require '[engine.gfx3d.collision.interface :as collision])
 
 (cpp/raw "
 #include <math.h>

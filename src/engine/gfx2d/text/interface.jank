@@ -1,5 +1,5 @@
-(ns engine.2d.text.interface
-  (:require [engine.2d.text.core :as core]))
+(ns engine.gfx2d.text.interface
+  (:require [engine.gfx2d.text.core :as core]))
 
 (defn init-font
   "Initialize font rendering. Call once at startup.

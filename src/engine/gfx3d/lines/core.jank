@@ -1,4 +1,4 @@
-(ns engine.3d.lines.core
+(ns engine.gfx3d.lines.core
   "Line rendering utilities for skeleton visualization and debug drawing."
   (:require [engine.gl.constants :as gl]))
 
@@ -62,19 +62,23 @@
    vertices: raw float pointer (from get_vector_data or similar)
    line-count: number of lines (each line = 2 vertices = 6 floats)"
   [{:keys [vbo]} vertices line-count]
-  (cpp/update_line_vbo_helper vbo vertices (cpp/int line-count)))
+  (cpp/update_line_vbo_helper vbo vertices (cpp/int line-count))
+  nil)
 
 (defn bind-line-vao
   "Binds the line VAO for rendering."
   [{:keys [vao]}]
-  (cpp/bind_line_vao_helper vao))
+  (cpp/bind_line_vao_helper vao)
+  nil)
 
 (defn unbind-line-vao
   "Unbinds the line VAO."
   []
-  (cpp/unbind_line_vao_helper))
+  (cpp/unbind_line_vao_helper)
+  nil)
 
 (defn draw-lines
   "Draws lines. line-count is the number of lines (each line = 2 vertices)."
   [line-count]
-  (cpp/draw_lines_helper (cpp/int line-count)))
+  (cpp/draw_lines_helper (cpp/int line-count))
+  nil)

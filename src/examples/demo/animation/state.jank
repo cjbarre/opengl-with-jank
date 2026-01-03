@@ -1,6 +1,6 @@
 (ns examples.demo.animation.state
   "Animation state machine for managing animation transitions"
-  (:require [engine.3d.animation.interface :as anim]))
+  (:require [engine.gfx3d.animation.interface :as anim]))
 
 (cpp/raw "#include <cmath>")
 

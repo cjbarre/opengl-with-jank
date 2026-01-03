@@ -1,4 +1,4 @@
-(ns engine.3d.collision.core)
+(ns engine.gfx3d.collision.core)
 
 (cpp/raw "
 #include <glm/glm.hpp>
@@ -68,11 +68,13 @@ inline float raycast_ground_cpp(
     ;; Fill positions
     (doseq [[px py pz] positions]
       (let [ptr (cpp/unbox (cpp/type "std::vector<glm::vec3>*") positions-box)]
-        (cpp/.push_back ptr (cpp/glm.vec3 (cpp/float. px) (cpp/float. py) (cpp/float. pz)))))
+        (cpp/.push_back ptr (cpp/glm.vec3 (cpp/float. px) (cpp/float. py) (cpp/float. pz)))
+        nil))
     ;; Fill indices
     (doseq [idx indices]
       (let [ptr (cpp/unbox (cpp/type "std::vector<unsigned int>*") indices-box)]
-        (cpp/.push_back ptr (cpp/int idx))))
+        (cpp/.push_back ptr (cpp/int idx))
+        nil))
     {:positions positions-box
      :indices indices-box}))
 

@@ -1,6 +1,6 @@
-(ns engine.3d.animation.interface
-  (:require [engine.3d.animation.core :as core]
-            [engine.3d.animation.mesh :as mesh]))
+(ns engine.gfx3d.animation.interface
+  (:require [engine.gfx3d.animation.core :as core]
+            [engine.gfx3d.animation.mesh :as mesh]))
 
 (defn create-context
   "Creates an animation context for runtime animation playback.

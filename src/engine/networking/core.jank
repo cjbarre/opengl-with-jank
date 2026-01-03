@@ -95,7 +95,8 @@
 (defn shutdown!
   "Shutdown ENet. Call when done with networking."
   []
-  (cpp/enet_deinitialize))
+  (cpp/enet_deinitialize)
+  nil)
 
 ;; Host management
 
@@ -119,7 +120,8 @@
 (defn destroy-host
   "Destroy a host and free its resources."
   [host]
-  (cpp/enet_host_destroy (cpp/unbox (cpp/type "ENetHost*") host)))
+  (cpp/enet_host_destroy (cpp/unbox (cpp/type "ENetHost*") host))
+  nil)
 
 ;; Connection management
 
@@ -136,12 +138,14 @@
 (defn disconnect
   "Gracefully disconnect a peer."
   [peer]
-  (cpp/enet_peer_disconnect (cpp/unbox (cpp/type "ENetPeer*") peer) 0))
+  (cpp/enet_peer_disconnect (cpp/unbox (cpp/type "ENetPeer*") peer) 0)
+  nil)
 
 (defn disconnect-now
   "Immediately disconnect a peer without waiting for acknowledgment."
   [peer]
-  (cpp/enet_peer_disconnect_now (cpp/unbox (cpp/type "ENetPeer*") peer) 0))
+  (cpp/enet_peer_disconnect_now (cpp/unbox (cpp/type "ENetPeer*") peer) 0)
+  nil)
 
 ;; Messaging
 
@@ -166,14 +170,16 @@
   [host data]
   (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
         len (count data)]
-    (cpp/broadcast_packet host* data (cpp/int len) 0 true)))
+    (cpp/broadcast_packet host* data (cpp/int len) 0 true)
+    nil))
 
 (defn broadcast-unreliable
   "Broadcast data unreliably to all connected peers."
   [host data]
   (let [host* (cpp/unbox (cpp/type "ENetHost*") host)
         len (count data)]
-    (cpp/broadcast_packet host* data (cpp/int len) 1 false)))
+    (cpp/broadcast_packet host* data (cpp/int len) 1 false)
+    nil))
 
 ;; Event polling
 
@@ -230,4 +236,5 @@
 (defn flush-host
   "Flush any pending outgoing packets."
   [host]
-  (cpp/enet_host_flush (cpp/unbox (cpp/type "ENetHost*") host)))
+  (cpp/enet_host_flush (cpp/unbox (cpp/type "ENetHost*") host))
+  nil)

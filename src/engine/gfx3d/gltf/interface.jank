@@ -1,6 +1,6 @@
-(ns engine.3d.gltf.interface
+(ns engine.gfx3d.gltf.interface
   (:refer-clojure :exclude [load])
-  (:require [engine.3d.gltf.core :as core]))
+  (:require [engine.gfx3d.gltf.core :as core]))
 
 (defn parse [{:keys [_path] :as args}]
   (core/parse args))

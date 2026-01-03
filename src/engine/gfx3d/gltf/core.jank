@@ -1,7 +1,7 @@
-(ns engine.3d.gltf.core
+(ns engine.gfx3d.gltf.core
   (:refer-clojure :exclude [load])
   (:require [engine.shaders.interface :as shaders]
-            [engine.3d.textures.interface :as textures]
+            [engine.gfx3d.textures.interface :as textures]
             [engine.math.interface :as math]
             [engine.macros :refer [clet]]
             [engine.gl.constants :as gl]))
@@ -284,14 +284,16 @@
                         (cpp/float ny)
                         (cpp/float nz)
                         (cpp/float u)
-                        (cpp/float v)))))
+                        (cpp/float v)))
+                      nil))
 
                 indices ((cpp/type "std::vector<int>"))
                 indices-box (cpp/box (cpp/& indices))
                 _ (doseq [i (range (count (:indices primitive)))]
                     (let [indices* (cpp/unbox (cpp/type "std::vector<int>*") indices-box)
                           index (get (:indices primitive) i)]
-                      (cpp/.push_back indices* (cpp/int index))))
+                      (cpp/.push_back indices* (cpp/int index))
+                      nil))
                 indices-size (cpp/.size indices)
                 vao (shaders/create-vertex-array-object)
                 _ (shaders/bind-vertex-array-object
@@ -371,16 +373,18 @@
                          (cpp/wrap_glActiveTexture gl/GL_TEXTURE0)
                          (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D texture-id)
                          (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uHasBaseColorTex") (cpp/int 1))
-                         (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor") r g b a))
-                     _ (cpp/wrap_glUniformMatrix4fv (cpp/wrap_glGetUniformLocation shader model-m-loc) (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr local-model-m))
-                     _ (cpp/wrap_glDrawElements
-                        gl/GL_TRIANGLES
-                        (count (:indices primitive))
-                        gl/GL_UNSIGNED_INT
-                        (cpp/voidify_int (cpp/int 0)))
+                         (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor") r g b a)
+                         nil)
+                     _ (do (cpp/wrap_glUniformMatrix4fv (cpp/wrap_glGetUniformLocation shader model-m-loc) (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr local-model-m)) nil)
+                     _ (do (cpp/wrap_glDrawElements
+                            gl/GL_TRIANGLES
+                            (count (:indices primitive))
+                            gl/GL_UNSIGNED_INT
+                            (cpp/voidify_int (cpp/int 0))) nil)
                      _ (when texture-id
                          (cpp/wrap_glActiveTexture gl/GL_TEXTURE0)
-                         (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D (cpp/int 0)))]))}))]
+                         (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D (cpp/int 0))
+                         nil)]))}))]
 
     {:draw
      (fn draw-model [context]
