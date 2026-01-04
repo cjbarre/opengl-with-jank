@@ -30,7 +30,7 @@ GAME="demo"
 SYNC_ONLY=false
 NO_SYNC=false
 REMOTE_DIR="~/opengl-with-jank"
-JANK_HOME="/home/cjbarre/jank"
+# JANK_HOME will be auto-detected on remote (apt vs source install)
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -168,17 +168,36 @@ EOF
 echo ""
 echo "=== Compiling $OUTPUT on Linux $LINUX_ARCH ==="
 
-ssh_cmd "cd $REMOTE_DIR && \
-export LD_LIBRARY_PATH=\"\$PWD/libs/$LIBS_ARCH/enet/lib:\$PWD/libs/$LIBS_ARCH/cgltf/lib\" && \
-export PATH=\"$JANK_HOME/compiler+runtime/build:\$PATH\" && \
-echo 'Running jank compile (headless server)...' && \
-jank \
-  -I libs/glm -I include \
-  -L libs/$LIBS_ARCH/enet/lib -lenet \
-  -L libs/$LIBS_ARCH/cgltf/lib -lcgltf \
-  --module-path $JANK_HOME/compiler+runtime/src/jank:src compile $NAMESPACE -o $OUTPUT && \
-echo 'Compilation successful!' && \
-ls -lh $OUTPUT"
+ssh_cmd bash << EOF
+set -e
+cd $REMOTE_DIR
+
+# Auto-detect jank installation (apt vs source)
+if [ -d "/usr/local/lib/jank/0.1" ]; then
+    echo "Detected apt-installed jank at /usr/local/lib/jank/0.1"
+    JANK_LIB="/usr/local/lib/jank/0.1"
+    JANK_MODULE_PATH="/usr/local/lib/jank/0.1/src/jank"
+elif [ -d "\$HOME/jank/compiler+runtime/build" ]; then
+    echo "Detected source-built jank at \$HOME/jank"
+    JANK_LIB="\$HOME/jank/compiler+runtime/build/llvm-install/usr/local"
+    JANK_MODULE_PATH="\$HOME/jank/compiler+runtime/src/jank"
+else
+    echo "ERROR: Could not find jank installation"
+    exit 1
+fi
+
+export LD_LIBRARY_PATH="\$PWD/libs/$LIBS_ARCH/enet/lib:\$PWD/libs/$LIBS_ARCH/cgltf/lib:\$JANK_LIB/lib"
+
+echo "Running jank compile (headless server)..."
+jank \\
+  -I libs/glm -I include \\
+  -L libs/$LIBS_ARCH/enet/lib -lenet \\
+  -L libs/$LIBS_ARCH/cgltf/lib -lcgltf \\
+  --module-path "\$JANK_MODULE_PATH:src" compile $NAMESPACE -o $OUTPUT
+
+echo "Compilation successful!"
+ls -lh $OUTPUT
+EOF
 
 # Package distribution
 echo ""
@@ -196,6 +215,20 @@ case "\$ARCH" in
     *) LIBS_ARCH="linux-\$ARCH" ;;
 esac
 
+# Auto-detect jank installation (apt vs source)
+if [ -d "/usr/local/lib/jank/0.1" ]; then
+    echo "Detected apt-installed jank at /usr/local/lib/jank/0.1"
+    JANK_LIB="/usr/local/lib/jank/0.1"
+    JANK_SRC_DIR="/usr/local/lib/jank/0.1"
+elif [ -d "\$HOME/jank/compiler+runtime/build" ]; then
+    echo "Detected source-built jank at \$HOME/jank"
+    JANK_LIB="\$HOME/jank/compiler+runtime/build/llvm-install/usr/local"
+    JANK_SRC_DIR="\$HOME/jank/compiler+runtime"
+else
+    echo "ERROR: Could not find jank installation"
+    exit 1
+fi
+
 # Clean and create dist structure
 rm -rf dist-server
 mkdir -p dist-server/bin dist-server/lib dist-server/lib/jank/0.1/bin dist-server/lib/jank/0.1/include dist-server/lib/jank/0.1/lib/clang dist-server/lib/jank/0.1/src
@@ -208,34 +241,46 @@ cp libs/\$LIBS_ARCH/enet/lib/libenet.so dist-server/lib/ 2>/dev/null || echo "Wa
 cp libs/\$LIBS_ARCH/cgltf/lib/libcgltf.so dist-server/lib/ 2>/dev/null || echo "Warning: libcgltf.so not found"
 
 # Copy clang for JIT
-JANK_LLVM=$JANK_HOME/compiler+runtime/build/llvm-install/usr/local
-cp \$JANK_LLVM/bin/clang-22 dist-server/lib/jank/0.1/bin/
+cp \$JANK_LIB/bin/clang-22 dist-server/lib/jank/0.1/bin/
 ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang++
 ln -sf clang-22 dist-server/lib/jank/0.1/bin/clang
 
 # Copy LLVM shared libraries needed by clang
-cp \$JANK_LLVM/lib/libclang-cpp.so.22.0git dist-server/lib/
-cp \$JANK_LLVM/lib/libLLVM.so.22.0git dist-server/lib/
+cp \$JANK_LIB/lib/libclang-cpp.so.22.0git dist-server/lib/
+cp \$JANK_LIB/lib/libLLVM.so.22.0git dist-server/lib/
 ln -sf libclang-cpp.so.22.0git dist-server/lib/libclang-cpp.so
 ln -sf libLLVM.so.22.0git dist-server/lib/libLLVM.so
 
 # Copy clang resources
-cp -R \$JANK_LLVM/lib/clang/22 dist-server/lib/jank/0.1/lib/clang/
+cp -R \$JANK_LIB/lib/clang/22 dist-server/lib/jank/0.1/lib/clang/
 
 # Copy libc++ headers (both generic and platform-specific)
-cp -R \$JANK_LLVM/include/c++ dist-server/lib/jank/0.1/include/ 2>/dev/null || true
+cp -R \$JANK_LIB/include/c++ dist-server/lib/jank/0.1/include/ 2>/dev/null || true
 # Copy platform-specific headers (contains __config_site)
-if [ -d "\$JANK_LLVM/include/aarch64-unknown-linux-gnu" ]; then
-    cp -R \$JANK_LLVM/include/aarch64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
+if [ -d "\$JANK_LIB/include/aarch64-unknown-linux-gnu" ]; then
+    cp -R \$JANK_LIB/include/aarch64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
 fi
-if [ -d "\$JANK_LLVM/include/x86_64-unknown-linux-gnu" ]; then
-    cp -R \$JANK_LLVM/include/x86_64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
+if [ -d "\$JANK_LIB/include/x86_64-unknown-linux-gnu" ]; then
+    cp -R \$JANK_LIB/include/x86_64-unknown-linux-gnu dist-server/lib/jank/0.1/include/
 fi
 
-# Copy jank headers and stdlib
-JANK_DIR=$JANK_HOME/compiler+runtime
-cp -R \$JANK_DIR/include/cpp/jank dist-server/lib/jank/0.1/include/
-cp -R \$JANK_DIR/src/jank/* dist-server/lib/jank/0.1/src/
+# Copy jank headers and stdlib (different paths for apt vs source)
+if [ -d "\$JANK_LIB/include/jank" ]; then
+    # apt install - headers directly in include/jank
+    cp -R \$JANK_LIB/include/jank dist-server/lib/jank/0.1/include/
+else
+    # source build - headers in include/cpp/jank
+    cp -R \$JANK_SRC_DIR/include/cpp/jank dist-server/lib/jank/0.1/include/
+fi
+
+# Copy jank stdlib
+if [ -d "\$JANK_LIB/src/jank" ]; then
+    # apt install
+    cp -R \$JANK_LIB/src/jank/* dist-server/lib/jank/0.1/src/
+else
+    # source build
+    cp -R \$JANK_SRC_DIR/src/jank/* dist-server/lib/jank/0.1/src/
+fi
 
 # Bundle GCC libstdc++ headers for fully standalone distribution
 # These are needed by clang for JIT compilation at runtime

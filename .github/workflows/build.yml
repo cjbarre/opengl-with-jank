@@ -6,15 +6,6 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      skip_cache:
-        description: 'Skip LLVM cache (force rebuild)'
-        type: boolean
-        default: false
-
-env:
-  JANK_REPO: cjbarre/jank
-  JANK_BRANCH: add-windows
 
 jobs:
   build:
@@ -41,30 +32,36 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies (Linux)
+      - name: Install jank and dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
+          # Install jank from PPA
           sudo apt-get update
+          sudo apt-get install -y curl gnupg
+          curl -s "https://ppa.jank-lang.org/KEY.gpg" | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/jank.gpg >/dev/null
+          sudo curl -s -o /etc/apt/sources.list.d/jank.list "https://ppa.jank-lang.org/jank.list"
+          sudo apt-get update
+          sudo apt-get install -y jank
+
+          # Install build dependencies
           sudo apt-get install -y \
-            build-essential cmake ninja-build git git-lfs \
-            libssl-dev libdouble-conversion-dev pkg-config \
-            zlib1g-dev libffi-dev libbz2-dev libzstd-dev \
+            build-essential cmake ninja-build \
             libgl1-mesa-dev libglew-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev \
-            doctest-dev patchelf \
+            patchelf \
             gcc-14 g++-14 libstdc++-14-dev
 
       - name: Set GCC 14 as default (Linux)
         if: runner.os == 'Linux'
         run: |
-          # GCC 14 required for std::chrono::parse support
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
             --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
-      - name: Install dependencies (macOS)
+      - name: Install jank and dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install cmake ninja git-lfs openssl double-conversion pkg-config python gnupg zlib doctest
+          brew install jank-lang/jank/jank
+          brew install cmake ninja
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Setup Clojure
@@ -72,68 +69,23 @@ jobs:
         with:
           cli: latest
 
-      - name: Clone jank
-        run: |
-          git clone --recurse-submodules --depth 1 -b ${{ env.JANK_BRANCH }} \
-            https://github.com/${{ env.JANK_REPO }}.git jank
-
-      - name: Get LLVM cache key
-        id: llvm-cache-key
-        run: |
-          # Use jank commit hash + build script hash for stable cache key
-          JANK_COMMIT=$(cd jank && git rev-parse HEAD)
-          BUILD_SCRIPT_HASH=$(sha256sum jank/compiler+runtime/bin/build-clang | cut -d' ' -f1)
-          echo "key=llvm-${{ matrix.platform }}-${JANK_COMMIT:0:12}-${BUILD_SCRIPT_HASH:0:12}" >> $GITHUB_OUTPUT
-          echo "Cache key: llvm-${{ matrix.platform }}-${JANK_COMMIT:0:12}-${BUILD_SCRIPT_HASH:0:12}"
-
-      - name: Cache LLVM build
-        id: cache-llvm
-        if: ${{ !inputs.skip_cache }}
-        uses: actions/cache@v4
-        with:
-          path: jank/compiler+runtime/build/llvm-install
-          key: ${{ steps.llvm-cache-key.outputs.key }}
-          restore-keys: |
-            llvm-${{ matrix.platform }}-
-
-      - name: Build LLVM (if not cached)
-        if: steps.cache-llvm.outputs.cache-hit != 'true'
-        working-directory: jank/compiler+runtime
-        run: |
-          echo "Cache miss - building LLVM from scratch..."
-          export CC=clang CXX=clang++
-          ./bin/build-clang
-        timeout-minutes: 180
-
-      - name: Verify LLVM cache
-        run: |
-          echo "LLVM install directory contents:"
-          ls -la jank/compiler+runtime/build/llvm-install/usr/local/bin/ | head -10
-          echo "Cache hit: ${{ steps.cache-llvm.outputs.cache-hit }}"
-
-      - name: Build jank
-        working-directory: jank/compiler+runtime
-        run: |
-          export CC=$PWD/build/llvm-install/usr/local/bin/clang
-          export CXX=$PWD/build/llvm-install/usr/local/bin/clang++
-          ./bin/configure -GNinja -DCMAKE_BUILD_TYPE=Release -Djank_local_clang=on
-          ./bin/compile
-
-      - name: Install jank
-        working-directory: jank/compiler+runtime
-        run: |
-          # Install jank to a local prefix so resource directories are set up correctly
-          cmake --install build --prefix ${{ github.workspace }}/jank-install
-
-      - name: Add jank to PATH
-        run: |
-          echo "${{ github.workspace }}/jank-install/bin" >> $GITHUB_PATH
-          echo "JANK_DIR=${{ github.workspace }}/jank/compiler+runtime" >> $GITHUB_ENV
-
       - name: Verify jank installation
         run: |
-          jank --help
+          which jank
           jank run -e '(println "jank is working!")'
+
+      - name: Set jank paths
+        id: jank-paths
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            echo "JANK_LIB=/usr/local/lib/jank/0.1" >> $GITHUB_ENV
+            echo "JANK_MODULE_PATH=/usr/local/lib/jank/0.1/src/jank" >> $GITHUB_ENV
+          else
+            # macOS Homebrew
+            JANK_PREFIX="$(brew --prefix jank)"
+            echo "JANK_LIB=$JANK_PREFIX/lib/jank/0.1" >> $GITHUB_ENV
+            echo "JANK_MODULE_PATH=$JANK_PREFIX/lib/jank/0.1/src/jank" >> $GITHUB_ENV
+          fi
 
       - name: Build game libraries (Linux)
         if: runner.os == 'Linux'
@@ -186,7 +138,7 @@ jobs:
             gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -Iinclude -lm
           fi
 
-          # Build enet (MUST use project's single-header include/enet.h for correct symbols)
+          # Build enet
           if [ ! -f "$LIBS_DIR/enet/lib/libenet.so" ]; then
             mkdir -p "$LIBS_DIR/enet/lib"
             cat > /tmp/enet_impl.c << 'ENETEOF'
@@ -220,7 +172,7 @@ jobs:
             SYS_LIB_PATH="/usr/lib/x86_64-linux-gnu"
           fi
 
-          export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$SYS_LIB_PATH"
+          export LD_LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$SYS_LIB_PATH:$JANK_LIB/lib"
 
           jank \
             -I"$LIBS_DIR/glfw/include" -I libs/glm -I include -I"$LIBS_DIR/ozz-animation/include" \
@@ -230,7 +182,7 @@ jobs:
             -L"$LIBS_DIR/enet/lib" -lenet \
             -L"$LIBS_DIR/cgltf/lib" -lcgltf \
             -I/usr/include -L"$SYS_LIB_PATH" -lGL -lGLEW \
-            --module-path "$JANK_DIR/src/jank:src" \
+            --module-path "$JANK_MODULE_PATH:src" \
             compile examples.demo.core -o demo
 
       - name: Compile game (macOS)
@@ -245,15 +197,13 @@ jobs:
             -L"$LIBS_DIR/stb/lib" -lstb_all \
             -L"$LIBS_DIR/enet/lib" -lenet \
             -L"$LIBS_DIR/cgltf/lib" -lcgltf \
-            --module-path "$JANK_DIR/src/jank:src" \
+            --module-path "$JANK_MODULE_PATH:src" \
             compile examples.demo.core -o demo
 
       - name: Package distribution (Linux)
         if: runner.os == 'Linux'
         run: |
           LIBS_DIR="libs/${{ matrix.platform }}"
-          JANK_LLVM="${{ github.workspace }}/jank/compiler+runtime/build/llvm-install/usr/local"
-          JANK_SRC="${{ github.workspace }}/jank/compiler+runtime"
 
           mkdir -p dist/bin dist/lib dist/lib/jank/0.1/{bin,include,lib/clang,src}
 
@@ -263,23 +213,23 @@ jobs:
           cp -r shaders textures models fonts dist/
 
           # Bundle LLVM shared libraries for JIT
-          cp "$JANK_LLVM/lib/libclang-cpp.so"* dist/lib/ 2>/dev/null || true
-          cp "$JANK_LLVM/lib/libLLVM.so"* dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libclang-cpp.so"* dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libLLVM.so"* dist/lib/ 2>/dev/null || true
 
           # Bundle clang for JIT compilation
-          cp "$JANK_LLVM/bin/clang-22" dist/lib/jank/0.1/bin/
+          cp "$JANK_LIB/bin/clang-22" dist/lib/jank/0.1/bin/
           ln -sf clang-22 dist/lib/jank/0.1/bin/clang++
           ln -sf clang-22 dist/lib/jank/0.1/bin/clang
 
           # Bundle clang resources
-          cp -R "$JANK_LLVM/lib/clang/22" dist/lib/jank/0.1/lib/clang/
+          cp -R "$JANK_LIB/lib/clang/22" dist/lib/jank/0.1/lib/clang/
 
           # Bundle libc++ headers
-          cp -R "$JANK_LLVM/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
+          cp -R "$JANK_LIB/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
 
           # Bundle jank headers and stdlib
-          cp -R "$JANK_SRC/include/cpp/jank" dist/lib/jank/0.1/include/
-          cp -R "$JANK_SRC/src/jank"/* dist/lib/jank/0.1/src/
+          cp -R "$JANK_LIB/include/jank" dist/lib/jank/0.1/include/
+          cp -R "$JANK_LIB/src/jank"/* dist/lib/jank/0.1/src/
 
           # Bundle GCC 14 libstdc++ headers for JIT
           mkdir -p dist/lib/jank/0.1/include/c++
@@ -311,8 +261,6 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           LIBS_DIR="libs/${{ matrix.platform }}"
-          JANK_LLVM="${{ github.workspace }}/jank/compiler+runtime/build/llvm-install/usr/local"
-          JANK_SRC="${{ github.workspace }}/jank/compiler+runtime"
 
           mkdir -p dist/bin dist/lib dist/lib/jank/0.1/{bin,include,lib/clang,src}
 
@@ -322,25 +270,25 @@ jobs:
           cp -r shaders textures models fonts dist/
 
           # Bundle LLVM shared libraries for JIT
-          cp "$JANK_LLVM/lib/libclang-cpp.dylib" dist/lib/ 2>/dev/null || true
-          cp "$JANK_LLVM/lib/libLLVM.dylib" dist/lib/ 2>/dev/null || true
-          cp "$JANK_LLVM/lib/libc++.1.dylib" dist/lib/ 2>/dev/null || true
-          cp "$JANK_LLVM/lib/libunwind.1.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libclang-cpp.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libLLVM.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libc++.1.dylib" dist/lib/ 2>/dev/null || true
+          cp "$JANK_LIB/lib/libunwind.1.dylib" dist/lib/ 2>/dev/null || true
 
           # Bundle clang for JIT compilation
-          cp "$JANK_LLVM/bin/clang-22" dist/lib/jank/0.1/bin/
+          cp "$JANK_LIB/bin/clang-22" dist/lib/jank/0.1/bin/
           ln -sf clang-22 dist/lib/jank/0.1/bin/clang++
           ln -sf clang-22 dist/lib/jank/0.1/bin/clang
 
           # Bundle clang resources
-          cp -R "$JANK_LLVM/lib/clang/22" dist/lib/jank/0.1/lib/clang/
+          cp -R "$JANK_LIB/lib/clang/22" dist/lib/jank/0.1/lib/clang/
 
           # Bundle libc++ headers
-          cp -R "$JANK_LLVM/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
+          cp -R "$JANK_LIB/include/c++" dist/lib/jank/0.1/include/ 2>/dev/null || true
 
           # Bundle jank headers and stdlib
-          cp -R "$JANK_SRC/include/cpp/jank" dist/lib/jank/0.1/include/
-          cp -R "$JANK_SRC/src/jank"/* dist/lib/jank/0.1/src/
+          cp -R "$JANK_LIB/include/jank" dist/lib/jank/0.1/include/
+          cp -R "$JANK_LIB/src/jank"/* dist/lib/jank/0.1/src/
 
           # Fix clang rpath
           install_name_tool -add_rpath @executable_path/../../../lib dist/lib/jank/0.1/bin/clang-22 2>/dev/null || true
