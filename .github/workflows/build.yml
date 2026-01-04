@@ -60,6 +60,17 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
             --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
+      - name: Add swap space (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # jank AOT compilation is memory-intensive, add 8GB swap
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "Swap enabled:"
+          free -h
+
       - name: Install jank and dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
