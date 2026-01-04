@@ -10,6 +10,7 @@
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.animation.interface :as anim]
+            [engine.gc.interface :as gc]
             [examples.demo.animation.state :as anim-state]
             [examples.demo.animation.player :as player]
             [examples.demo.strafehelper.interface :as strafehelper]
@@ -646,7 +647,7 @@ inline bool init_glew() {
   [{:keys [window event-store state delta-time gfx2d]
     :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
-    (let [_ (update-time context)
+      (let [_ (update-time context)
           _ (update-cursor context)
           command (process-input context)
           events (handle-command (assoc context :command command :state state))
@@ -671,7 +672,9 @@ inline bool init_glew() {
               [vx vy vz] (or (:physics/velocity player) [0 0 0])
               grounded (:physics/grounded player)
               speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float. vx) (cpp/float. vx))
-                                     (cpp/* (cpp/float. vz) (cpp/float. vz))))]
+                                     (cpp/* (cpp/float. vz) (cpp/float. vz))))
+              heap-mb (/ (gc/heap-size) 1048576.0)
+              used-mb (/ (gc/memory-use) 1048576.0)]
           (text/render-text (str "FPS: " (int fps)) 10.0 30.0 [1.0 1.0 1.0] 1280 720)
           (text/render-text (str "Pos: " (int px) ", " (int py) ", " (int pz))
                             10.0 55.0 [0.8 0.8 0.8] 1280 720)
@@ -679,7 +682,13 @@ inline bool init_glew() {
                             10.0 80.0 [0.8 0.8 0.8] 1280 720)
           (text/render-text (str "Speed: " (int speed)) 10.0 105.0 [0.8 0.8 0.8] 1280 720)
           (text/render-text (str "Grounded: " grounded) 10.0 130.0
-                            (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)))
+                            (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)
+          (let [free-mb (/ (gc/free-bytes) 1048576.0)
+                collections (gc/collection-count)]
+            (text/render-text (str "GC: " (int used-mb) "/" (int heap-mb) " MB")
+                              10.0 155.0 [0.6 0.8 1.0] 1280 720)
+            (text/render-text (str "Free: " (int free-mb) " MB | Collections: " collections)
+                              10.0 180.0 [0.6 0.8 1.0] 1280 720))))
 
       ;; Render strafehelper (F4 to toggle)
       (when (get @state :strafehelper/visible false)

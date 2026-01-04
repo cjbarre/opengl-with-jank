@@ -1,0 +1,128 @@
+(ns engine.gc.core
+  "Garbage collection control via BDWGC (Boehm-Demers-Weiser GC).
+
+   Provides functions to control GC behavior for performance-critical code
+   like game render loops.")
+
+(cpp/raw
+ "#include <gc/gc.h>
+
+  // Wrapper to get heap size as size_t
+  inline size_t gc_get_heap_size() {
+    return GC_get_heap_size();
+  }
+
+  // Wrapper to get free bytes as size_t
+  inline size_t gc_get_free_bytes() {
+    return GC_get_free_bytes();
+  }
+
+  // Wrapper to get memory use as size_t
+  inline size_t gc_get_memory_use() {
+    return GC_get_memory_use();
+  }
+
+  // Wrapper to get collection count
+  inline size_t gc_get_gc_no() {
+    return GC_get_gc_no();
+  }")
+
+;; =============================================================================
+;; Core GC Control
+;; =============================================================================
+
+(defn collect!
+  "Force a full, world-stop garbage collection.
+   Use sparingly - prefer collect-a-little! for incremental work."
+  []
+  (cpp/GC_gcollect)
+  nil)
+
+(defn collect-and-unmap!
+  "Force a full collection and try to return memory to the OS.
+   Use when responding to low-memory conditions."
+  []
+  (cpp/GC_gcollect_and_unmap)
+  nil)
+
+(defn collect-a-little!
+  "Do a small amount of incremental collection work.
+   Returns non-zero if there's more work to do, 0 if collection is complete.
+   Safe to call frequently (e.g., once per frame)."
+  []
+  (cpp/GC_collect_a_little))
+
+;; =============================================================================
+;; Enable/Disable
+;; =============================================================================
+
+(defn disable!
+  "Disable garbage collection. Even collect! calls will be ineffective.
+   Calls can be nested - must call enable! the same number of times."
+  []
+  (cpp/GC_disable)
+  nil)
+
+(defn enable!
+  "Re-enable garbage collection after disable!.
+   Must be called once for each disable! call."
+  []
+  (cpp/GC_enable)
+  nil)
+
+(defn disabled?
+  "Returns true if GC is currently disabled."
+  []
+  (cpp/!= (cpp/int 0) (cpp/GC_is_disabled)))
+
+;; =============================================================================
+;; Statistics
+;; =============================================================================
+
+(defn heap-size
+  "Returns total heap size in bytes."
+  []
+  (cpp/gc_get_heap_size))
+
+(defn free-bytes
+  "Returns free bytes in the heap."
+  []
+  (cpp/gc_get_free_bytes))
+
+(defn memory-use
+  "Returns memory in use (heap-size - free-bytes)."
+  []
+  (cpp/gc_get_memory_use))
+
+(defn collection-count
+  "Returns number of collections that have occurred."
+  []
+  (cpp/gc_get_gc_no))
+
+(defn stats
+  "Returns a map of GC statistics."
+  []
+  {:heap-size (heap-size)
+   :free-bytes (free-bytes)
+   :memory-use (memory-use)
+   :collections (collection-count)})
+
+;; =============================================================================
+;; Frame-based Helpers
+;; =============================================================================
+
+(defn with-gc-disabled
+  "Execute body with GC disabled, re-enabling afterward.
+   Returns the result of body."
+  [f]
+  (disable!)
+  (let [result (f)]
+    (enable!)
+    result))
+
+(defn frame-boundary!
+  "Call at frame boundaries to do incremental GC work.
+   Performs a small amount of collection without stopping the world."
+  []
+  (collect-a-little!)
+  nil)

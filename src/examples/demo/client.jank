@@ -19,6 +19,7 @@
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.animation.interface :as anim]
+            [engine.gc.interface :as gc]
             [examples.demo.animation.player :as player]
             [examples.demo.strafehelper.interface :as strafehelper]
             [engine.gl.constants :as gl]
@@ -599,7 +600,7 @@ inline bool init_glew_client() {
   (while (and (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
               (net/connected? network))
 
-    (let [_ (update-time context)
+      (let [_ (update-time context)
           _ (update-cursor context)
           dt (math/*-> :float delta-time)
           dt-ms (* dt 1000.0)]
@@ -721,7 +722,15 @@ inline bool init_glew_client() {
           (text/render-text (str "Speed: " (int speed)) 10.0 105.0 [0.8 0.8 0.8] 1280 720)
           (text/render-text (str "Grounded: " grounded) 10.0 130.0
                             (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)
-          (text/render-text "[NETWORKED]" 10.0 155.0 [0.5 0.8 1.0] 1280 720)))
+          (text/render-text "[NETWORKED]" 10.0 155.0 [0.5 0.8 1.0] 1280 720)
+          (let [heap-mb (/ (gc/heap-size) 1048576.0)
+                used-mb (/ (gc/memory-use) 1048576.0)
+                free-mb (/ (gc/free-bytes) 1048576.0)
+                collections (gc/collection-count)]
+            (text/render-text (str "GC: " (int used-mb) "/" (int heap-mb) " MB")
+                              10.0 180.0 [0.6 0.8 1.0] 1280 720)
+            (text/render-text (str "Free: " (int free-mb) " MB | Collections: " collections)
+                              10.0 205.0 [0.6 0.8 1.0] 1280 720))))
 
       ;; Render strafehelper
       (when (:strafehelper/visible @client-state)

@@ -1,0 +1,23 @@
+(ns engine.gc.interface
+  (:require [engine.gc.core :as core]))
+
+;; Core GC Control
+(def collect! core/collect!)
+(def collect-and-unmap! core/collect-and-unmap!)
+(def collect-a-little! core/collect-a-little!)
+
+;; Enable/Disable
+(def disable! core/disable!)
+(def enable! core/enable!)
+(def disabled? core/disabled?)
+
+;; Statistics
+(def heap-size core/heap-size)
+(def free-bytes core/free-bytes)
+(def memory-use core/memory-use)
+(def collection-count core/collection-count)
+(def stats core/stats)
+
+;; Frame-based Helpers
+(def with-gc-disabled core/with-gc-disabled)
+(def frame-boundary! core/frame-boundary!)
