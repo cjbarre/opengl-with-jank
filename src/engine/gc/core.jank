@@ -35,15 +35,13 @@
   "Force a full, world-stop garbage collection.
    Use sparingly - prefer collect-a-little! for incremental work."
   []
-  (cpp/GC_gcollect)
-  nil)
+  (cpp/GC_gcollect))
 
 (defn collect-and-unmap!
   "Force a full collection and try to return memory to the OS.
    Use when responding to low-memory conditions."
   []
-  (cpp/GC_gcollect_and_unmap)
-  nil)
+  (cpp/GC_gcollect_and_unmap))
 
 (defn collect-a-little!
   "Do a small amount of incremental collection work.
@@ -60,15 +58,13 @@
   "Disable garbage collection. Even collect! calls will be ineffective.
    Calls can be nested - must call enable! the same number of times."
   []
-  (cpp/GC_disable)
-  nil)
+  (cpp/GC_disable))
 
 (defn enable!
   "Re-enable garbage collection after disable!.
    Must be called once for each disable! call."
   []
-  (cpp/GC_enable)
-  nil)
+  (cpp/GC_enable))
 
 (defn disabled?
   "Returns true if GC is currently disabled."
@@ -124,5 +120,4 @@
   "Call at frame boundaries to do incremental GC work.
    Performs a small amount of collection without stopping the world."
   []
-  (collect-a-little!)
-  nil)
+  (collect-a-little!))

@@ -386,7 +386,7 @@
   }
 
   // Compute skinning matrices from model matrices and mesh
-  inline void compute_skinning_matrices(
+  inline void compute_skinning_matrices_impl(
     AnimationContext* ctx,
     ozz::vector<ozz::sample::Mesh>* meshes,
     int mesh_index,
@@ -435,7 +435,7 @@
   // Build skeleton line vertices for debug rendering
   // Returns number of lines (pairs of vertices) written
   // Each line is 2 vertices * 3 floats = 6 floats
-  inline int build_skeleton_lines(AnimationContext* ctx, float* out_vertices, int max_lines) {
+  inline int build_skeleton_lines_impl(AnimationContext* ctx, float* out_vertices, int max_lines) {
     if (!ctx || !ctx->skeleton) return 0;
 
     int num_joints = ctx->skeleton->num_joints();
@@ -465,7 +465,7 @@
   }
 
   // Build skeleton lines from REST POSE (bind pose) - no animation
-  inline int build_skeleton_lines_rest_pose(AnimationContext* ctx, float* out_vertices, int max_lines) {
+  inline int build_skeleton_lines_rest_pose_impl(AnimationContext* ctx, float* out_vertices, int max_lines) {
     if (!ctx || !ctx->skeleton) return 0;
 
     ozz::animation::Skeleton* skel = ctx->skeleton;
@@ -517,7 +517,7 @@
 
   // Build joint point vertices for debug rendering
   // Returns number of points written (3 floats each)
-  inline int build_joint_points(AnimationContext* ctx, float* out_vertices, int max_points) {
+  inline int build_joint_points_impl(AnimationContext* ctx, float* out_vertices, int max_points) {
     if (!ctx) return 0;
     int num_joints = static_cast<int>(ctx->models.size());
     int count = (num_joints < max_points) ? num_joints : max_points;
@@ -616,12 +616,12 @@
 (defn load-skeleton
   "Loads a skeleton from an .ozz file"
   [{:keys [path context]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         skeleton (cpp/load_skeleton_ozz path)]
     (when (cpp/! skeleton)
       (throw (ex-info "Failed to load skeleton" {:path path})))
     ;; Use helper function since cpp/= on member access doesn't work
-    (do (cpp/set_context_skeleton ctx skeleton) nil)
+    (cpp/set_context_skeleton ctx skeleton)
     (let [num-joints (cpp/get_skeleton_num_joints skeleton)
           num-soa-joints (cpp/get_skeleton_num_soa_joints skeleton)
           _ (do (cpp/.init ctx num-soa-joints num-joints) nil)]
@@ -632,12 +632,12 @@
 (defn load-animation
   "Loads an animation from an .ozz file, returns animation handle"
   [{:keys [path context]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         animation (cpp/load_animation_ozz path)]
     (when (cpp/! animation)
       (throw (ex-info "Failed to load animation" {:path path})))
     ;; Use helper function to add animation to context
-    (do (cpp/add_context_animation ctx animation) nil)
+    (cpp/add_context_animation ctx animation)
     (let [animations (cpp/& (cpp/.-animations ctx))]
       {:index (cpp/- (cpp/.size animations) (cpp/size_t 1))
        :duration (cpp/get_animation_duration animation)
@@ -647,7 +647,7 @@
 (defn sample
   "Samples animation at given time ratio (0.0-1.0), updates model matrices in context"
   [{:keys [context animation-index time-ratio]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         ;; Use helper function to get animation from context
         animation (cpp/get_context_animation ctx (cpp/size_t animation-index))]
     (cpp/sample_animation_ozz ctx animation (cpp/float time-ratio))))
@@ -656,7 +656,7 @@
 (defn get-model-matrices
   "Gets all model space matrices from context as a flat float array pointer"
   [{:keys [context]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         num-joints (cpp/get_num_joints ctx)]
     {:num-joints num-joints
      :matrices-ptr (when (cpp/> num-joints (cpp/int 0))
@@ -678,7 +678,7 @@
 (defn get-mesh-info
   "Gets information about a specific mesh"
   [{:keys [meshes mesh-index]}]
-  (let [meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
         idx (cpp/int mesh-index)]
     {:vertex-count (cpp/get_mesh_vertex_count meshes-ptr idx)
      :index-count (cpp/get_mesh_index_count meshes-ptr idx)
@@ -691,7 +691,7 @@
 (defn get-part-info
   "Gets information about a specific mesh part"
   [{:keys [meshes mesh-index part-index]}]
-  (let [meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
         mi (cpp/int mesh-index)
         pi (cpp/int part-index)]
     {:vertex-count (cpp/get_part_vertex_count meshes-ptr mi pi)
@@ -701,14 +701,14 @@
 (defn get-mesh-indices
   "Gets pointer to mesh triangle indices (uint16_t)"
   [{:keys [meshes mesh-index]}]
-  (let [meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)]
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)]
     (cpp/box (cpp/get_mesh_indices meshes-ptr (cpp/int mesh-index)))))
 
 ;; Get part vertex data pointers
 (defn get-part-vertex-data
   "Gets pointers to all vertex attribute data for a mesh part"
   [{:keys [meshes mesh-index part-index]}]
-  (let [meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
         mi (cpp/int mesh-index)
         pi (cpp/int part-index)]
     {:positions (cpp/box (cpp/get_part_positions meshes-ptr mi pi))
@@ -722,13 +722,13 @@
   "Computes skinning matrices from animation context and mesh.
    Returns pointer to matrix array (joint_remap_count * 16 floats)"
   [{:keys [context meshes mesh-index]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
-        meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
+        meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
         joint-count (cpp/get_mesh_joint_remap_count meshes-ptr (cpp/int mesh-index))
         ;; Allocate buffer on heap so it survives function return
-        buffer (cpp/new (cpp/type "std::vector<float>"))
+        buffer (cpp/new (std.vector float))
         _ (do (cpp/.resize buffer (cpp/* joint-count (cpp/int 16))) nil)
-        _ (do (cpp/compute_skinning_matrices ctx meshes-ptr (cpp/int mesh-index) (cpp/.data buffer)) nil)]
+        _ (cpp/compute_skinning_matrices_impl ctx meshes-ptr (cpp/int mesh-index) (cpp/.data buffer))]
     {:joint-count joint-count
      :matrices (cpp/box buffer)}))
 
@@ -738,7 +738,7 @@
   "Gets skeleton information from context.
    Returns: {:num-joints n :joint-names [...]}"
   [{:keys [context]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         num-joints-cpp (cpp/get_context_num_joints ctx)
         num-joints (int num-joints-cpp)]
     (when (> num-joints 0)
@@ -754,12 +754,12 @@
   "Builds line vertices for skeleton debug visualization.
    Call after sampling animation. Returns {:line-count n :vertices float-buffer}"
   [{:keys [context max-lines]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         max-l (or max-lines 128)
         ;; Allocate buffer: 2 vertices per line * 3 floats per vertex = 6 floats per line
-        buffer (cpp/new (cpp/type "std::vector<float>"))
+        buffer (cpp/new (std.vector float))
         _ (do (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6))) nil)
-        line-count (cpp/build_skeleton_lines ctx (cpp/.data buffer) (cpp/int max-l))]
+        line-count (cpp/build_skeleton_lines_impl ctx (cpp/.data buffer) (cpp/int max-l))]
     {:line-count line-count
      :vertices (cpp/box buffer)}))
 
@@ -769,11 +769,11 @@
    Args: {:context ctx :max-lines 128}
    Returns: {:line-count n :vertices float-buffer}"
   [{:keys [context max-lines]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         max-l (or max-lines 128)
-        buffer (cpp/new (cpp/type "std::vector<float>"))
+        buffer (cpp/new (std.vector float))
         _ (do (cpp/.resize buffer (cpp/* (cpp/int max-l) (cpp/int 6))) nil)
-        line-count (cpp/build_skeleton_lines_rest_pose ctx (cpp/.data buffer) (cpp/int max-l))]
+        line-count (cpp/build_skeleton_lines_rest_pose_impl ctx (cpp/.data buffer) (cpp/int max-l))]
     {:line-count line-count
      :vertices (cpp/box buffer)}))
 
@@ -781,11 +781,11 @@
   "Builds point vertices for joint debug visualization.
    Call after sampling animation. Returns {:point-count n :vertices float-buffer}"
   [{:keys [context max-points]}]
-  (let [ctx (cpp/unbox cpp/AnimationContext* context)
+  (let [ctx (cpp/unbox (:* AnimationContext) context)
         max-p (or max-points 128)
         ;; Allocate buffer: 3 floats per point
-        buffer (cpp/new (cpp/type "std::vector<float>"))
+        buffer (cpp/new (std.vector float))
         _ (do (cpp/.resize buffer (cpp/* (cpp/int max-p) (cpp/int 3))) nil)
-        point-count (cpp/build_joint_points ctx (cpp/.data buffer) (cpp/int max-p))]
+        point-count (cpp/build_joint_points_impl ctx (cpp/.data buffer) (cpp/int max-p))]
     {:point-count point-count
      :vertices (cpp/box buffer)}))

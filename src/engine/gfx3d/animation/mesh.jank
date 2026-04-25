@@ -120,11 +120,11 @@
    Args: {:meshes boxed-meshes-ptr :mesh-index n}
    Returns: {:vao id :index-count n}"
   [{:keys [meshes mesh-index]}]
-  (let [meshes-ptr (cpp/unbox (cpp/type "ozz::vector<ozz::sample::Mesh>*") meshes)
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
         mi (cpp/int mesh-index)
 
         ;; Build interleaved vertex buffer
-        vertices ((cpp/type "std::vector<SkinnedVertex>"))
+        vertices (#cpp (std.vector SkinnedVertex))
         vertex-count (cpp/build_skinned_vertices meshes-ptr mi vertices)
 
         ;; Get index data
@@ -136,23 +136,23 @@
         _ (shaders/bind-vertex-array-object {:vertex-array-object-id vao})
 
         ;; Create and fill VBO
-        vbo ((cpp/type "unsigned int"))
+        vbo (#cpp (:unsigned int))
         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
         vbo-size (cpp/* (cpp/skinned_vertex_size) (cpp/.size vertices))
         _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                             vbo-size
-                            (cpp/cast (cpp/type "const void*") (cpp/.data vertices))
+                            (cpp/cast (:* (:const void)) (cpp/.data vertices))
                             gl/GL_STATIC_DRAW)
 
         ;; Create and fill EBO
-        ebo ((cpp/type "unsigned int"))
+        ebo (#cpp (:unsigned int))
         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& ebo))
         _ (cpp/wrap_glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
         ebo-size (cpp/* (cpp/int 2) index-count) ;; sizeof(uint16_t) = 2
         _ (cpp/wrap_glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
                             ebo-size
-                            (cpp/cast (cpp/type "const void*") indices-ptr)
+                            (cpp/cast (:* (:const void)) indices-ptr)
                             gl/GL_STATIC_DRAW)
 
         ;; Vertex stride = sizeof(SkinnedVertex) = 48

@@ -94,23 +94,23 @@
          ;;
          ;; VBO
          ;;
-         vbo ((cpp/type "unsigned int"))
+         vbo (#cpp (:unsigned int))
          _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
          _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
          _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                              cpp/textured_rectangle_2D_vertices_size
-                             (cpp/cast (cpp/type "void*")
+                             (cpp/cast (:* void)
                                        cpp/textured_rectangle_2D_vertices)
                              gl/GL_STATIC_DRAW)
          ;;
          ;; EBO
          ;;
-         ebo ((cpp/type "unsigned int"))
+         ebo (#cpp (:unsigned int))
          _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& ebo))
          _ (cpp/wrap_glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
          _ (cpp/wrap_glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
                              cpp/textured_rectangle_2D_indices_size
-                             (cpp/cast (cpp/type "void*")
+                             (cpp/cast (:* void)
                                        cpp/textured_rectangle_2D_indices)
                              gl/GL_STATIC_DRAW)
          ;;
@@ -141,12 +141,11 @@
         {:vao vao
          :vbo vbo
          :ebo ebo
-         :draw #(do (cpp/wrap_glDrawElements
+         :draw #(cpp/wrap_glDrawElements
                       gl/GL_TRIANGLES
                       cpp/textured_rectangle_2D_indices_size
                       gl/GL_UNSIGNED_INT
-                      (cpp/voidify_int (cpp/int 0)))
-                    nil)}))
+                      (cpp/voidify_int (cpp/int 0)))}))
 
 (defn textured-cube-3D
   []
@@ -156,12 +155,12 @@
          ;;
          ;; VBO
          ;;
-         vbo ((cpp/type "unsigned int"))
+         vbo (#cpp (:unsigned int))
          _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
          _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
          _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                              cpp/textured_cube_3D_vertices_size
-                             (cpp/cast (cpp/type "void*")
+                             (cpp/cast (:* void)
                                        cpp/textured_cube_3D_vertices)
                              gl/GL_STATIC_DRAW)
 
@@ -185,5 +184,4 @@
 
         {:vao vao
          :vbo vbo
-         :draw #(do (cpp/wrap_glDrawArrays gl/GL_TRIANGLES (cpp/int 0) (cpp/int 36))
-                    nil)}))
+         :draw #(cpp/wrap_glDrawArrays gl/GL_TRIANGLES (cpp/int 0) (cpp/int 36))}))

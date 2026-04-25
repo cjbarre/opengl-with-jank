@@ -189,8 +189,7 @@
   "Sleep for the given number of milliseconds."
   [ms]
   (cpp/std.this_thread.sleep_for
-   (cpp/std.chrono.milliseconds (cpp/int ms)))
-  nil)
+   (cpp/std.chrono.milliseconds (cpp/int ms))))
 
 (defn load-level-collision
   "Load level collision mesh."

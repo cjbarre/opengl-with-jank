@@ -61,20 +61,18 @@ inline float raycast_ground_cpp(
   "Convert Jank collision data to C++ vectors for fast raycast.
    Call this once at level load, then pass the result to raycast-ground."
   [{:keys [positions indices]}]
-  (let [cpp-positions (cpp/new (cpp/type "std::vector<glm::vec3>"))
-        cpp-indices (cpp/new (cpp/type "std::vector<unsigned int>"))
+  (let [cpp-positions (cpp/new (std.vector glm.vec3))
+        cpp-indices (cpp/new (std.vector (:unsigned int)))
         positions-box (cpp/box cpp-positions)
         indices-box (cpp/box cpp-indices)]
     ;; Fill positions
     (doseq [[px py pz] positions]
-      (let [ptr (cpp/unbox (cpp/type "std::vector<glm::vec3>*") positions-box)]
-        (cpp/.push_back ptr (cpp/glm.vec3 (cpp/float. px) (cpp/float. py) (cpp/float. pz)))
-        nil))
+      (let [ptr (cpp/unbox (:* (std.vector glm.vec3)) positions-box)]
+        (cpp/.push_back ptr (cpp/glm.vec3 (cpp/float. px) (cpp/float. py) (cpp/float. pz)))))
     ;; Fill indices
     (doseq [idx indices]
-      (let [ptr (cpp/unbox (cpp/type "std::vector<unsigned int>*") indices-box)]
-        (cpp/.push_back ptr (cpp/int idx))
-        nil))
+      (let [ptr (cpp/unbox (:* (std.vector (:unsigned int))) indices-box)]
+        (cpp/.push_back ptr (cpp/int idx))))
     {:positions positions-box
      :indices indices-box}))
 
@@ -84,8 +82,8 @@ inline float raycast_ground_cpp(
    position: [x y z]
    Returns: ground Y coordinate, or nil if no ground found"
   [{:keys [positions indices]} [px py pz]]
-  (let [positions-ptr (cpp/unbox (cpp/type "std::vector<glm::vec3>*") positions)
-        indices-ptr (cpp/unbox (cpp/type "std::vector<unsigned int>*") indices)
+  (let [positions-ptr (cpp/unbox (:* (std.vector glm.vec3)) positions)
+        indices-ptr (cpp/unbox (:* (std.vector (:unsigned int))) indices)
         result (cpp/raycast_ground_cpp positions-ptr indices-ptr
                                        (cpp/float. px)
                                        (cpp/float. py)

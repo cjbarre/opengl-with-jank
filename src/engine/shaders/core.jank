@@ -139,7 +139,7 @@
 
 (defn create-vertex-array-object
   []
-  (clet [vao ((cpp/type "unsigned int"))
+  (clet [vao (#cpp (:unsigned int))
          _ (cpp/wrap_glGenVertexArrays (cpp/int 1) (cpp/& vao))
          _ (cpp/wrap_glBindVertexArray vao)]
 
@@ -147,5 +147,4 @@
 
 (defn bind-vertex-array-object
   [{:keys [vertex-array-object-id]}]
-  (cpp/wrap_glBindVertexArray vertex-array-object-id)
-  nil)
+  (cpp/wrap_glBindVertexArray vertex-array-object-id))

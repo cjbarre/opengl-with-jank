@@ -21,7 +21,7 @@
 
 (defn- read-file
   [file size]
-  (clet [file* (cpp/unbox cpp/FILE* file)
+  (clet [file* (cpp/unbox (:* FILE) file)
 
          buffer (cpp/malloc size)
          :when (cpp/! buffer)
@@ -37,9 +37,9 @@
 
 (defn- file-size
   [file]
-  (clet [file* (cpp/unbox cpp/FILE* file)
+  (clet [file* (cpp/unbox (:* FILE) file)
 
-         fseek-result (cpp/fseek file* 0 (cpp/value "SEEK_END"))
+         fseek-result (cpp/fseek file* (cpp/int 0) #cpp SEEK_END)
          :when (not= 0 fseek-result)
          :error (cpp/perror "fseek")
 
@@ -59,7 +59,7 @@
 
 (defn- close-file
   [file]
-  (cpp/fclose (cpp/unbox cpp/FILE* file)))
+  (cpp/fclose (cpp/unbox (:* FILE) file)))
 
 (defn slurp
   [{:keys [path] :as args}]
@@ -88,8 +88,8 @@
 (defn- ends-with?
   "Check if string s ends with suffix"
   [s suffix]
-  (let [s-ptr (cpp/cast (cpp/type "char const*") s)
-        suffix-ptr (cpp/cast (cpp/type "char const*") suffix)
+  (let [s-ptr (cpp/cast (:* (:const char)) s)
+        suffix-ptr (cpp/cast (:* (:const char)) suffix)
         s-len (cpp/strlen s-ptr)
         suffix-len (cpp/strlen suffix-ptr)]
     (if (< s-len suffix-len)
@@ -99,7 +99,7 @@
 (defn- strip-suffix
   "Strip suffix from string, returning new jank string"
   [s suffix]
-  (let [s-ptr (cpp/cast (cpp/type "char const*") s)
+  (let [s-ptr (cpp/cast (:* (:const char)) s)
         s-len (cpp/strlen s-ptr)
         suffix-len (cpp/strlen suffix)
         new-len (cpp/- s-len suffix-len)]

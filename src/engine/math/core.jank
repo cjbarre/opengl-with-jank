@@ -14,9 +14,9 @@
    - (*-> :vec3s ptr) -> unboxed pointer for array access"
   [type ptr]
   (case type
-    :float `(cpp/* (cpp/unbox cpp/float* ~ptr))
-    :vec3 `(cpp/* (cpp/unbox cpp/glm.vec3* ~ptr))
-    :vec3s `(cpp/unbox cpp/glm.vec3* ~ptr)
+    :float `(cpp/* (cpp/unbox (:* float) ~ptr))
+    :vec3 `(cpp/* (cpp/unbox (:* glm.vec3) ~ptr))
+    :vec3s `(cpp/unbox (:* glm.vec3) ~ptr)
     (throw (ex-info "Unsupported type for *->" {:type type}))))
 
 (defmacro gimmie
@@ -47,7 +47,7 @@
       (let [vec-count (count data)
             arr-sym (gensym "arr_")
             ptr-sym (gensym "ptr_")
-            array-creation `(cpp/new (cpp/type ~(str "std::array<glm::vec3, " vec-count ">")))
+            array-creation `(cpp/new (std.array glm.vec3 ~vec-count))
             assignments (map-indexed
                          (fn [idx [x y z]]
                            `(aset (cpp/* ~arr-sym)

@@ -97,7 +97,7 @@ inline bool init_glew() {
 
 (defn process-input
   [{:keys [window delta-time cursor/pitch cursor/yaw]}]
-  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+  (let [window (cpp/unbox (:* GLFWwindow) window)]
     (cond-> {:command/name :player/process-input
              :id #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d"
              :delta-time (float (math/*-> :float delta-time))
@@ -130,24 +130,22 @@ inline bool init_glew() {
 
 (defn setup-window
   [{:keys [width height name]}]
-  (let [_ (do (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE) nil)
+  (let [_ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE)
         window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
     (when (cpp/! window)
       (println "Window creation failed")
-      (cpp/exit 0)
-      nil)
-    (do (cpp/glfwMakeContextCurrent window) nil)
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
     ;; Initialize GLEW for Linux (no-op on macOS)
     (when (cpp/! (cpp/init_glew))
       (println "GLEW initialization failed")
-      (cpp/exit 1)
-      nil)
-    (do (cpp/glfwSwapInterval 0) nil)  ;; Disable VSync
-    (do (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback) nil)
-    (do (cpp/wrap_glEnable gl/GL_DEPTH_TEST) nil)
+      (cpp/exit 1))
+    (cpp/glfwSwapInterval 0)  ;; Disable VSync
+    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
+    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 (cpp/raw
@@ -225,7 +223,7 @@ inline bool init_glew() {
           ;; Set view matrix
           view-m (cpp/glm.lookAt camera-pos look-target camera-up)
           view-m-loc (cpp/wrap_glGetUniformLocation shader "view")
-          _ (do (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m)) nil)]
+          _ (cpp/wrap_glUniformMatrix4fv view-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))]
       nil)))
 
 (defn update-animations
@@ -288,19 +286,18 @@ inline bool init_glew() {
       (let [lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
             line-count (int (:line-count lines-data))
             verts-box (:vertices lines-data)
-            verts-ptr (cpp/get_vector_data_demo (cpp/unbox (cpp/type "std::vector<float>*") verts-box))]
+            verts-ptr (cpp/get_vector_data_demo (cpp/unbox (:* (std.vector float)) verts-box))]
         ;; Update VBO with line vertices
         (cpp/update_line_vbo_demo line-vbo verts-ptr (cpp/int line-count))
         ;; Draw lines
         (cpp/wrap_glBindVertexArray line-vao)
         (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))
-        (cpp/wrap_glBindVertexArray (cpp/int 0))
-        nil))))
+        (cpp/wrap_glBindVertexArray (cpp/int 0))))))
 
 (defn draw-3D
   [{:keys [state shader line-shader line-vao line-vbo] :as context}]
-  (let [_ (do (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0) nil)
-        _ (do (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS) nil)
+  (let [_ (cpp/wrap_glClearColor 0.2 0.3 0.3 1.0)
+        _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
 
         projection-m (cpp/glm.perspective (cpp/glm.radians (cpp/float 97.0))
                                           (cpp// (cpp/float 1280.0) (cpp/float 720.0))
@@ -308,25 +305,23 @@ inline bool init_glew() {
                                           (cpp/float 100.0))
 
         ;; Render non-animated entities with basic shader
-        _ (do (cpp/wrap_glUseProgram shader) nil)
+        _ (cpp/wrap_glUseProgram shader)
         projection-m-loc (cpp/wrap_glGetUniformLocation shader "projection")
-        _ (do (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m)) nil)
+        _ (cpp/wrap_glUniformMatrix4fv projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
         _ (camera-system context)
         _ (doseq [e (vals (:entities @state))]
             (when-not (contains? (:tags e) :animated)
               (transform-system context e)
-              (render-system context e)
-              nil)
-            nil)
+              (render-system context e)))
 
         ;; Render animated entities as line skeletons
-        _ (do (cpp/wrap_glUseProgram line-shader) nil)
+        _ (cpp/wrap_glUseProgram line-shader)
         line-projection-m-loc (cpp/wrap_glGetUniformLocation line-shader "projection")
-        _ (do (cpp/wrap_glUniformMatrix4fv line-projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m)) nil)
+        _ (cpp/wrap_glUniformMatrix4fv line-projection-m-loc (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
         ;; Set line width and colors for thick stylized bones
-        _ (do (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025) nil)
-        _ (do (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6) nil)
-        _ (do (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9) nil)]
+        _ (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
+        _ (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
+        _ (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)]
     ;; Enable blending for soft edges
     (gl-state/enable {:capability gl/GL_BLEND})
     (gl-state/set-blend-func {:src gl/GL_SRC_ALPHA :dest gl/GL_ONE_MINUS_SRC_ALPHA})
@@ -344,7 +339,7 @@ inline bool init_glew() {
   (let [cursor-x (cpp/double)
         cursor-y (cpp/double)
 
-        _ (cpp/glfwGetCursorPos (cpp/unbox cpp/GLFWwindow* window)
+        _ (cpp/glfwGetCursorPos (cpp/unbox (:* GLFWwindow) window)
                                 (cpp/& cursor-x)
                                 (cpp/& cursor-y))
 
@@ -372,13 +367,10 @@ inline bool init_glew() {
 
     ;; Pitch constraints for third-person camera
     (when (cpp/> cursor-pitch (cpp/float 60.0))
-      (cpp/= cursor-pitch (cpp/float 60.0))
-      nil)
+      (cpp/= cursor-pitch (cpp/float 60.0)))
 
     (when (cpp/< cursor-pitch (cpp/float -30.0))
-      (cpp/= cursor-pitch (cpp/float -30.0))
-      nil)
-    nil))
+      (cpp/= cursor-pitch (cpp/float -30.0)))))
 
 (defn update-time
   [{:keys [delta-time last-frame]}]
@@ -386,15 +378,14 @@ inline bool init_glew() {
         delta-time (math/*-> :float delta-time)
         last-frame (math/*-> :float last-frame)]
     (cpp/= delta-time (cpp/- current-frame last-frame))
-    (cpp/= last-frame current-frame)
-    nil))
+    (cpp/= last-frame current-frame)))
 
 (defmulti handle-event
   (fn [state {:keys [event]}] (:event/type event)))
 
 (defmethod handle-event :system/exit
   [state {:keys [window]}]
-  (let [window (cpp/unbox cpp/GLFWwindow* window)]
+  (let [window (cpp/unbox (:* GLFWwindow) window)]
     (cpp/glfwSetWindowShouldClose window 1)
     state))
 
@@ -646,7 +637,7 @@ inline bool init_glew() {
 (defn run-loop
   [{:keys [window event-store state delta-time gfx2d]
     :as context}]
-  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
       (let [_ (update-time context)
           _ (update-cursor context)
           command (process-input context)
@@ -698,8 +689,8 @@ inline bool init_glew() {
               grounded (:physics/grounded player false)]
           (strafehelper/render-strafehelper gfx2d velocity yaw grounded 1280 720)))
 
-      (do (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window)) nil)
-      (do (cpp/glfwPollEvents) nil))))
+      (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
+      (cpp/glfwPollEvents))))
 
 (defn setup-camera []
   {:follow-distance    (math/gimmie :boxed :float 2.5)   ; Distance behind player

@@ -5,20 +5,16 @@
 
 (defn set-viewport
   [{:keys [x y width height]}]
-  (cpp/wrap_glViewport x y width height)
-  nil)
+  (cpp/wrap_glViewport x y width height))
 
 (defn enable
   [{:keys [capability]}]
-  (cpp/wrap_glEnable capability)
-  nil)
+  (cpp/wrap_glEnable capability))
 
 (defn disable
   [{:keys [capability]}]
-  (cpp/wrap_glDisable capability)
-  nil)
+  (cpp/wrap_glDisable capability))
 
 (defn set-blend-func
   [{:keys [src dest]}]
-  (cpp/wrap_glBlendFunc src dest)
-  nil)
+  (cpp/wrap_glBlendFunc src dest))

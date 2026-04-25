@@ -18,19 +18,19 @@
 (cpp/raw "#include \"cgltf.h\"")
 (cpp/raw "#include \"gl_utils.h\"")
 
-(defmulti parse-attribute (fn [attribute] (cpp/.-type (cpp/unbox cpp/cgltf_attribute* attribute))))
+(defmulti parse-attribute (fn [attribute] (cpp/.-type (cpp/unbox (:* cgltf_attribute) attribute))))
 
 (defmethod parse-attribute cpp/cgltf_attribute_type_position
   [attribute]
-  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+  (let [attribute (cpp/unbox (:* cgltf_attribute) attribute)
         accessor (cpp/* (cpp/.-data attribute))
         count (cpp/.-count accessor)
         accessor-box (cpp/box (cpp/& accessor))]
     {:positions
      (mapv (fn [i]
-             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
+             (clet [accessor (cpp/unbox (:* cgltf_accessor) accessor-box)
                     size (cpp/cgltf_num_components (cpp/.-type accessor))
-                    v ((cpp/type "std::array<float, 3>"))
+                    v (#cpp (std.array float 3))
                     result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
                     :when (cpp/! result)
                     :error (throw (ex-info "Could not parse position attribute" {}))]
@@ -39,15 +39,15 @@
 
 (defmethod parse-attribute cpp/cgltf_attribute_type_normal
   [attribute]
-  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+  (let [attribute (cpp/unbox (:* cgltf_attribute) attribute)
         accessor (cpp/* (cpp/.-data attribute))
         count (cpp/.-count accessor)
         size (cpp/cgltf_num_components (cpp/.-type accessor))
         accessor-box (cpp/box (cpp/& accessor))]
     {:normals
      (mapv (fn [i]
-             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
-                    v ((cpp/type "std::array<float, 3>"))
+             (clet [accessor (cpp/unbox (:* cgltf_accessor) accessor-box)
+                    v (#cpp (std.array float 3))
                     result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
                     :when (cpp/! result)
                     :error (throw (ex-info "Could not parse normal attribute" {}))]
@@ -56,15 +56,15 @@
 
 (defmethod parse-attribute cpp/cgltf_attribute_type_texcoord
   [attribute]
-  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)
+  (let [attribute (cpp/unbox (:* cgltf_attribute) attribute)
         accessor (cpp/* (cpp/.-data attribute))
         count (cpp/.-count accessor)
         size (cpp/cgltf_num_components (cpp/.-type accessor))
         accessor-box (cpp/box (cpp/& accessor))]
     {:uvs
      (mapv (fn [i]
-             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)
-                    v ((cpp/type "std::array<float, 2>"))
+             (clet [accessor (cpp/unbox (:* cgltf_accessor) accessor-box)
+                    v (#cpp (std.array float 2))
                     result (cpp/cgltf_accessor_read_float accessor (cpp/cgltf_size i) (cpp/.data v) size)
                     :when (cpp/! result)
                     :error (throw (ex-info "Could not parse uv attribute" {}))]
@@ -73,18 +73,18 @@
 
 (defmethod parse-attribute :default
   [attribute]
-  (let [attribute (cpp/unbox cpp/cgltf_attribute* attribute)]
+  (let [attribute (cpp/unbox (:* cgltf_attribute) attribute)]
     {(cpp/.-type attribute) :not-implemented}))
 
 (defn parse-indices
   [primitive]
-  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)
+  (let [primitive (cpp/unbox (:* cgltf_primitive) primitive)
         accessor (cpp/* (cpp/.-indices primitive))
         count (cpp/.-count accessor)
         accessor-box (cpp/box (cpp/& accessor))]
     {:indices
      (mapv (fn [i]
-             (clet [accessor (cpp/unbox cpp/cgltf_accessor* accessor-box)]
+             (clet [accessor (cpp/unbox (:* cgltf_accessor) accessor-box)]
                    (cpp/cgltf_accessor_read_index accessor (cpp/cgltf_size i))))
            (range count))}))
 
@@ -95,7 +95,7 @@
 
 (defn parse-material
   [primitive]
-  (let [primitive (cpp/unbox cpp/cgltf_primitive* primitive)]
+  (let [primitive (cpp/unbox (:* cgltf_primitive) primitive)]
     (when (cpp/cgltf_primitive_has_material primitive)
       (let [material (cpp/* (cpp/.-material primitive))]
         {:material (cond-> {}
@@ -120,18 +120,18 @@
                                                     :wrap-t (cpp/.-wrap_t sampler)}}}})))}))))
 
 (defn parse-mesh [mesh]
-  (let [mesh (cpp/unbox cpp/cgltf_mesh* mesh)
+  (let [mesh (cpp/unbox (:* cgltf_mesh) mesh)
         primitives-box (cpp/box (cpp/.-primitives mesh))]
     {:name (str (cpp/.-name mesh))
      :primitives
      (vec
       (for [j (range (cpp/.-primitives_count mesh))
-            :let [primitives     (cpp/unbox cpp/cgltf_primitive* primitives-box)
+            :let [primitives     (cpp/unbox (:* cgltf_primitive) primitives-box)
                   primitive      (cpp/aget primitives (cpp/int j))
                   attributes-box (cpp/box (cpp/.-attributes primitive))]]
         (let [attribute-data (reduce
                               (fn [acc k]
-                                (let [attributes (cpp/unbox cpp/cgltf_attribute* attributes-box)
+                                (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
                                       attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
                                   (if-let [result (parse-attribute attribute)]
                                     (merge acc result)
@@ -166,7 +166,7 @@
 
 (defn parse-node
   [node]
-  (clet [node (cpp/unbox cpp/cgltf_node* node)
+  (clet [node (cpp/unbox (:* cgltf_node) node)
          :when (cpp/> (cpp/.-children_count node) (cpp/int 0))
          :error (throw (ex-info "Parsing node children not implemented" {}))
          mesh (cpp/box (cpp/.-mesh node))
@@ -197,19 +197,19 @@
 
 (defn parse-scene
   [scene]
-  (let [scene (cpp/unbox cpp/cgltf_scene* scene)
+  (let [scene (cpp/unbox (:* cgltf_scene) scene)
         nodes (cpp/box (cpp/.-nodes scene))]
     {:name (str (cpp/.-name scene))
      :nodes (vec
              (for [node-i (range (cpp/.-nodes_count scene))
-                   :let [nodes (cpp/unbox cpp/cgltf_node** nodes)
+                   :let [nodes (cpp/unbox (:* (:* cgltf_node)) nodes)
                          node (cpp/box (cpp/aget nodes (cpp/int node-i)))]]
                (parse-node node)))}))
 
 (defn parse
   [{:keys [path] :as args}]
   (clet [options (cpp/cgltf_options)
-         data (cpp/cgltf_data* cpp/nullptr)
+         data (#cpp (:* cgltf_data) cpp/nullptr)
          result (cpp/cgltf_parse_file (cpp/& options) path (cpp/& data))
          :when (cpp/!= result cpp/cgltf_result_success)
          :error (throw (ex-info "Could not parse GLTF file" (assoc args :error result)))
@@ -220,7 +220,7 @@
         {:scenes
          (vec
           (for [scene-i (range (cpp/.-scenes_count data))
-                :let [scenes (cpp/unbox cpp/cgltf_scene* scenes)
+                :let [scenes (cpp/unbox (:* cgltf_scene) scenes)
                       scene (cpp/box (cpp/& (cpp/aget scenes (cpp/int scene-i))))]]
             (parse-scene scene)))}))
 
@@ -265,11 +265,11 @@
                     [scale-x scale-y scale-z] (:scale node)
                     [translate-x translate-y translate-z] (:translation node)]
               {:keys [positions normals uvs material] :as primitive} (:primitives mesh)]
-          (let [vertices ((cpp/type "std::vector<Vertex>"))
+          (let [vertices (#cpp (std.vector Vertex))
                 vertices-box (cpp/box (cpp/& vertices))
                 _ (doseq [i (range (count positions))]
                     (let [vertices* (cpp/unbox
-                                     (cpp/type "std::vector<Vertex>*")
+                                     (:* (std.vector Vertex))
                                      vertices-box)
                           [px py pz] (get positions i)
                           [nx ny nz] (get normals i)
@@ -284,16 +284,14 @@
                         (cpp/float ny)
                         (cpp/float nz)
                         (cpp/float u)
-                        (cpp/float v)))
-                      nil))
+                        (cpp/float v)))))
 
-                indices ((cpp/type "std::vector<int>"))
+                indices (#cpp (std.vector int))
                 indices-box (cpp/box (cpp/& indices))
                 _ (doseq [i (range (count (:indices primitive)))]
-                    (let [indices* (cpp/unbox (cpp/type "std::vector<int>*") indices-box)
+                    (let [indices* (cpp/unbox (:* (std.vector int)) indices-box)
                           index (get (:indices primitive) i)]
-                      (cpp/.push_back indices* (cpp/int index))
-                      nil))
+                      (cpp/.push_back indices* (cpp/int index))))
                 indices-size (cpp/.size indices)
                 vao (shaders/create-vertex-array-object)
                 _ (shaders/bind-vertex-array-object
@@ -302,24 +300,24 @@
                 ;;
                 ;; VBO
                 ;;
-                vbo ((cpp/type "unsigned int"))
+                vbo (#cpp (:unsigned int))
                 _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
                 _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
                 _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                                     (cpp/* (cpp/.size vertices) cpp/vertex_size)
-                                    (cpp/cast (cpp/type "void*")
+                                    (cpp/cast (:* void)
                                               (cpp/.data vertices))
                                     gl/GL_STATIC_DRAW)
 
                 ;;
                 ;; EBO
                 ;;
-                ebo ((cpp/type "unsigned int"))
+                ebo (#cpp (:unsigned int))
                 _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& ebo))
                 _ (cpp/wrap_glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
                 _ (cpp/wrap_glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
                                     (cpp/* indices-size cpp/int_size)
-                                    (cpp/cast (cpp/type "void*")
+                                    (cpp/cast (:* void)
                                               (cpp/.data indices))
                                     gl/GL_STATIC_DRAW)
 
@@ -373,18 +371,16 @@
                          (cpp/wrap_glActiveTexture gl/GL_TEXTURE0)
                          (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D texture-id)
                          (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uHasBaseColorTex") (cpp/int 1))
-                         (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor") r g b a)
-                         nil)
-                     _ (do (cpp/wrap_glUniformMatrix4fv (cpp/wrap_glGetUniformLocation shader model-m-loc) (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr local-model-m)) nil)
-                     _ (do (cpp/wrap_glDrawElements
+                         (cpp/wrap_glUniform4f (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor") r g b a))
+                     _ (cpp/wrap_glUniformMatrix4fv (cpp/wrap_glGetUniformLocation shader model-m-loc) (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr local-model-m))
+                     _ (cpp/wrap_glDrawElements
                             gl/GL_TRIANGLES
                             (count (:indices primitive))
                             gl/GL_UNSIGNED_INT
-                            (cpp/voidify_int (cpp/int 0))) nil)
+                            (cpp/voidify_int (cpp/int 0)))
                      _ (when texture-id
                          (cpp/wrap_glActiveTexture gl/GL_TEXTURE0)
-                         (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D (cpp/int 0))
-                         nil)]))}))]
+                         (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D (cpp/int 0)))]))}))]
 
     {:draw
      (fn draw-model [context]

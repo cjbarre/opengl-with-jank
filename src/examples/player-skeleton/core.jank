@@ -138,23 +138,21 @@ inline bool init_glew_player() {
 
 (defn setup-window
   [{:keys [width height name]}]
-  (let [_ (do (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE) nil)
-        _ (do (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE) nil)
+  (let [_ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE)
         window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
     (when (cpp/! window)
       (println "Window creation failed")
-      (cpp/exit 0)
-      nil)
-    (do (cpp/glfwMakeContextCurrent window) nil)
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
     (when (cpp/! (cpp/init_glew_player))
       (println "GLEW initialization failed")
-      (cpp/exit 1)
-      nil)
-    (do (cpp/glfwSwapInterval 1) nil)
-    (do (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_player) nil)
-    (do (cpp/wrap_glEnable gl/GL_DEPTH_TEST) nil)
+      (cpp/exit 1))
+    (cpp/glfwSwapInterval 1)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_player)
+    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 ;; ============================================================================
@@ -571,8 +569,7 @@ inline bool init_glew_player() {
         delta-time (math/*-> :float delta-time)
         last-frame (math/*-> :float last-frame)]
     (cpp/= delta-time (cpp/- current-frame last-frame))
-    (cpp/= last-frame current-frame)
-    nil))
+    (cpp/= last-frame current-frame)))
 
 ;; ============================================================================
 ;; Input Processing (matches demo cond-> pattern)
@@ -580,7 +577,7 @@ inline bool init_glew_player() {
 
 (defn process-input
   [{:keys [window state]}]
-  (let [window (cpp/unbox cpp/GLFWwindow* window)
+  (let [window (cpp/unbox (:* GLFWwindow) window)
         anim-count (count (:animations @state))]
     (cond-> {:command/name :viewer/input}
       ;; ESC to exit
@@ -613,37 +610,32 @@ inline bool init_glew_player() {
 
 (defn handle-command
   [{:keys [command window state key-state]}]
-  (let [window-ptr (cpp/unbox cpp/GLFWwindow* window)
+  (let [window-ptr (cpp/unbox (:* GLFWwindow) window)
         anim-count (count (:animations @state))
         prev-key-state @key-state]
 
     ;; Handle exit
     (when (:exit command)
-      (cpp/glfwSetWindowShouldClose window-ptr 1)
-      nil)
+      (cpp/glfwSetWindowShouldClose window-ptr 1))
 
     ;; Handle prev/next with debouncing
     (when (and (:prev-anim command) (not (:prev-anim prev-key-state)))
       (swap! state update :current-anim #(mod (dec (+ % anim-count)) anim-count))
-      (swap! state assoc :anim-time 0.0)
-      nil)
+      (swap! state assoc :anim-time 0.0))
 
     (when (and (:next-anim command) (not (:next-anim prev-key-state)))
       (swap! state update :current-anim #(mod (inc %) anim-count))
-      (swap! state assoc :anim-time 0.0)
-      nil)
+      (swap! state assoc :anim-time 0.0))
 
     ;; Handle number key selection with debouncing
     (when-let [sel (:select-anim command)]
       (when (and (< sel anim-count) (not (:select-anim prev-key-state)))
-        (swap! state assoc :current-anim sel :anim-time 0.0)
-        nil))
+        (swap! state assoc :current-anim sel :anim-time 0.0)))
 
     ;; Update key state for debouncing
     (reset! key-state {:prev-anim (:prev-anim command)
                        :next-anim (:next-anim command)
-                       :select-anim (:select-anim command)})
-    nil))
+                       :select-anim (:select-anim command)})))
 
 ;; ============================================================================
 ;; Animation Update
@@ -666,12 +658,9 @@ inline bool init_glew_player() {
         (when (not debug-printed)
           (println "DEBUG: Playing animation:" (:name anim-info))
           ;; Compare animation vs rest pose matrices
-          (let [ctx (cpp/unbox cpp/AnimationContext* context)]
-            (do (cpp/debug_compare_anim_vs_rest ctx) nil))
-          (swap! state assoc :debug-printed true)
-          nil)
-        nil)
-      nil)))
+          (let [ctx (cpp/unbox (:* AnimationContext) context)]
+            (cpp/debug_compare_anim_vs_rest ctx))
+          (swap! state assoc :debug-printed true))))))
 
 ;; ============================================================================
 ;; Rendering
@@ -679,8 +668,8 @@ inline bool init_glew_player() {
 
 (defn render
   [{:keys [state line-shader line-vao line-vbo text-shader]}]
-  (let [_ (do (cpp/wrap_glClearColor 0.1 0.1 0.15 1.0) nil)
-        _ (do (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS) nil)
+  (let [_ (cpp/wrap_glClearColor 0.1 0.1 0.15 1.0)
+        _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
         {:keys [context animations current-anim use-rest-pose lines-printed]} @state
         ;; Build skeleton lines - use REST POSE for debugging
         lines-data (if use-rest-pose
@@ -688,16 +677,15 @@ inline bool init_glew_player() {
                      (anim/build-skeleton-lines {:context context :max-lines 128}))
         line-count (int (:line-count lines-data))
         verts-box (:vertices lines-data)
-        verts-ptr (cpp/get_vector_data (cpp/unbox (cpp/type "std::vector<float>*") verts-box))
+        verts-ptr (cpp/get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))
 
         ;; Debug: print ALL bone lines (once)
         _ (when (and (not lines-printed) (pos? line-count))
             (cpp/print_bone_lines verts-ptr line-count (cpp/int 100))
-            (swap! state assoc :lines-printed true)
-            nil)
+            (swap! state assoc :lines-printed true))
 
         ;; Update VBO
-        _ (do (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count)) nil)
+        _ (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))
 
         ;; Setup matrices
         model (cpp/zup_to_yup_matrix)
@@ -710,20 +698,20 @@ inline bool init_glew_player() {
                                          (cpp/float 100.0))
 
         ;; Draw skeleton
-        _ (do (cpp/wrap_glUseProgram line-shader) nil)
+        _ (cpp/wrap_glUseProgram line-shader)
 
         ;; Set uniforms
-        _ (do (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "model")
-                                           1 gl/GL_FALSE (cpp/glm.value_ptr model)) nil)
-        _ (do (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "view")
-                                           1 gl/GL_FALSE (cpp/glm.value_ptr view)) nil)
-        _ (do (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "projection")
-                                           1 gl/GL_FALSE (cpp/glm.value_ptr projection)) nil)
-        _ (do (cpp/wrap_glUniform3f (cpp/glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5) nil)
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "model")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr model))
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "view")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr view))
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "projection")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr projection))
+        _ (cpp/wrap_glUniform3f (cpp/glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
 
-        _ (do (cpp/wrap_glBindVertexArray line-vao) nil)
-        _ (do (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2))) nil)
-        _ (do (cpp/wrap_glBindVertexArray 0) nil)]
+        _ (cpp/wrap_glBindVertexArray line-vao)
+        _ (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2)))
+        _ (cpp/wrap_glBindVertexArray 0)]
 
     ;; Render HUD
     (when (seq animations)
@@ -733,9 +721,7 @@ inline bool init_glew_player() {
         (text/render-text (str "[" (inc current-anim) "/" (count animations) "]")
                           10.0 55.0 [0.7 0.7 0.7] 1280 720)
         (text/render-text "LEFT/RIGHT: change | 1-9: select | ESC: exit"
-                          10.0 80.0 [0.5 0.5 0.5] 1280 720)
-        nil))
-    nil))
+                          10.0 80.0 [0.5 0.5 0.5] 1280 720)))))
 
 ;; ============================================================================
 ;; Main Loop
@@ -743,14 +729,14 @@ inline bool init_glew_player() {
 
 (defn run-loop
   [{:keys [window] :as context}]
-  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox cpp/GLFWwindow* window)))
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
     (update-time context)
     (let [command (process-input context)]
       (handle-command (assoc context :command command)))
     (update-animation context)
     (render context)
-    (do (cpp/glfwSwapBuffers (cpp/unbox cpp/GLFWwindow* window)) nil)
-    (do (cpp/glfwPollEvents) nil)))
+    (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
+    (cpp/glfwPollEvents)))
 
 (defn -main
   []
@@ -758,7 +744,7 @@ inline bool init_glew_player() {
   (println "Controls: LEFT/RIGHT arrows, 1-9 keys, ESC to exit")
   (println "")
 
-  (let [_ (do (cpp/glfwInit) nil)
+  (let [_ (cpp/glfwInit)
         window (setup-window {:width 1280 :height 720 :name "Player Skeleton Viewer"})
 
         ;; Create shaders

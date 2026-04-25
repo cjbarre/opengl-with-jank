@@ -188,5 +188,4 @@ inline void render_text_cpp(const char* text, float x, float y, float r, float g
   (cpp/render_text_cpp text
                        (cpp/float. x) (cpp/float. y)
                        (cpp/float. r) (cpp/float. g) (cpp/float. b)
-                       (cpp/int screen-width) (cpp/int screen-height))
-  nil)
+                       (cpp/int screen-width) (cpp/int screen-height)))

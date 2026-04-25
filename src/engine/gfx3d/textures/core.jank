@@ -38,7 +38,7 @@
          :when (cpp/! data)
          :error (throw (ex-info "Failed to load texture image"
                                 args))
-         texture ((cpp/type "unsigned int"))
+         texture (#cpp (:unsigned int))
          _ (cpp/wrap_glGenTextures (cpp/int 1) (cpp/& texture))
          _ (cpp/wrap_glBindTexture gl/GL_TEXTURE_2D texture)
          _ (cpp/wrap_glTexParameteri gl/GL_TEXTURE_2D gl/GL_TEXTURE_WRAP_S wrap-s)
@@ -54,8 +54,8 @@
             0
             (if alpha-channel? gl/GL_RGBA gl/GL_RGB)
             gl/GL_UNSIGNED_BYTE
-            (cpp/cast (cpp/type "void*") data))
+            (cpp/cast (:* void) data))
          _ (cpp/wrap_glGenerateMipmap gl/GL_TEXTURE_2D)
-         _ (cpp/stbi_image_free (cpp/cast (cpp/type "void*") data))]
+         _ (cpp/stbi_image_free (cpp/cast (:* void) data))]
 
         texture))

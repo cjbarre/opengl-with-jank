@@ -166,7 +166,7 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
          _ (shaders/bind-vertex-array-object {:vertex-array-object-id vao})
 
          ;; Create VBO with dynamic draw hint
-         vbo ((cpp/type "unsigned int"))
+         vbo (#cpp (:unsigned int))
          _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
          _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
          _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
@@ -193,41 +193,35 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
         ;; Return map of closures - they use the global C++ state
         {:begin-2d
          (fn [screen-width screen-height]
-           (cpp/begin_2d_impl (cpp/int screen-width) (cpp/int screen-height))
-           nil)
+           (cpp/begin_2d_impl (cpp/int screen-width) (cpp/int screen-height)))
 
          :end-2d
          (fn []
-           (cpp/end_2d_impl)
-           nil)
+           (cpp/end_2d_impl))
 
          :set-color
          (fn [[r g b a]]
            (cpp/set_color_impl (cpp/float. r)
                                (cpp/float. g)
                                (cpp/float. b)
-                               (cpp/float. a))
-           nil)
+                               (cpp/float. a)))
 
          :render-line
          (fn [x1 y1 x2 y2 thickness]
            (cpp/render_line_impl (cpp/float. x1) (cpp/float. y1)
                                  (cpp/float. x2) (cpp/float. y2)
-                                 (cpp/float. thickness))
-           nil)
+                                 (cpp/float. thickness)))
 
          :render-arc-outline
          (fn [cx cy radius start-angle end-angle segments thickness]
            (cpp/render_arc_outline_impl (cpp/float. cx) (cpp/float. cy)
                                         (cpp/float. radius)
                                         (cpp/float. start-angle) (cpp/float. end-angle)
-                                        (cpp/int segments) (cpp/float. thickness))
-           nil)
+                                        (cpp/int segments) (cpp/float. thickness)))
 
          :render-filled-arc
          (fn [cx cy radius start-angle end-angle segments]
            (cpp/render_filled_arc_impl (cpp/float. cx) (cpp/float. cy)
                                        (cpp/float. radius)
                                        (cpp/float. start-angle) (cpp/float. end-angle)
-                                       (cpp/int segments))
-           nil)}))
+                                       (cpp/int segments)))}))
