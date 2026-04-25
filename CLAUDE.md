@@ -52,7 +52,7 @@ git clone --recursive ...
 ```
 
 ### Development Dependencies
-- **Jank**: The main language/runtime (with AOT library fix applied)
+- **Jank**: The main language/runtime (latest `main` branch)
 - **GLFW**: For window management and OpenGL context
 - **Clojure**: For classpath and dependency management
 - **STB Image**: C library for texture loading (included in `include/stb_image.h`)
@@ -426,13 +426,7 @@ The launcher script sets `DYLD_LIBRARY_PATH` to find the bundled libraries.
 
 ### Jank AOT Requirements
 
-This project requires jank with the AOT library linking fix. The fix adds:
-
-1. **User library passing** - `-l` flags are passed to the linker
-2. **macOS JIT library naming** - Uses `lib{name}.dylib` format
-3. **macOS framework linking** - Links OpenGL, Cocoa, IOKit, CoreFoundation
-
-See `/Users/cam/Documents/code/jank/jank-aot-library-fix.md` for details.
+AOT compilation works with standard jank built from latest `main`. The required fixes (user library passing via `-l` flags, macOS `lib{name}.dylib` naming) have been merged upstream.
 
 ### Troubleshooting
 

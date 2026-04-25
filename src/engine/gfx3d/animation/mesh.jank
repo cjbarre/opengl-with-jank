@@ -129,7 +129,7 @@
 
         ;; Get index data
         index-count (cpp/get_mesh_index_count meshes-ptr mi)
-        indices-ptr (cpp/get_mesh_indices meshes-ptr mi)
+        indices-ptr (cpp/get_mesh_indices_impl meshes-ptr mi)
 
         ;; Create VAO
         vao (shaders/create-vertex-array-object)

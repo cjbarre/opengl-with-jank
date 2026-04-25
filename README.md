@@ -2,7 +2,7 @@
 
 A 3D game engine and multiplayer demo built with [Jank](https://jank-lang.org/) (a Clojure dialect) and OpenGL. Features networked client-server gameplay, skeletal animation, and Quake-style movement physics.
 
-> **Note:** JIT mode (`./bin/run`) works with standard Jank. AOT compilation (`./bin/compile`) currently requires a custom Jank build with library linking fixes not yet merged upstream.
+> **Note:** Requires Jank built from latest `main`. Both JIT mode (`./bin/run`) and AOT compilation (`./bin/compile`) work with standard Jank.
 
 ## Quick Start
 

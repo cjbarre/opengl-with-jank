@@ -72,7 +72,7 @@ inline bool init_glew_player() {
     return prog;
   }
 
-  inline GLuint create_line_vao(GLuint* vbo_out) {
+  inline GLuint create_line_vao_player(GLuint* vbo_out) {
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -86,7 +86,7 @@ inline bool init_glew_player() {
     return vao;
   }
 
-  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
+  inline void update_line_vbo_player(GLuint vbo, float* vertices, int line_count) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
@@ -685,7 +685,7 @@ inline bool init_glew_player() {
             (swap! state assoc :lines-printed true))
 
         ;; Update VBO
-        _ (cpp/update_line_vbo line-vbo verts-ptr (cpp/int line-count))
+        _ (cpp/update_line_vbo_player line-vbo verts-ptr (cpp/int line-count))
 
         ;; Setup matrices
         model (cpp/zup_to_yup_matrix)
@@ -750,7 +750,7 @@ inline bool init_glew_player() {
         ;; Create shaders
         line-shader (cpp/create_line_shader line-vertex-shader line-fragment-shader)
         line-vbo-ptr (cpp/new cpp/GLuint)
-        line-vao (cpp/create_line_vao line-vbo-ptr)
+        line-vao (cpp/create_line_vao_player line-vbo-ptr)
         line-vbo (cpp/* line-vbo-ptr)
 
         ;; Load text shader

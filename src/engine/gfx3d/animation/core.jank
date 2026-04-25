@@ -270,7 +270,7 @@
   }
 
   // Get pointer to triangle indices
-  inline const uint16_t* get_mesh_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
+  inline const uint16_t* get_mesh_indices_impl(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
     if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
       return nullptr;
     }
@@ -702,7 +702,7 @@
   "Gets pointer to mesh triangle indices (uint16_t)"
   [{:keys [meshes mesh-index]}]
   (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)]
-    (cpp/box (cpp/get_mesh_indices meshes-ptr (cpp/int mesh-index)))))
+    (cpp/box (cpp/get_mesh_indices_impl meshes-ptr (cpp/int mesh-index)))))
 
 ;; Get part vertex data pointers
 (defn get-part-vertex-data
