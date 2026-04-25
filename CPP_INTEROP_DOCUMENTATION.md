@@ -57,7 +57,7 @@ cpp/float_size
 Access instance members (fields) of C++ objects:
 
 ```clojure
-(let [attribute (cpp/unbox cpp/cgltf_attribute* attribute-box)]
+(let [attribute (cpp/unbox (:* cgltf_attribute) attribute-box)]
   (cpp/.-type attribute)
   (cpp/.-data attribute)
   (cpp/.-count attribute))
@@ -101,10 +101,18 @@ Create C++ objects on the stack using constructor syntax with a trailing dot:
 Allocate objects on the heap, returning a pointer:
 
 ```clojure
-; Allocate on heap
+; Allocate on heap - simple types
 (cpp/new cpp/float (cpp/float. 0.0))
 (cpp/new cpp/glm.vec3 vec-expr)
-(cpp/new (cpp/type "std::array<glm::vec3, 3>"))
+
+; Allocate template types using DSL
+(cpp/new (std.vector float))
+(cpp/new (std.vector glm.vec3))
+(cpp/new (std.array glm.vec3 3))
+(cpp/new ENetEvent)
+
+; Allocate unsigned types
+(cpp/new (:unsigned int))
 ```
 
 **Note:** This codebase does not use `cpp/delete`. Objects are managed through boxing and Jank's lifecycle.
@@ -181,25 +189,71 @@ Set elements of arrays:
 (aset (cpp/charify_void buffer) (cpp/int bytes-read) (cpp/char 0))
 ```
 
-### 6. Type Specifications with `cpp/type`
+### 6. C++ Type DSL
 
-Explicitly specify C++ types, especially useful for templates and complex type names:
+Jank has a keyword-based DSL for specifying C++ types. The DSL is automatically enabled in contexts that expect a type, such as the first argument to `cpp/new`, `cpp/unbox`, and `cpp/cast`.
+
+#### Type DSL Forms
 
 ```clojure
-; Create instances of templated types
-((cpp/type "std::vector<int>"))
-((cpp/type "std::vector<Vertex>"))
-((cpp/type "std::array<float, 3>"))
-((cpp/type "std::array<glm::vec3, 3>"))
+; Pointer types
+(:* int)                  ; int*
+(:* void)                 ; void*
+(:* (:const char))        ; char const*
+(:* (:const void))        ; const void*
+(:* GLFWwindow)           ; GLFWwindow*
+(:* ENetHost)             ; ENetHost*
+(:* (:* cgltf_node))      ; cgltf_node** (double pointer)
 
-; Create unsigned int (common in OpenGL)
-((cpp/type "unsigned int"))
+; Template instantiations
+(std.vector float)        ; std::vector<float>
+(std.vector int)          ; std::vector<int>
+(std.vector Vertex)       ; std::vector<Vertex>
+(std.array float 3)       ; std::array<float, 3>
+(ozz.vector ozz.sample.Mesh) ; ozz::vector<ozz::sample::Mesh>
 
-; Use for casting and type specifications
-(cpp/cast (cpp/type "void*") buffer)
-(cpp/unbox (cpp/type "void*") boxed-buffer)
-(cpp/unbox (cpp/type "std::vector<Vertex>*") vertices-box)
-(cpp/unbox (cpp/type "std::vector<int>*") indices-box)
+; Pointer to template type
+(:* (std.vector float))   ; std::vector<float>*
+(:* (std.vector Vertex))  ; std::vector<Vertex>*
+
+; Qualifiers
+(:unsigned int)           ; unsigned int
+(:const char)             ; char const
+```
+
+#### Value Initialization with `#cpp`
+
+The `#cpp` reader tag creates a default-initialized C++ value:
+
+```clojure
+; Create zero-initialized values (common for OpenGL IDs)
+(#cpp (:unsigned int))           ; unsigned int, zero-initialized
+(#cpp (std.vector Vertex))       ; std::vector<Vertex>, default-constructed
+(#cpp (std.array float 3))       ; std::array<float, 3>
+
+; Access C++ constants and macros
+#cpp SEEK_END                    ; the C macro SEEK_END
+#cpp true                        ; C++ true
+#cpp false                       ; C++ false
+
+; Construct with initial value
+(#cpp (:* cgltf_data) cpp/nullptr)  ; cgltf_data* initialized to nullptr
+```
+
+#### Usage in `cpp/cast` and `cpp/unbox`
+
+```clojure
+; Casting
+(cpp/cast (:* void) buffer)
+(cpp/cast (:* (:const char)) s)
+(cpp/cast (:* (:const void)) data)
+
+; Unboxing
+(cpp/unbox (:* GLFWwindow) window)
+(cpp/unbox (:* FILE) file)
+(cpp/unbox (:* ENetHost) host)
+(cpp/unbox (:* (std.vector float)) verts-box)
+(cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
 ```
 
 ### 7. Boxing and Unboxing
@@ -217,60 +271,62 @@ Convert between Jank's boxed types and C++ native types:
 #### `cpp/unbox` - Extract C++ Value from Jank Object
 
 ```clojure
-; Unbox takes TWO arguments: type and boxed-value
-(cpp/unbox cpp/GLFWwindow* window)
-(cpp/unbox cpp/FILE* file)
-(cpp/unbox cpp/cgltf_attribute* attribute)
-(cpp/unbox cpp/cgltf_accessor* accessor-box)
-(cpp/unbox cpp/cgltf_node* node)
-(cpp/unbox cpp/cgltf_node** nodes)
-(cpp/unbox cpp/cgltf_scene* scenes)
-(cpp/unbox cpp/float* ptr)
-(cpp/unbox cpp/glm.vec3* ptr)
+; Unbox takes TWO arguments: type (DSL form) and boxed-value
+(cpp/unbox (:* GLFWwindow) window)
+(cpp/unbox (:* FILE) file)
+(cpp/unbox (:* cgltf_attribute) attribute)
+(cpp/unbox (:* cgltf_accessor) accessor-box)
+(cpp/unbox (:* cgltf_node) node)
+(cpp/unbox (:* (:* cgltf_node)) nodes)    ; double pointer
+(cpp/unbox (:* cgltf_scene) scenes)
+(cpp/unbox (:* float) ptr)
+(cpp/unbox (:* glm.vec3) ptr)
+(cpp/unbox (:* AnimationContext) context)
 
-; For complex types, use cpp/type for the first argument
-(cpp/unbox (cpp/type "void*") buffer)
-(cpp/unbox (cpp/type "std::vector<Vertex>*") vertices-box)
-(cpp/unbox (cpp/type "std::vector<int>*") indices-box)
+; For template pointer types
+(cpp/unbox (:* (std.vector float)) verts-box)
+(cpp/unbox (:* (std.vector Vertex)) vertices-box)
+(cpp/unbox (:* (std.vector int)) indices-box)
+(cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
 ```
 
-**Note:** `cpp/unbox` always takes exactly two arguments - the type specification first, then the boxed value.
+**Note:** `cpp/unbox` always takes exactly two arguments - the type specification first, then the boxed value. The type uses the DSL syntax (see section 6).
 
 ### 8. Working with C++ Constants
 
-#### `cpp/value` - Access C++ Constants and Macro Values
+#### `#cpp` Reader Tag - Access C++ Constants and Macros
 
-Access C preprocessor macros and compile-time constants:
+Access C preprocessor macros and compile-time constants using the `#cpp` reader tag:
 
 ```clojure
-; OpenGL constants
-(cpp/value "GL_TRIANGLES")
-(cpp/value "GL_FLOAT")
-(cpp/value "GL_TEXTURE_2D")
-(cpp/value "GL_DEPTH_TEST")
-(cpp/value "GL_COLOR_BUFFER_BIT")
-
-; GLFW constants
-(cpp/value "GLFW_PRESS")
-(cpp/value "GLFW_KEY_ESCAPE")
-(cpp/value "GLFW_KEY_W")
-(cpp/value "GLFW_CONTEXT_VERSION_MAJOR")
-(cpp/value "GLFW_OPENGL_CORE_PROFILE")
-(cpp/value "GLFW_CURSOR")
-
 ; C standard library constants
-(cpp/value "SEEK_END")
-
-; Boolean/Special constants
-(cpp/value "GL_TRUE")
-(cpp/value "GL_FALSE")
+#cpp SEEK_END
+#cpp true
+#cpp false
 ```
 
-**Common Pattern:** Bind frequently used constants to Clojure defs:
+#### Inline Function Wrappers for Constants
+
+This project wraps OpenGL/GLFW constants as inline C++ functions (defined in `engine.gl.constants`) to avoid symbol redefinition issues with `cpp/value` in AOT compilation:
+
 ```clojure
-(def GLFW_PRESS (cpp/value "GLFW_PRESS"))
-(def GLFW_KEY_ESCAPE (cpp/value "GLFW_KEY_ESCAPE"))
-(def GL_TRIANGLES (cpp/value "GL_TRIANGLES"))
+; In engine/gl/constants.jank:
+(cpp/raw "inline int gl_triangles() { return GL_TRIANGLES; }")
+
+; Usage throughout the codebase:
+(require '[engine.gl.constants :as gl])
+gl/GL_TRIANGLES
+gl/GL_FLOAT
+gl/GLFW_KEY_ESCAPE
+```
+
+#### `cpp/value` - Direct C++ Expression Evaluation
+
+For one-off C++ constant access (prefer inline wrappers for frequently used values):
+
+```clojure
+(cpp/value "SEEK_END")
+(cpp/value "std::numeric_limits<long long>::max()")
 ```
 
 #### `cpp/nullptr` - Null Pointer Constant
@@ -310,7 +366,7 @@ cpp/false  ; C++ false boolean constant
 
 ; From shaders/core.jank
 (cpp/free source)
-(cpp/free (cpp/cast (cpp/type "void*") sources))
+(cpp/free (cpp/cast (:* void) sources))
 ```
 
 ## Common Patterns
@@ -394,7 +450,7 @@ For geometry data and other large constant arrays:
 ; Access from Jank
 (cpp/glBufferData GL_ARRAY_BUFFER
                   cpp/textured_rectangle_2D_vertices_size
-                  (cpp/cast (cpp/type "void*")
+                  (cpp/cast (:* void)
                             cpp/textured_rectangle_2D_vertices)
                   GL_STATIC_DRAW)
 ```
@@ -422,14 +478,16 @@ For geometry data and other large constant arrays:
 
 ## Usage Examples from This Codebase
 
-**Locations:** `engine.shaders.core`, `engine.textures.core`, `engine.geometry.core`, `engine.gltf.core`, `engine.io.core`, `engine.math.core`, `examples.demo.core`
+**Locations:** `engine.shaders.core`, `engine.gfx3d.textures.core`, `engine.gfx3d.geometry.core`, `engine.gfx3d.gltf.core`, `engine.io.core`, `engine.math.core`, `engine.networking.core`, `examples.demo.core`
 
 ## Best Practices
 
 1. **Helper Functions**: Create small C++ helper functions for repetitive type conversions and null checks
-2. **Constants as Defs**: Bind frequently used `cpp/value` constants to Clojure `def` symbols for readability
+2. **Constants as Inline Functions**: Wrap frequently used constants in inline C++ functions (see `engine.gl.constants`)
 3. **Boxing for Persistence**: Use `cpp/box` to store C++ pointers in Jank data structures
-4. **Explicit Types**: Use `cpp/type` for template instantiations and unsigned types
+4. **DSL Types**: Use the type DSL for `cpp/new`, `cpp/unbox`, `cpp/cast` — e.g., `(:* void)`, `(std.vector float)`, `(#cpp (:unsigned int))`
 5. **Memory Management**: Always free allocated memory with `cpp/free` when done
 6. **Null Checks**: Check for `cpp/nullptr` after operations that can fail (malloc, fopen, etc.)
 7. **cpp/raw Organization**: Group related C++ code together in `cpp/raw` blocks at the top of namespaces
+8. **Name Collisions**: C++ functions in `cpp/raw` must not match jank `defn` names after hyphen-to-underscore munging. Use `_impl` or `_helper` suffixes for C++ functions that wrap jank functions of the same name
+9. **Void Method Calls in let**: Void-returning `cpp/.method` calls bound to `_` in `let` bindings still need `(do (cpp/.method ...) nil)` wrapping

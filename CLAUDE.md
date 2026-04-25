@@ -146,13 +146,26 @@ src/
 │   ├── io/                 # File I/O utilities
 │   ├── math/               # GLM math helpers and macros
 │   ├── shaders/            # Shader compilation and program management
-│   ├── geometry/           # Vertex data and buffer management
-│   ├── textures/           # Texture loading and binding
+│   ├── gl/                 # Low-level OpenGL state wrappers + constants
+│   ├── gc/                 # Garbage collection control (BDWGC)
 │   ├── events/             # Event store for game state
-│   └── gltf/               # glTF model loading
+│   ├── networking/         # ENet UDP multiplayer
+│   ├── gfx2d/              # 2D rendering
+│   │   ├── graphics/       # 2D primitives (lines, arcs)
+│   │   └── text/           # Font rendering (STB TrueType)
+│   └── gfx3d/              # 3D rendering
+│       ├── geometry/       # Vertex data and buffer management
+│       ├── textures/       # Texture loading (STB Image)
+│       ├── gltf/           # glTF model loading (+ headless for server)
+│       ├── animation/      # ozz-animation integration, skinning
+│       ├── collision/      # Raycast ground detection
+│       └── lines/          # Debug line rendering
 └── examples/               # Example games
-    └── demo/               # Demo game with 3D player and camera
-        └── core.jank       # Game entry point
+    └── demo/               # Multiplayer demo game
+        ├── core.jank       # Standalone entry point
+        ├── client.jank     # Networked client
+        ├── server.jank     # Authoritative server
+        └── ...
 ```
 
 ### Creating a New Game
@@ -168,10 +181,18 @@ src/
 - **engine.io**: File reading utilities
 - **engine.math**: GLM wrappers (`gimmie`, `*->` macros)
 - **engine.shaders**: Shader compilation, VAO management
-- **engine.geometry**: Basic shapes (rectangles, cubes)
-- **engine.textures**: STB Image integration
+- **engine.gl**: Low-level OpenGL state (viewport, blend, enable/disable) + constants
+- **engine.gc**: Garbage collection control (incremental GC for frame budgets)
 - **engine.events**: Event sourcing for game state
-- **engine.gltf**: glTF model parsing and loading
+- **engine.networking**: ENet UDP client/server, packet send/receive, event polling
+- **engine.gfx2d.graphics**: 2D primitive rendering (lines, arcs, filled shapes)
+- **engine.gfx2d.text**: Font rendering with STB TrueType
+- **engine.gfx3d.geometry**: Basic shapes (rectangles, cubes)
+- **engine.gfx3d.textures**: STB Image integration
+- **engine.gfx3d.gltf**: glTF model parsing and loading (+ headless variant for server)
+- **engine.gfx3d.animation**: ozz-animation integration, skeletal rendering, GPU skinning
+- **engine.gfx3d.collision**: Raycast ground detection against collision meshes
+- **engine.gfx3d.lines**: Debug line rendering
 
 #### 2. C++ Interop Pattern
 The codebase extensively uses **Jank's C++ interop** (`cpp/` forms) for direct OpenGL API calls:
@@ -179,7 +200,11 @@ The codebase extensively uses **Jank's C++ interop** (`cpp/` forms) for direct O
 - `cpp/` prefixed calls for OpenGL functions (e.g., `cpp/glUseProgram`)
 - `cpp/box`/`cpp/unbox` for managing C++ pointers in Jank
 - `cpp/&` for address-of operations
-- `cpp/cast` and `cpp/type` for type conversions
+- `cpp/cast` with DSL type forms for type conversions (e.g., `(cpp/cast (:* void) data)`)
+- C++ type DSL: `(:* Type)` for pointers, `(std.vector float)` for templates, `(#cpp (:unsigned int))` for value init
+- `#cpp` reader tag for accessing C++ values (e.g., `#cpp SEEK_END`)
+
+**Important:** C++ functions defined in `cpp/raw` blocks must not share names with jank `defn` functions in the same namespace (after hyphen-to-underscore munging). Use `_impl` or `_helper` suffixes for the C++ functions to avoid collisions.
 
 #### 3. Error Handling with `clet`
 Custom macro `clet` provides C-style error checking:
@@ -202,19 +227,19 @@ Custom macro `clet` provides C-style error checking:
 - Manages VAO creation and binding
 - Uses C wrapper functions for OpenGL extensions
 
-#### Geometry System (`engine.geometry`)
+#### Geometry System (`engine.gfx3d.geometry`)
 - Defines vertex data as C arrays using `cpp/raw`
 - Creates and configures OpenGL buffers (VBO/EBO)
 - Sets up vertex attribute pointers for position, color, and texture coordinates
 - Returns structured data with buffer IDs and metadata
 
-#### Texture System (`engine.textures`)
+#### Texture System (`engine.gfx3d.textures`)
 - Loads image files using STB Image library
 - Handles both RGB and RGBA formats
 - Manages OpenGL texture creation and configuration
 - Binds textures to shader uniforms
 
-#### glTF System (`engine.gltf`)
+#### glTF System (`engine.gfx3d.gltf`)
 - Parses glTF files using cgltf
 - Loads meshes with positions, normals, UVs
 - Supports PBR materials and textures
@@ -475,10 +500,10 @@ It does NOT require:
 
 ### Headless glTF Loader
 
-The server uses `engine.3d.gltf.headless` instead of the full glTF loader:
+The server uses `engine.gfx3d.gltf.headless` instead of the full glTF loader:
 
 ```clojure
-(require '[engine.3d.gltf.headless :as gltf])
+(require '[engine.gfx3d.gltf.headless :as gltf])
 
 ;; Load only collision mesh data (no GPU operations)
 (gltf/load-collision {:path "models/level.gltf"})
