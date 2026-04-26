@@ -92,6 +92,19 @@
                                 (+ base-index i)])
                              (range 1 (dec n))))})))
 
+(def FACE_SHRINK 0.02)
+
+(defn shrink-face
+  "Shrink a face polygon toward its centroid by a small epsilon.
+   Prevents z-fighting where adjacent pieces share coplanar faces."
+  [verts amount]
+  (let [n (count verts)
+        cx (/ (reduce + (map first verts)) n)
+        cy (/ (reduce + (map second verts)) n)
+        cz (/ (reduce + (map #(nth % 2) verts)) n)
+        centroid [cx cy cz]]
+    (mapv (fn [v] (m/v3-lerp v centroid amount)) verts)))
+
 (defn brush-to-mesh
   "Convert a brush (list of planes) to a triangle mesh.
    Each plane is {:p1 [x y z] :p2 [x y z] :p3 [x y z] :texture ...}.
@@ -127,8 +140,9 @@
                             (recur (inc j)
                                    (clip-winding w normal dist)))))]
           (if (and clipped (>= (count clipped) 3))
-            (let [base-index (count all-positions)
-                  face (triangulate-face clipped (:normal plane-eq) base-index)]
+            (let [shrunk (shrink-face clipped FACE_SHRINK)
+                  base-index (count all-positions)
+                  face (triangulate-face shrunk (:normal plane-eq) base-index)]
               (recur (inc face-idx)
                      (into all-positions (:vertices face))
                      (into all-normals (:normals face))

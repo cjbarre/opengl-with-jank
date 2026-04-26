@@ -67,50 +67,41 @@
         x1 (float ox) y1 (float oy) z1 (float oz)
         x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
         tex (or texture "textures/base")
-        default-tex {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
-        ;; Ramp is a wedge: floor, two sides, back wall, and a sloped top.
-        ;; :facing determines which direction the ramp rises toward.
-        ;; Default (:north) rises from z1 (low at front) to z2+y2 (high at back).
-        ;; The sloped face replaces the top, connecting the top of the back wall
-        ;; to the bottom of the front.
-        floor  (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} default-tex)
-        left   (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} default-tex)
-        right  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} default-tex)]
+        dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        ;; 5-plane wedge: floor, two sides, back wall, sloped top
+        floor (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} dt)]
     [(case (or facing :north)
-       ;; Ramp rises toward +Z: low edge at z1, high edge at z2
+       ;; Rises toward +Z
        :north
-       {:planes [floor left right
-                 ;; Back wall (Z+) full height
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
-                 ;; Front face (Z-) - just the bottom edge (degenerate, needed for closed solid)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y1 z1]} default-tex)
-                 ;; Sloped top: from (*, y1, z1) to (*, y2, z2)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} default-tex)]}
+       {:planes [floor
+                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z2]} dt)
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} dt)]}
 
-       ;; Ramp rises toward -Z: low edge at z2, high edge at z1
+       ;; Rises toward -Z
        :south
-       {:planes [floor left right
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y1 z2]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} default-tex)]}
+       {:planes [floor
+                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt)
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z1]} dt)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} dt)]}
 
-       ;; Ramp rises toward +X: low edge at x1, high edge at x2
+       ;; Rises toward +X
        :east
        {:planes [floor
-                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} default-tex)
-                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y1 z1]} default-tex)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
-                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y2 z2]} default-tex)]}
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt)
+                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y2 z2]} dt)]}
 
-       ;; Ramp rises toward -X: low edge at x2, high edge at x1
+       ;; Rises toward -X
        :west
        {:planes [floor
-                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x2 y1 z1]} default-tex)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
-                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x1 y2 z1]} default-tex)]})]))
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
+                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt)
+                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x1 y2 z1]} dt)]})]))
 
 (defmethod piece->brushes :stairs
   [grid-size {:keys [pos size texture]}]
