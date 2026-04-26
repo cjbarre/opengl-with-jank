@@ -151,28 +151,6 @@
     return true;
   }
 
-  // Set skeleton in context
-  inline void set_context_skeleton(AnimationContext* ctx, ozz::animation::Skeleton* skel) {
-    if (ctx) {
-      ctx->skeleton = skel;
-    }
-  }
-
-  // Add animation to context
-  inline void add_context_animation(AnimationContext* ctx, ozz::animation::Animation* anim) {
-    if (ctx && anim) {
-      ctx->animations.push_back(anim);
-    }
-  }
-
-  // Get animation from context
-  inline ozz::animation::Animation* get_context_animation(AnimationContext* ctx, size_t index) {
-    if (ctx && index < ctx->animations.size()) {
-      return ctx->animations[index];
-    }
-    return nullptr;
-  }
-
   // ============ MESH LOADING ============
 
   // Load meshes from .ozz file
@@ -402,8 +380,7 @@
         skeleton (cpp/eanim.load_skeleton_ozz path)]
     (when (cpp/! skeleton)
       (throw (ex-info "Failed to load skeleton" {:path path})))
-    ;; Use helper function since cpp/= on member access doesn't work
-    (cpp/eanim.set_context_skeleton ctx skeleton)
+    (cpp/= (cpp/.-skeleton ctx) skeleton)
     (let [num-joints (cpp/.num_joints (cpp/* skeleton))
           num-soa-joints (cpp/.num_soa_joints (cpp/* skeleton))
           _ (do (cpp/.init ctx num-soa-joints num-joints) nil)]
@@ -418,8 +395,7 @@
         animation (cpp/eanim.load_animation_ozz path)]
     (when (cpp/! animation)
       (throw (ex-info "Failed to load animation" {:path path})))
-    ;; Use helper function to add animation to context
-    (cpp/eanim.add_context_animation ctx animation)
+    (cpp/.push_back (cpp/& (cpp/.-animations ctx)) animation)
     (let [animations (cpp/& (cpp/.-animations ctx))]
       {:index (cpp/- (cpp/.size animations) (cpp/size_t 1))
        :duration (cpp/.duration (cpp/* animation))
@@ -430,8 +406,7 @@
   "Samples animation at given time ratio (0.0-1.0), updates model matrices in context"
   [{:keys [context animation-index time-ratio]}]
   (let [ctx (cpp/unbox (:* AnimationContext) context)
-        ;; Use helper function to get animation from context
-        animation (cpp/eanim.get_context_animation ctx (cpp/size_t animation-index))]
+        animation (cpp/aget (cpp/.-animations ctx) (cpp/size_t animation-index))]
     (cpp/eanim.sample_animation_ozz ctx animation (cpp/float time-ratio))))
 
 ;; Get model matrices for rendering

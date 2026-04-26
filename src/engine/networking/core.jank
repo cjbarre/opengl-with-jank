@@ -8,24 +8,33 @@
   #include <cstring>
   #include <string>")
 
-;; C helper functions for ENet - only keeping what requires struct init, NULL pointers, or complex logic
+;; C++ helpers for ENet operations that can't be expressed in jank.
+;; Three categories of limitation keep these in C++:
+;;
+;; 1. MACRO FUNCTIONS: enet_address_set_host is a #define macro
+;;    (#define enet_address_set_host enet_address_set_host_new).
+;;    Jank's cpp/ symbol resolution can't see preprocessor macros,
+;;    so connect_to_host must call it from C++.
+;;
+;; 2. STRING-TO-VOID* CONVERSION: enet_packet_create takes const void*.
+;;    Jank auto-converts strings to const char* for C++ params, but
+;;    the subsequent char*-to-void* implicit conversion only happens
+;;    inside C++. Neither cpp/cast nor cpp/unsafe-cast can bridge
+;;    from a jank boxed string to const void*.
+;;
+;; 3. NON-CONVERTIBLE POINTER FIELDS: (cpp/.-packet event) returns
+;;    ENetPacket*& which jank can't auto-box or pass to functions.
+;;    The field read succeeds, but the resulting C++ reference type
+;;    has no jank conversion trait. destroy_event_packet and
+;;    get_event_data_copy must access event->packet from C++.
+;;
+;; Additionally: get_event_data_copy uses malloc+memcpy+null-terminate,
+;; and get_peer_id uses pointer arithmetic (peer - peer->host->peers),
+;; both of which are simpler to express in C++.
 (cpp/raw
  "namespace enet_impl {
-  // Client needs NULL pointer as first arg (NULL -> pointer cast not supported)
-  inline ENetHost* create_client_host() {
-    return enet_host_create(NULL, 1, 2, 0, 0);
-  }
 
-  // Server needs struct init with memset + field assignment
-  inline ENetHost* create_server_host(uint16_t port, size_t max_clients) {
-    ENetAddress addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.host = in6addr_any;
-    addr.port = port;
-    return enet_host_create(&addr, max_clients, 2, 0, 0);
-  }
-
-  // Connect needs struct field assignment
+  // [MACRO] enet_address_set_host is a #define, invisible to jank
   inline ENetPeer* connect_to_host(ENetHost* host, const char* hostname, uint16_t port) {
     ENetAddress addr;
     enet_address_set_host(&addr, hostname);
@@ -33,7 +42,8 @@
     return enet_host_connect(host, &addr, 2, 0);
   }
 
-  // Packet send needs ternary + conditional
+  // [STRING-TO-VOID*] enet_packet_create takes const void*, jank strings
+  // auto-convert to const char* but not to const void*
   inline int send_packet(ENetPeer* peer, const char* data, size_t len, int channel, bool reliable) {
     uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
     ENetPacket* packet = enet_packet_create(data, len, flags);
@@ -41,7 +51,7 @@
     return enet_peer_send(peer, channel, packet);
   }
 
-  // Broadcast needs ternary + conditional
+  // [STRING-TO-VOID*] same as send_packet
   inline void broadcast_packet(ENetHost* host, const char* data, size_t len, int channel, bool reliable) {
     uint32_t flags = reliable ? ENET_PACKET_FLAG_RELIABLE : 0;
     ENetPacket* packet = enet_packet_create(data, len, flags);
@@ -50,7 +60,8 @@
     }
   }
 
-  // Data copy needs malloc + memcpy + null terminate
+  // [POINTER FIELD + MALLOC] event->packet is non-convertible ENetPacket*&,
+  // plus needs malloc+memcpy+null-terminate pattern
   inline char* get_event_data_copy(ENetEvent* event) {
     if (event->packet && event->packet->data && event->packet->dataLength > 0) {
       size_t len = event->packet->dataLength;
@@ -64,7 +75,7 @@
     return nullptr;
   }
 
-  // Peer ID needs pointer arithmetic
+  // [POINTER ARITHMETIC] peer - peer->host->peers
   inline uint32_t get_peer_id(ENetPeer* peer) {
     if (peer && peer->host) {
       return (uint32_t)(peer - peer->host->peers);
@@ -72,14 +83,14 @@
     return 0;
   }
 
-  // Destroy event packet (field access returns reference, can't use in when)
+  // [POINTER FIELD] event->packet returns non-convertible ENetPacket*&
   inline void destroy_event_packet(ENetEvent* event) {
     if (event->packet) {
       enet_packet_destroy(event->packet);
     }
   }
 
-  // Free data copy (char* to void* cast not supported)
+  // [POINTER FIELD] data is a char* from get_event_data_copy, needs free(void*)
   inline void free_data_copy(char* data) {
     if (data) {
       free(data);
@@ -105,7 +116,10 @@
   "Create a server host listening on the given port.
    Returns a boxed ENetHost* or nil on failure."
   [{:keys [port max-clients] :or {max-clients 32} :as args}]
-  (let [host (cpp/enet_impl.create_server_host (cpp/int port) (cpp/int max-clients))]
+  (let [addr (cpp/ENetAddress.)
+        _ (cpp/= (cpp/.-host addr) cpp/in6addr_any)
+        _ (cpp/= (cpp/.-port addr) (cpp/int port))
+        host (cpp/enet_host_create (cpp/& addr) (cpp/size_t max-clients) (cpp/size_t 2) (cpp/int 0) (cpp/int 0))]
     (when-not (cpp/! host)
       (cpp/box host))))
 
@@ -113,7 +127,8 @@
   "Create a client host (not bound to any port).
    Returns a boxed ENetHost* or nil on failure."
   []
-  (clet [host (cpp/enet_impl.create_client_host)
+  (clet [host (cpp/enet_host_create (cpp/cast (:* (:const ENetAddress)) cpp/nullptr)
+                                    (cpp/size_t 1) (cpp/size_t 2) (cpp/int 0) (cpp/int 0))
          :when (cpp/! host)
          :error nil]
     (cpp/box host)))
