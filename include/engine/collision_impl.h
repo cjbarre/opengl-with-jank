@@ -1,4 +1,7 @@
 #pragma once
+#include <glm/glm.hpp>
+#include <vector>
+#include <cmath>
 
 namespace ecol {
 // Raycast down from position, find highest ground below

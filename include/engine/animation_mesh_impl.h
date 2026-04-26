@@ -1,4 +1,10 @@
 #pragma once
+#include "gl_wrappers.h"
+#include "ozz/base/containers/vector.h"
+#include "ozz_mesh.h"
+#include <vector>
+#include <cstring>
+#include <cstdint>
 
 // Skinned vertex layout matching skinned_vertex.glsl
 // Total stride: 48 bytes

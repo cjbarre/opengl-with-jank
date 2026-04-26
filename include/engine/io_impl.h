@@ -1,4 +1,5 @@
 #pragma once
+#include <dirent.h>
 
 namespace eio {
 inline char* charify_void (void* buffer) {

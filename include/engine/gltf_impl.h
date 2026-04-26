@@ -1,4 +1,6 @@
 #pragma once
+#include "cgltf.h"
+#include <cstring>
 
 struct Vertex {
   float pos[3];

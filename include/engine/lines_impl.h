@@ -1,4 +1,5 @@
 #pragma once
+#include "gl_wrappers.h"
 
 namespace elines {
 // Create line VAO and VBO, returns them via output parameters

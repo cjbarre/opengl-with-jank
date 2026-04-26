@@ -1,4 +1,6 @@
 #pragma once
+#include "cgltf.h"
+#include <cstring>
 
 namespace egltf_hl {
 inline bool node_is_colonly(cgltf_node* node) {

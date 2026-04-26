@@ -1,4 +1,21 @@
 #pragma once
+#include "animation_types.h"
+#include "ozz_mesh.h"
+#include "ozz/animation/runtime/animation.h"
+#include "ozz/animation/runtime/skeleton.h"
+#include "ozz/animation/runtime/sampling_job.h"
+#include "ozz/animation/runtime/local_to_model_job.h"
+#include "ozz/base/io/archive.h"
+#include "ozz/base/io/stream.h"
+#include "ozz/base/maths/soa_transform.h"
+#include "ozz/base/maths/simd_math.h"
+#include "ozz/base/maths/math_archive.h"
+#include "ozz/base/maths/simd_math_archive.h"
+#include "ozz/base/containers/vector.h"
+#include "ozz/base/containers/vector_archive.h"
+#include <iostream>
+#include <fstream>
+#include <cstring>
 
 namespace eanim {
 // Factory function to avoid copy construction issues

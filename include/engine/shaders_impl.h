@@ -1,4 +1,8 @@
 #pragma once
+#include "gl_wrappers.h"
+#include <GLFW/glfw3.h>
+#include <cstdio>
+#include <cstdlib>
 
 namespace eshaders {
 inline GLuint compile_shader_from_file(const char* path, GLenum shader_type) {

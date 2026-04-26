@@ -1,4 +1,11 @@
 #pragma once
+#include "gl_wrappers.h"
+#include <GLFW/glfw3.h>
+#include "stb_truetype.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <vector>
 
 // Font rendering state
 struct FontData {
