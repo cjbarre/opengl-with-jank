@@ -1,0 +1,75 @@
+(ns examples.strafe-designer.map-format
+  (:require [examples.strafe-designer.brush.pieces :as pieces]))
+
+(cpp/raw "#include <stdio.h>")
+
+;; Quake 3 .map format serializer.
+;; Handles Y-up (engine) to Z-up (Quake) coordinate swap on export.
+
+(defn- swap-yz
+  "Convert engine Y-up coords to Quake Z-up coords: [x y z] to [x z y]"
+  [[x y z]]
+  [x z y])
+
+(defn- format-point
+  "Format a 3D point for .map output, swapping Y/Z and rounding to integers."
+  [[x y z]]
+  (let [[qx qy qz] (swap-yz [x y z])]
+    (str "( " (int qx) " " (int qy) " " (int qz) " )")))
+
+(defn- serialize-plane
+  "Serialize a single brush plane to .map format."
+  [{:keys [p1 p2 p3 texture x-offset y-offset rotation x-scale y-scale]}]
+  (str (format-point p1) " "
+       (format-point p2) " "
+       (format-point p3) " "
+       (or texture "textures/base") " "
+       (or x-offset 0) " " (or y-offset 0) " "
+       (or rotation 0) " "
+       (or x-scale 1.0) " " (or y-scale 1.0)))
+
+(defn- serialize-brush
+  "Serialize a brush to .map format."
+  [brush]
+  (str "{\n"
+       (apply str (map #(str (serialize-plane %) "\n") (:planes brush)))
+       "}\n"))
+
+(defn- serialize-entity
+  "Serialize an entity to .map format."
+  [{:keys [classname properties brushes]} entity-index]
+  (str "// entity " entity-index "\n"
+       "{\n"
+       "\"classname\" \"" classname "\"\n"
+       (apply str (map (fn [[k v]]
+                         (str "\"" k "\" \"" v "\"\n"))
+                       properties))
+       (apply str (map serialize-brush brushes))
+       "}\n"))
+
+(defn serialize-map
+  "Serialize a brush map data structure to Quake 3 .map format string."
+  [brush-map]
+  (apply str (map-indexed
+              (fn [i entity]
+                (serialize-entity entity i))
+              (:entities brush-map))))
+
+(defn write-file
+  "Write a string to a file using C file I/O."
+  [path content]
+  (let [file* (cpp/fopen path "w")]
+    (if (cpp/! file*)
+      (println "Failed to open file for writing:" path)
+      (let [file (cpp/box file*)]
+        (cpp/fputs (cpp/cast (:* (:const char)) content)
+                   (cpp/unbox (:* FILE) file))
+        (cpp/fclose (cpp/unbox (:* FILE) file))))))
+
+(defn save-map
+  "Export a piece-grid course definition to a .map file."
+  [course-def path]
+  (let [brush-map (pieces/pieces->brush-map course-def)
+        map-str (serialize-map brush-map)]
+    (write-file path map-str)
+    (println "Exported .map to" path)))

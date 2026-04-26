@@ -1,0 +1,124 @@
+(ns examples.strafe-designer.level
+  (:require [examples.strafe-designer.brush.pieces :as pieces]
+            [examples.strafe-designer.brush.mesh :as mesh]
+            [engine.shaders.interface :as shaders]
+            [engine.gl.constants :as gl]
+            [engine.gfx3d.collision.interface :as collision]))
+
+(cpp/raw "#include \"gl_wrappers.h\"")
+(cpp/raw "#include \"gl_utils.h\"")
+(cpp/raw "#include \"engine/gltf_impl.h\"")
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+
+(defn upload-mesh
+  "Upload position/normal/index data to GPU. Returns {:draw fn :vao id :index-count n}."
+  [{:keys [positions normals indices]}]
+  (let [;; Build C++ vertex vector (Vertex struct: pos3 + normal3 + uv2)
+        vertices (#cpp (std.vector Vertex))
+        vertices-box (cpp/box (cpp/& vertices))
+        _ (doseq [i (range (count positions))]
+            (let [vertices* (cpp/unbox (:* (std.vector Vertex)) vertices-box)
+                  [px py pz] (get positions i)
+                  [nx ny nz] (get normals i)]
+              (cpp/.push_back
+               vertices*
+               (cpp/Vertex
+                (cpp/float px) (cpp/float py) (cpp/float pz)
+                (cpp/float nx) (cpp/float ny) (cpp/float nz)
+                (cpp/float 0.0) (cpp/float 0.0)))))
+
+        ;; Build index vector
+        idx-vec (#cpp (std.vector int))
+        idx-box (cpp/box (cpp/& idx-vec))
+        _ (doseq [i (range (count indices))]
+            (let [idx* (cpp/unbox (:* (std.vector int)) idx-box)
+                  index (get indices i)]
+              (cpp/.push_back idx* (cpp/int index))))
+        index-count (cpp/.size idx-vec)
+
+        ;; Create VAO
+        vao (shaders/create-vertex-array-object)
+        _ (shaders/bind-vertex-array-object {:vertex-array-object-id vao})
+
+        ;; VBO
+        vbo (#cpp (:unsigned int))
+        _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
+        _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
+        _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
+                                 (cpp/* (cpp/.size vertices) cpp/vertex_size)
+                                 (cpp/cast (:* void) (cpp/.data vertices))
+                                 gl/GL_STATIC_DRAW)
+
+        ;; EBO
+        ebo (#cpp (:unsigned int))
+        _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& ebo))
+        _ (cpp/wrap_glBindBuffer gl/GL_ELEMENT_ARRAY_BUFFER ebo)
+        _ (cpp/wrap_glBufferData gl/GL_ELEMENT_ARRAY_BUFFER
+                                 (cpp/* index-count cpp/int_size)
+                                 (cpp/cast (:* void) (cpp/.data idx-vec))
+                                 gl/GL_STATIC_DRAW)
+
+        ;; Vertex attributes (same layout as gltf: pos3 + normal3 + uv2 = 32 bytes)
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 0) (cpp/int 3)
+                                          gl/GL_FLOAT gl/GL_FALSE
+                                          cpp/vertex_size (cpp/voidify_int 0))
+        _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
+
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 1) (cpp/int 3)
+                                          gl/GL_FLOAT gl/GL_FALSE
+                                          cpp/vertex_size
+                                          (cpp/voidify_int (cpp/* (cpp/int 3) cpp/float_size)))
+        _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 1))
+
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 2) (cpp/int 2)
+                                          gl/GL_FLOAT gl/GL_FALSE
+                                          cpp/vertex_size
+                                          (cpp/voidify_int (cpp/* (cpp/int 6) cpp/float_size)))
+        _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 2))]
+
+    {:vao vao
+     :index-count (count indices)
+     :draw
+     (fn draw-level [{model-m-loc :model/local-matrix-uniform
+                      :keys [shader]}]
+       (let [_ (shaders/bind-vertex-array-object {:vertex-array-object-id vao})
+             ;; Set flat color (no texture)
+             _ (cpp/wrap_glUniform1i
+                (cpp/wrap_glGetUniformLocation shader "uHasBaseColorTex")
+                (cpp/int 0))
+             _ (cpp/wrap_glUniform4f
+                (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor")
+                0.6 0.65 0.7 1.0)
+             ;; Identity local transform
+             _ (cpp/wrap_glUniformMatrix4fv
+                (cpp/wrap_glGetUniformLocation shader model-m-loc)
+                (cpp/int 1) gl/GL_FALSE
+                (cpp/glm.value_ptr (cpp/identity_matrix)))
+             _ (cpp/wrap_glDrawElements
+                gl/GL_TRIANGLES
+                (cpp/int (count indices))
+                gl/GL_UNSIGNED_INT
+                (cpp/voidify_int (cpp/int 0)))]
+         nil))}))
+
+(defn load-course
+  "Convert a piece-grid level to renderable + collidable data.
+   Returns {:draw fn :collision collision-mesh}."
+  [course-def]
+  (let [brush-map (pieces/pieces->brush-map course-def)
+        worldspawn (first (:entities brush-map))
+        brushes (:brushes worldspawn)
+        _ (println "  Brushes:" (count brushes))
+        mesh-data (mesh/brushes-to-mesh brushes)
+        _ (println "  Vertices:" (count (:positions mesh-data))
+                   "Indices:" (count (:indices mesh-data)))
+        uploaded (upload-mesh mesh-data)
+        ;; Prepare collision from the same mesh
+        collision-mesh (when (seq (:positions mesh-data))
+                         (collision/prepare-collision-mesh
+                          {:positions (:positions mesh-data)
+                           :indices (:indices mesh-data)}))]
+    {:draw (:draw uploaded)
+     :collision collision-mesh}))

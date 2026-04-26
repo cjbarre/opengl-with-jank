@@ -1,0 +1,350 @@
+(ns examples.strafe-designer.core
+  (:require [examples.strafe-designer.level :as level]
+            [examples.strafe-designer.map-format :as map-format]
+            [examples.strafe-designer.brush.pieces :as pieces]
+            [engine.shaders.interface :as shaders]
+            [engine.math.interface :as math]
+            [engine.gfx3d.collision.interface :as collision]
+            [engine.gl.constants :as gl]
+            [examples.demo.camera :as camera]))
+
+(cpp/raw "#include \"gl_wrappers.h\"
+#include <GLFW/glfw3.h>
+#include <cstdio>")
+(cpp/raw "#include \"examples/strafe_designer_impl.h\"")
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+(cpp/raw "#include <math.h>")
+
+;; Physics constants (same as demo for strafe testing)
+(def GRAVITY 25.6)
+(def JUMP_VELOCITY 7.2)
+(def GROUND_ACCEL 10.0)
+(def AIR_ACCEL 1.0)
+(def FRICTION 6.0)
+(def STOP_SPEED 2.5)
+(def MAX_SPEED 8.0)
+
+;; ============================================================================
+;; Test course definition
+;; ============================================================================
+
+(def test-course
+  {:grid-size 2
+   :name "strafe-test"
+   :spawn [4 2 4]
+   :pieces
+   [;; Main floor
+    {:type :platform :pos [0 0 0] :size [10 1 10] :texture "textures/base"}
+    ;; Raised platform
+    {:type :platform :pos [12 2 0] :size [6 1 6] :texture "textures/base"}
+    ;; Wall along back
+    {:type :wall :pos [0 1 0] :size [10 4 1] :texture "textures/base"}]})
+
+;; ============================================================================
+;; Window setup
+;; ============================================================================
+
+(defn setup-window
+  [{:keys [width height name]}]
+  (let [_ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE)
+        window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
+    (when (cpp/! window)
+      (println "Window creation failed")
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
+    (when (cpp/! (cpp/esd.init_glew))
+      (println "GLEW initialization failed")
+      (cpp/exit 1))
+    (cpp/glfwSwapInterval 0)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/esd.framebuffer_size_callback)
+    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    (cpp/box window)))
+
+;; ============================================================================
+;; Input
+;; ============================================================================
+
+(defn process-input
+  [{:keys [window delta-time cursor/pitch cursor/yaw]}]
+  (let [window (cpp/unbox (:* GLFWwindow) window)]
+    (cond-> {:delta-time (float (math/*-> :float delta-time))
+             :pitch (float (math/*-> :float pitch))
+             :yaw (float (math/*-> :float yaw))}
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
+      (assoc :exit true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_W) gl/GLFW_PRESS)
+      (assoc :forward true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_S) gl/GLFW_PRESS)
+      (assoc :backward true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_A) gl/GLFW_PRESS)
+      (assoc :left true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_D) gl/GLFW_PRESS)
+      (assoc :right true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
+      (assoc :jump-held true))))
+
+;; ============================================================================
+;; Cursor
+;; ============================================================================
+
+(defn update-cursor
+  [{:cursor/keys [last-x last-y sensitivity yaw pitch initialized?]
+    :keys [window]}]
+  (let [cursor-x (cpp/double)
+        cursor-y (cpp/double)
+        _ (cpp/glfwGetCursorPos (cpp/unbox (:* GLFWwindow) window)
+                                (cpp/& cursor-x)
+                                (cpp/& cursor-y))
+        cursor-last-x (math/*-> :float last-x)
+        cursor-last-y (math/*-> :float last-y)
+        _ (when-not @initialized?
+            (cpp/= cursor-last-x cursor-x)
+            (cpp/= cursor-last-y cursor-y)
+            (reset! initialized? true))
+        cursor-sensitivity (math/*-> :float sensitivity)
+        x-offset (cpp/* (cpp/- cursor-x cursor-last-x) cursor-sensitivity)
+        y-offset (cpp/* (cpp/- cursor-last-y cursor-y) cursor-sensitivity)
+        cursor-yaw (math/*-> :float yaw)
+        cursor-pitch (math/*-> :float pitch)]
+    (cpp/= cursor-yaw (cpp/+ cursor-yaw x-offset))
+    (cpp/= cursor-pitch (cpp/- cursor-pitch y-offset))
+    (cpp/= cursor-last-x cursor-x)
+    (cpp/= cursor-last-y cursor-y)
+    (when (cpp/> cursor-pitch (cpp/float 60.0))
+      (cpp/= cursor-pitch (cpp/float 60.0)))
+    (when (cpp/< cursor-pitch (cpp/float -30.0))
+      (cpp/= cursor-pitch (cpp/float -30.0)))))
+
+;; ============================================================================
+;; Time
+;; ============================================================================
+
+(defn update-time
+  [{:keys [delta-time last-frame]}]
+  (let [current-frame (cpp/glfwGetTime)
+        delta-time (math/*-> :float delta-time)
+        last-frame (math/*-> :float last-frame)]
+    (cpp/= delta-time (cpp/- current-frame last-frame))
+    (cpp/= last-frame current-frame)))
+
+;; ============================================================================
+;; Physics (simplified from demo)
+;; ============================================================================
+
+(defn pm-friction [vx vz friction stopspeed dt]
+  (let [vx-f (cpp/float vx) vz-f (cpp/float vz)
+        speed (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f))))]
+    (if (cpp/< speed (cpp/float 0.1))
+      [(cpp/float 0.0) (cpp/float 0.0)]
+      (let [control (if (cpp/< speed (cpp/float stopspeed)) (cpp/float stopspeed) speed)
+            drop (cpp/* control (cpp/* (cpp/float friction) (cpp/float dt)))
+            newspeed (cpp/- speed drop)
+            newspeed (if (cpp/< newspeed (cpp/float 0.0)) (cpp/float 0.0) newspeed)
+            scale (cpp// newspeed speed)]
+        [(cpp/* vx-f scale) (cpp/* vz-f scale)]))))
+
+(defn pm-accelerate [vx vz dx dz wishspeed accel dt]
+  (let [dx-f (cpp/float dx) dz-f (cpp/float dz)
+        vx-f (cpp/float vx) vz-f (cpp/float vz)
+        wish-len (cpp/float (cpp/sqrt (cpp/+ (cpp/* dx-f dx-f) (cpp/* dz-f dz-f))))]
+    (if (cpp/< wish-len (cpp/float 0.001))
+      [vx-f vz-f]
+      (let [dx-norm (cpp// dx-f wish-len) dz-norm (cpp// dz-f wish-len)
+            currentspeed (cpp/+ (cpp/* vx-f dx-norm) (cpp/* vz-f dz-norm))
+            addspeed (cpp/- (cpp/float wishspeed) currentspeed)]
+        (if (cpp/<= addspeed (cpp/float 0.0))
+          [vx-f vz-f]
+          (let [accelspeed (cpp/* (cpp/float accel) (cpp/* (cpp/float dt) (cpp/float wishspeed)))
+                accelspeed (if (cpp/> accelspeed addspeed) addspeed accelspeed)]
+            [(cpp/+ vx-f (cpp/* accelspeed dx-norm))
+             (cpp/+ vz-f (cpp/* accelspeed dz-norm))]))))))
+
+(defn update-physics
+  [{:keys [position velocity grounded jump-z-start level-collision]} input]
+  (let [{:keys [forward backward left right jump-held yaw delta-time]} input
+        [px py pz] position
+        [vx vy vz] velocity
+
+        ground-y (when level-collision
+                   (collision/raycast-ground level-collision [px py pz]))
+        is-grounded (and ground-y (<= py (+ ground-y 0.2)))
+
+        yaw-radians (cpp/glm.radians (cpp/float yaw))
+        front-x (cpp/cos yaw-radians)
+        front-z (cpp/sin yaw-radians)
+        right-x (cpp/sin yaw-radians)
+        right-z (cpp/- (cpp/float 0.0) (cpp/cos yaw-radians))
+
+        wish-x (cond-> 0.0
+                 forward (+ front-x)
+                 backward (- front-x)
+                 left (+ right-x)
+                 right (- right-x))
+        wish-z (cond-> 0.0
+                 forward (+ front-z)
+                 backward (- front-z)
+                 left (+ right-z)
+                 right (- right-z))
+
+        [vx vz] (if is-grounded
+                  (pm-friction vx vz FRICTION STOP_SPEED delta-time)
+                  [vx vz])
+        accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
+        [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
+
+        [vy is-grounded] (if (and is-grounded jump-held)
+                           [JUMP_VELOCITY false]
+                           [vy is-grounded])
+        vy (if (not is-grounded) (- vy (* GRAVITY delta-time)) vy)
+
+        new-px (+ px (* vx delta-time))
+        new-py (+ py (* vy delta-time))
+        new-pz (+ pz (* vz delta-time))
+
+        ground-y-new (when level-collision
+                       (collision/raycast-ground level-collision [new-px new-py new-pz]))
+        [new-py vy is-grounded] (if (and ground-y-new (< new-py ground-y-new))
+                                  [ground-y-new 0.0 true]
+                                  [new-py vy is-grounded])]
+
+    {:position [new-px new-py new-pz]
+     :velocity [vx vy vz]
+     :grounded is-grounded}))
+
+;; ============================================================================
+;; Rendering
+;; ============================================================================
+
+(defn draw-3D
+  [{:keys [shader level-draw camera-state player-state] :as context}]
+  (let [_ (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
+        _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
+        _ (cpp/wrap_glUseProgram shader)
+
+        projection-m (cpp/glm.perspective
+                      (cpp/glm.radians (cpp/float 90.0))
+                      (cpp// (cpp/float 1280.0) (cpp/float 720.0))
+                      (cpp/float 0.1) (cpp/float 500.0))
+        _ (cpp/wrap_glUniformMatrix4fv
+           (cpp/wrap_glGetUniformLocation shader "projection")
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
+
+        ;; Update camera
+        [px py pz] (:position @player-state)
+        yaw (:yaw @player-state 0.0)
+        pitch (:pitch @player-state 0.0)
+        dt (float (math/*-> :float (:delta-time context)))
+        new-camera-state (camera/update-camera
+                          shader @camera-state camera/default-config
+                          [px py pz] yaw pitch (* dt 1000.0))
+        _ (reset! camera-state new-camera-state)
+
+        ;; Draw the level
+        _ (level-draw {:shader shader :model/local-matrix-uniform "local"})
+
+        ;; Set model matrix for identity (level is already in world space)
+        model-m (cpp/identity_matrix)
+        _ (cpp/wrap_glUniformMatrix4fv
+           (cpp/wrap_glGetUniformLocation shader "model")
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr model-m))]
+    nil))
+
+;; ============================================================================
+;; Main loop
+;; ============================================================================
+
+(defn run-loop
+  [{:keys [window player-state level-collision] :as context}]
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
+    (let [_ (update-time context)
+          _ (update-cursor context)
+          input (process-input context)
+          dt (float (math/*-> :float (:delta-time context)))
+          pitch (float (math/*-> :float (:cursor/pitch context)))
+          yaw (float (math/*-> :float (:cursor/yaw context)))]
+
+      ;; Handle exit
+      (when (:exit input)
+        (cpp/glfwSetWindowShouldClose (cpp/unbox (:* GLFWwindow) window) 1))
+
+      ;; Update physics
+      (swap! player-state
+             (fn [state]
+               (merge state
+                      (update-physics
+                       (assoc state :level-collision level-collision)
+                       (assoc input :yaw yaw :pitch pitch :delta-time dt)))))
+
+      ;; Store yaw/pitch on player state for camera
+      (swap! player-state assoc :yaw yaw :pitch pitch)
+
+      ;; Render
+      (draw-3D context)
+
+      (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
+      (cpp/glfwPollEvents))))
+
+;; ============================================================================
+;; Entry point
+;; ============================================================================
+
+(defn -main []
+  (println "=== Strafe Course Designer ===")
+  (println "Loading test course...")
+
+  (let [_ (cpp/glfwInit)
+        window (setup-window {:width 1280 :height 720 :name "Strafe Designer"})
+        _ (cpp/glfwSetInputMode
+           (cpp/unbox (:* GLFWwindow) window)
+           gl/GLFW_CURSOR gl/GLFW_CURSOR_DISABLED)
+
+        ;; Load shader
+        shader (shaders/load-shader-program
+                {:vertex-shader-path "shaders/basic_vertex.glsl"
+                 :fragment-shader-path "shaders/basic_fragment.glsl"})
+        _ (cpp/wrap_glUseProgram shader)
+        _ (cpp/wrap_glUniform1i
+           (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
+
+        ;; Load level from piece definitions
+        loaded (level/load-course test-course)
+        _ (println "Level loaded:" (if (:collision loaded) "with collision" "no collision"))
+
+        ;; Export .map file
+        _ (map-format/save-map test-course "output.map")
+
+        ;; Player state
+        player-state (atom {:position [10.0 5.0 10.0]
+                            :velocity [0.0 0.0 0.0]
+                            :grounded false
+                            :yaw -90.0
+                            :pitch 0.0})
+
+        ;; Camera state
+        camera-state (atom (camera/create-state))
+
+        context {:window window
+                 :shader shader
+                 :level-draw (:draw loaded)
+                 :level-collision (:collision loaded)
+                 :player-state player-state
+                 :camera-state camera-state
+                 :delta-time (math/gimmie :boxed :float 0.0)
+                 :last-frame (math/gimmie :boxed :float 0.0)
+                 :cursor/last-x (math/gimmie :boxed :float 0.0)
+                 :cursor/last-y (math/gimmie :boxed :float 0.0)
+                 :cursor/sensitivity (math/gimmie :boxed :float 0.05)
+                 :cursor/yaw (math/gimmie :boxed :float -90.0)
+                 :cursor/pitch (math/gimmie :boxed :float 0.0)
+                 :cursor/initialized? (atom false)}]
+
+    (println "Starting game loop... WASD to move, Space to jump, Esc to quit")
+    (run-loop context)
+
+    (cpp/glfwTerminate)
+    (println "Done.")))

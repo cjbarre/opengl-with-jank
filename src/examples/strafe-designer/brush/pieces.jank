@@ -1,0 +1,150 @@
+(ns examples.strafe-designer.brush.pieces)
+
+;; Piece catalog: Lego-block types to brush definitions.
+;; Users work with grid coordinates. Each piece knows how to become brushes.
+;;
+;; Coordinate system: Y-up (engine-native).
+;; Grid coords are multiplied by grid-size to get world units.
+
+(defn- grid->world
+  "Convert grid position + size to world-unit origin and dimensions."
+  [grid-size [gx gy gz] [sx sy sz]]
+  {:origin [(* gx grid-size) (* gy grid-size) (* gz grid-size)]
+   :width (* sx grid-size)
+   :height (* sy grid-size)
+   :depth (* sz grid-size)})
+
+(defn- make-box-brush
+  "Create a 6-plane axis-aligned box brush.
+   Origin is the min corner (not center). Extends in +x, +y, +z."
+  [[ox oy oz] width height depth texture]
+  (let [x1 (float ox)       y1 (float oy)       z1 (float oz)
+        x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+        tex (or texture "textures/base")]
+    {:planes
+     [;; Bottom face (Y-) - normal points down
+      {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Top face (Y+) - normal points up
+      {:p1 [x1 y2 z2] :p2 [x1 y2 z1] :p3 [x2 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Front face (Z-) - normal points toward -Z
+      {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Back face (Z+) - normal points toward +Z
+      {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Left face (X-) - normal points toward -X
+      {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Right face (X+) - normal points toward +X
+      {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}]}))
+
+(defmulti piece->brushes
+  "Convert a placed piece to a vector of brushes."
+  (fn [_grid-size piece] (:type piece)))
+
+(defmethod piece->brushes :platform
+  [grid-size {:keys [pos size texture]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
+    [(make-box-brush origin width height depth texture)]))
+
+(defmethod piece->brushes :wall
+  [grid-size {:keys [pos size texture]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
+    [(make-box-brush origin width height depth texture)]))
+
+(defmethod piece->brushes :pillar
+  [grid-size {:keys [pos size texture]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
+    [(make-box-brush origin width height depth texture)]))
+
+(defmethod piece->brushes :ramp
+  [grid-size {:keys [pos size facing texture]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)
+        [ox oy oz] origin
+        x1 (float ox) y1 (float oy) z1 (float oz)
+        x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+        tex (or texture "textures/base")
+        default-tex {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        ;; Ramp is a wedge: floor, two sides, back wall, and a sloped top.
+        ;; :facing determines which direction the ramp rises toward.
+        ;; Default (:north) rises from z1 (low at front) to z2+y2 (high at back).
+        ;; The sloped face replaces the top, connecting the top of the back wall
+        ;; to the bottom of the front.
+        floor  (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} default-tex)
+        left   (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} default-tex)
+        right  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} default-tex)]
+    [(case (or facing :north)
+       ;; Ramp rises toward +Z: low edge at z1, high edge at z2
+       :north
+       {:planes [floor left right
+                 ;; Back wall (Z+) full height
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
+                 ;; Front face (Z-) - just the bottom edge (degenerate, needed for closed solid)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y1 z1]} default-tex)
+                 ;; Sloped top: from (*, y1, z1) to (*, y2, z2)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} default-tex)]}
+
+       ;; Ramp rises toward -Z: low edge at z2, high edge at z1
+       :south
+       {:planes [floor left right
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y1 z2]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} default-tex)]}
+
+       ;; Ramp rises toward +X: low edge at x1, high edge at x2
+       :east
+       {:planes [floor
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} default-tex)
+                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y1 z1]} default-tex)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
+                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y2 z2]} default-tex)]}
+
+       ;; Ramp rises toward -X: low edge at x2, high edge at x1
+       :west
+       {:planes [floor
+                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x2 y1 z1]} default-tex)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} default-tex)
+                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x1 y2 z1]} default-tex)]})]))
+
+(defmethod piece->brushes :stairs
+  [grid-size {:keys [pos size texture]}]
+  (let [[gx gy gz] pos
+        [sx sy sz] size
+        ;; Each step is 1 grid cell deep, height divided evenly
+        step-count sz
+        step-height (/ (float sy) step-count)]
+    (vec (for [i (range step-count)]
+           (let [step-pos [gx (+ gy (* i step-height)) (+ gz i)]
+                 step-size [sx (+ step-height (* i step-height)) 1]
+                 {:keys [origin width height depth]} (grid->world grid-size step-pos step-size)]
+             (make-box-brush origin width height depth texture))))))
+
+(defmethod piece->brushes :default
+  [_grid-size piece]
+  (println "Unknown piece type:" (:type piece))
+  [])
+
+(defn pieces->brush-map
+  "Convert a piece-grid level definition to brush data structure."
+  [{:keys [grid-size name spawn pieces]
+    :or {grid-size 128 name "untitled"}}]
+  (let [all-brushes (vec (mapcat #(piece->brushes grid-size %) pieces))
+        [sx sy sz] (or spawn [0 1 0])
+        ;; Origin in engine Y-up coords
+        spawn-x (int (+ (* sx grid-size) (/ grid-size 2)))
+        spawn-y (int (+ (* sy grid-size) 16))
+        spawn-z (int (+ (* sz grid-size) (/ grid-size 2)))
+        spawn-origin (str spawn-x " " spawn-y " " spawn-z)]
+    {:entities
+     [(merge {:classname "worldspawn"
+              :brushes all-brushes}
+             (when name {:properties {"message" name}}))
+      {:classname "info_player_start"
+       :properties {"origin" spawn-origin}
+       :brushes []}]}))
