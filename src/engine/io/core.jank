@@ -10,16 +10,7 @@
 
 ;; Helper for void* to char* cast (cpp/cast doesn't support this)
 ;; Helper for dirent->d_name access (d_name is a fixed-size array, not a pointer)
-(cpp/raw
- "namespace eio {
-  inline char* charify_void (void* buffer) {
-    return static_cast<char*>(buffer);
-  }
-
-  inline const char* dirent_name(struct dirent* entry) {
-    return entry->d_name;
-  }
-  }")
+(cpp/raw "#include \"engine/io_impl.h\"")
 
 (defn- read-file
   [file size]
