@@ -71,36 +71,36 @@
         ;; 5-plane wedge: floor, two sides, back wall, sloped top
         floor (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} dt)]
     [(case (or facing :north)
-       ;; Rises toward +Z
+       ;; Rises toward +Z - back wall at Z+ is clip-only
        :north
        {:planes [floor
                  (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z2]} dt)
                  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
+                 (assoc (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt) :clip-only true)
                  (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} dt)]}
 
-       ;; Rises toward -Z
+       ;; Rises toward -Z - back wall at Z- is clip-only
        :south
        {:planes [floor
                  (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt)
                  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z1]} dt)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
+                 (assoc (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt) :clip-only true)
                  (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} dt)]}
 
-       ;; Rises toward +X
+       ;; Rises toward +X - back wall at X+ is clip-only
        :east
        {:planes [floor
                  (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
                  (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
-                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt)
+                 (assoc (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt) :clip-only true)
                  (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y2 z2]} dt)]}
 
-       ;; Rises toward -X
+       ;; Rises toward -X - back wall at X- is clip-only
        :west
        {:planes [floor
                  (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
                  (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
-                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt)
+                 (assoc (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt) :clip-only true)
                  (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x1 y2 z1]} dt)]})]))
 
 (defmethod piece->brushes :stairs

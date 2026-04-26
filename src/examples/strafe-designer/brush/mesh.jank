@@ -92,18 +92,15 @@
                                 (+ base-index i)])
                              (range 1 (dec n))))})))
 
-(def FACE_SHRINK 0.02)
+(def FACE_INSET 0.01)
 
-(defn shrink-face
-  "Shrink a face polygon toward its centroid by a small epsilon.
-   Prevents z-fighting where adjacent pieces share coplanar faces."
-  [verts amount]
-  (let [n (count verts)
-        cx (/ (reduce + (map first verts)) n)
-        cy (/ (reduce + (map second verts)) n)
-        cz (/ (reduce + (map #(nth % 2) verts)) n)
-        centroid [cx cy cz]]
-    (mapv (fn [v] (m/v3-lerp v centroid amount)) verts)))
+(defn inset-face
+  "Move a face inward along its normal to prevent z-fighting.
+   Our normals point inward, so adding normal*amount pushes the
+   face into the brush interior - top faces move down, bottom up, etc."
+  [verts normal amount]
+  (let [offset (m/v3-scale normal amount)]
+    (mapv (fn [v] (m/v3-add v offset)) verts)))
 
 (defn brush-to-mesh
   "Convert a brush (list of planes) to a triangle mesh.
@@ -139,10 +136,11 @@
                           (let [{:keys [normal dist]} (get plane-eqs j)]
                             (recur (inc j)
                                    (clip-winding w normal dist)))))]
-          (if (and clipped (>= (count clipped) 3))
-            (let [shrunk (shrink-face clipped FACE_SHRINK)
+          (if (and clipped (>= (count clipped) 3)
+                   (not (:clip-only (get planes face-idx))))
+            (let [inset (inset-face clipped (:normal plane-eq) FACE_INSET)
                   base-index (count all-positions)
-                  face (triangulate-face shrunk (:normal plane-eq) base-index)]
+                  face (triangulate-face inset (:normal plane-eq) base-index)]
               (recur (inc face-idx)
                      (into all-positions (:vertices face))
                      (into all-normals (:normals face))

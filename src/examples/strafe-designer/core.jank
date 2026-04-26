@@ -41,16 +41,16 @@
     {:type :wall :pos [0 1 0] :size [10 4 1] :texture "textures/base"}
     ;; Side wall
     {:type :wall :pos [0 1 0] :size [1 4 10] :texture "textures/base"}
-    ;; Ramp up to second platform
-    {:type :ramp :pos [10 0 2] :size [4 2 6] :facing :east :texture "textures/base"}
-    ;; Second platform (raised)
-    {:type :platform :pos [14 2 0] :size [8 1 8] :texture "textures/base"}
-    ;; Gap jump target
-    {:type :platform :pos [26 2 2] :size [6 1 4] :texture "textures/base"}
+    ;; Ramp from platform top (y=1) up to second platform (y=3)
+    {:type :ramp :pos [10 1 2] :size [4 2 6] :facing :east :texture "textures/base"}
+    ;; Second platform (raised, top of ramp)
+    {:type :platform :pos [14 3 0] :size [8 1 8] :texture "textures/base"}
+    ;; Gap jump target (same height as second platform)
+    {:type :platform :pos [26 3 2] :size [6 1 4] :texture "textures/base"}
     ;; High pillar
-    {:type :pillar :pos [30 3 4] :size [1 5 1] :texture "textures/base"}
+    {:type :pillar :pos [30 4 4] :size [1 5 1] :texture "textures/base"}
     ;; Third platform (higher)
-    {:type :platform :pos [34 4 0] :size [8 1 8] :texture "textures/base"}]})
+    {:type :platform :pos [34 5 0] :size [8 1 8] :texture "textures/base"}]})
 
 ;; ============================================================================
 ;; Window setup
@@ -73,7 +73,7 @@
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/esd.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
-    ;; Face shrink in mesh.jank handles z-fighting at brush seams
+    ;; No face culling - winding is inconsistent across piece types
     (cpp/box window)))
 
 ;; ============================================================================
