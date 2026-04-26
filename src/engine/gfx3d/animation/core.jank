@@ -151,38 +151,6 @@
     return true;
   }
 
-  // Get number of model matrices
-  inline int get_num_joints(AnimationContext* ctx) {
-    return ctx ? static_cast<int>(ctx->models.size()) : 0;
-  }
-
-  // Get model matrix at index - returns pointer to 16 floats
-  inline const float* get_model_matrix(AnimationContext* ctx, int index) {
-    if (!ctx || index < 0 || index >= static_cast<int>(ctx->models.size())) {
-      return nullptr;
-    }
-    return reinterpret_cast<const float*>(&ctx->models[index]);
-  }
-
-  // Get animation duration in seconds
-  inline float get_animation_duration(ozz::animation::Animation* anim) {
-    return anim ? anim->duration() : 0.0f;
-  }
-
-  // Get number of tracks (should match skeleton joints)
-  inline int get_animation_num_tracks(ozz::animation::Animation* anim) {
-    return anim ? anim->num_tracks() : 0;
-  }
-
-  // Get skeleton joint count
-  inline int get_skeleton_num_joints(ozz::animation::Skeleton* skel) {
-    return skel ? skel->num_joints() : 0;
-  }
-
-  inline int get_skeleton_num_soa_joints(ozz::animation::Skeleton* skel) {
-    return skel ? skel->num_soa_joints() : 0;
-  }
-
   // Set skeleton in context
   inline void set_context_skeleton(AnimationContext* ctx, ozz::animation::Skeleton* skel) {
     if (ctx) {
@@ -228,167 +196,6 @@
     return meshes;
   }
 
-  // Get mesh count
-  inline int get_mesh_count(ozz::vector<ozz::sample::Mesh>* meshes) {
-    return meshes ? static_cast<int>(meshes->size()) : 0;
-  }
-
-  // Get mesh vertex count for a specific mesh
-  inline int get_mesh_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    return (*meshes)[mesh_index].vertex_count();
-  }
-
-  // Get mesh triangle index count
-  inline int get_mesh_index_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    return (*meshes)[mesh_index].triangle_index_count();
-  }
-
-  // Get number of joint remaps (for skinning matrix count)
-  inline int get_mesh_joint_remap_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    return static_cast<int>((*meshes)[mesh_index].joint_remaps.size());
-  }
-
-  // Get highest joint index used by mesh
-  inline int get_mesh_highest_joint(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    return (*meshes)[mesh_index].highest_joint_index();
-  }
-
-  // Check if mesh is skinned
-  inline bool is_mesh_skinned(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return false;
-    }
-    return (*meshes)[mesh_index].skinned();
-  }
-
-  // Get pointer to triangle indices
-  inline const uint16_t* get_mesh_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    return (*meshes)[mesh_index].triangle_indices.data();
-  }
-
-  // Get joint remaps for skinning matrix ordering
-  inline const uint16_t* get_mesh_joint_remaps(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    return (*meshes)[mesh_index].joint_remaps.data();
-  }
-
-  // Get inverse bind poses for skinning
-  inline const float* get_mesh_inverse_bind_poses(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    return reinterpret_cast<const float*>((*meshes)[mesh_index].inverse_bind_poses.data());
-  }
-
-  // Get mesh part count
-  inline int get_mesh_part_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    return static_cast<int>((*meshes)[mesh_index].parts.size());
-  }
-
-  // Get part vertex count
-  inline int get_part_vertex_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return 0;
-    }
-    return mesh.parts[part_index].vertex_count();
-  }
-
-  // Get part positions pointer
-  inline const float* get_part_positions(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return nullptr;
-    }
-    return mesh.parts[part_index].positions.data();
-  }
-
-  // Get part normals pointer
-  inline const float* get_part_normals(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return nullptr;
-    }
-    return mesh.parts[part_index].normals.data();
-  }
-
-  // Get part UVs pointer
-  inline const float* get_part_uvs(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return nullptr;
-    }
-    return mesh.parts[part_index].uvs.data();
-  }
-
-  // Get part joint indices pointer
-  inline const uint16_t* get_part_joint_indices(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return nullptr;
-    }
-    return mesh.parts[part_index].joint_indices.data();
-  }
-
-  // Get part joint weights pointer
-  inline const float* get_part_joint_weights(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return nullptr;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return nullptr;
-    }
-    return mesh.parts[part_index].joint_weights.data();
-  }
-
-  // Get influences count (number of joints per vertex)
-  inline int get_part_influences_count(ozz::vector<ozz::sample::Mesh>* meshes, int mesh_index, int part_index) {
-    if (!meshes || mesh_index < 0 || mesh_index >= static_cast<int>(meshes->size())) {
-      return 0;
-    }
-    const auto& mesh = (*meshes)[mesh_index];
-    if (part_index < 0 || part_index >= static_cast<int>(mesh.parts.size())) {
-      return 0;
-    }
-    return mesh.parts[part_index].influences_count();
-  }
-
   // Compute skinning matrices from model matrices and mesh
   inline void compute_skinning_matrices(
     AnimationContext* ctx,
@@ -410,18 +217,6 @@
   // compute_and_upload_skinning_matrices is defined in animation_types.h
 
   // ============ SKELETON DEBUG VISUALIZATION ============
-
-  // Get joint parent indices from skeleton
-  inline const int16_t* get_skeleton_joint_parents(ozz::animation::Skeleton* skel) {
-    if (!skel) return nullptr;
-    return skel->joint_parents().data();
-  }
-
-  // Get joint name by index
-  inline const char* get_skeleton_joint_name(ozz::animation::Skeleton* skel, int index) {
-    if (!skel || index < 0 || index >= skel->num_joints()) return nullptr;
-    return skel->joint_names()[index];
-  }
 
   // Get joint position from model matrix (translation column)
   inline void get_joint_position(AnimationContext* ctx, int index, float* out_xyz) {
@@ -532,24 +327,6 @@
     return count;
   }
 
-  // Get skeleton from context (for helper functions)
-  inline ozz::animation::Skeleton* get_context_skeleton(AnimationContext* ctx) {
-    return ctx ? ctx->skeleton : nullptr;
-  }
-
-  // Get skeleton joint count from context
-  inline int get_context_num_joints(AnimationContext* ctx) {
-    return ctx && ctx->skeleton ? ctx->skeleton->num_joints() : 0;
-  }
-
-  // Get joint name by index from context
-  inline const char* get_context_joint_name(AnimationContext* ctx, int index) {
-    static const char* empty = \"(none)\";
-    if (!ctx || !ctx->skeleton) return empty;
-    if (index < 0 || index >= ctx->skeleton->num_joints()) return empty;
-    return ctx->skeleton->joint_names()[index];
-  }
-
   // Debug: print first N joint positions
   inline void debug_print_joint_positions(AnimationContext* ctx, int count) {
     if (!ctx || !ctx->skeleton) {
@@ -627,8 +404,8 @@
       (throw (ex-info "Failed to load skeleton" {:path path})))
     ;; Use helper function since cpp/= on member access doesn't work
     (cpp/eanim.set_context_skeleton ctx skeleton)
-    (let [num-joints (cpp/eanim.get_skeleton_num_joints skeleton)
-          num-soa-joints (cpp/eanim.get_skeleton_num_soa_joints skeleton)
+    (let [num-joints (cpp/.num_joints (cpp/* skeleton))
+          num-soa-joints (cpp/.num_soa_joints (cpp/* skeleton))
           _ (do (cpp/.init ctx num-soa-joints num-joints) nil)]
       {:num-joints num-joints
        :num-soa-joints num-soa-joints})))
@@ -645,8 +422,8 @@
     (cpp/eanim.add_context_animation ctx animation)
     (let [animations (cpp/& (cpp/.-animations ctx))]
       {:index (cpp/- (cpp/.size animations) (cpp/size_t 1))
-       :duration (cpp/eanim.get_animation_duration animation)
-       :num-tracks (cpp/eanim.get_animation_num_tracks animation)})))
+       :duration (cpp/.duration (cpp/* animation))
+       :num-tracks (cpp/.num_tracks (cpp/* animation))})))
 
 ;; Sample animation at time
 (defn sample
@@ -662,10 +439,11 @@
   "Gets all model space matrices from context as a flat float array pointer"
   [{:keys [context]}]
   (let [ctx (cpp/unbox (:* AnimationContext) context)
-        num-joints (cpp/eanim.get_num_joints ctx)]
+        num-joints (cpp/.size (cpp/.-models ctx))]
     {:num-joints num-joints
      :matrices-ptr (when (cpp/> num-joints (cpp/int 0))
-                     (cpp/box (cpp/eanim.get_model_matrix ctx (cpp/int 0))))}))
+                     (cpp/box (cpp/unsafe-cast (:* (:const float))
+                                               (cpp/& (cpp/aget (cpp/.-models ctx) (cpp/int 0))))))}))
 
 ;; ============ MESH FUNCTIONS ============
 
@@ -677,50 +455,51 @@
     (when (cpp/! meshes)
       (throw (ex-info "Failed to load meshes" {:path path})))
     {:meshes (cpp/box meshes)
-     :count (cpp/eanim.get_mesh_count meshes)}))
+     :count (cpp/.size (cpp/* meshes))}))
 
 ;; Get mesh info
 (defn get-mesh-info
   "Gets information about a specific mesh"
   [{:keys [meshes mesh-index]}]
   (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
-        idx (cpp/int mesh-index)]
-    {:vertex-count (cpp/eanim.get_mesh_vertex_count meshes-ptr idx)
-     :index-count (cpp/eanim.get_mesh_index_count meshes-ptr idx)
-     :part-count (cpp/eanim.get_mesh_part_count meshes-ptr idx)
-     :joint-remap-count (cpp/eanim.get_mesh_joint_remap_count meshes-ptr idx)
-     :highest-joint (cpp/eanim.get_mesh_highest_joint meshes-ptr idx)
-     :skinned? (cpp/eanim.is_mesh_skinned meshes-ptr idx)}))
+        mesh (cpp/aget (cpp/* meshes-ptr) (cpp/int mesh-index))]
+    {:vertex-count (cpp/.vertex_count mesh)
+     :index-count (cpp/.triangle_index_count mesh)
+     :part-count (cpp/.size (cpp/.-parts mesh))
+     :joint-remap-count (cpp/.size (cpp/.-joint_remaps mesh))
+     :highest-joint (cpp/.highest_joint_index mesh)
+     :skinned? (cpp/.skinned mesh)}))
 
 ;; Get mesh part info
 (defn get-part-info
   "Gets information about a specific mesh part"
   [{:keys [meshes mesh-index part-index]}]
   (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
-        mi (cpp/int mesh-index)
-        pi (cpp/int part-index)]
-    {:vertex-count (cpp/eanim.get_part_vertex_count meshes-ptr mi pi)
-     :influences-count (cpp/eanim.get_part_influences_count meshes-ptr mi pi)}))
+        mesh (cpp/aget (cpp/* meshes-ptr) (cpp/int mesh-index))
+        part (cpp/aget (cpp/.-parts mesh) (cpp/int part-index))]
+    {:vertex-count (cpp/.vertex_count part)
+     :influences-count (cpp/.influences_count part)}))
 
 ;; Get mesh indices pointer
 (defn get-mesh-indices
   "Gets pointer to mesh triangle indices (uint16_t)"
   [{:keys [meshes mesh-index]}]
-  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)]
-    (cpp/box (cpp/eanim.get_mesh_indices meshes-ptr (cpp/int mesh-index)))))
+  (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
+        mesh (cpp/aget (cpp/* meshes-ptr) (cpp/int mesh-index))]
+    (cpp/box (cpp/.data (cpp/.-triangle_indices mesh)))))
 
 ;; Get part vertex data pointers
 (defn get-part-vertex-data
   "Gets pointers to all vertex attribute data for a mesh part"
   [{:keys [meshes mesh-index part-index]}]
   (let [meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
-        mi (cpp/int mesh-index)
-        pi (cpp/int part-index)]
-    {:positions (cpp/box (cpp/eanim.get_part_positions meshes-ptr mi pi))
-     :normals (cpp/box (cpp/eanim.get_part_normals meshes-ptr mi pi))
-     :uvs (cpp/box (cpp/eanim.get_part_uvs meshes-ptr mi pi))
-     :joint-indices (cpp/box (cpp/eanim.get_part_joint_indices meshes-ptr mi pi))
-     :joint-weights (cpp/box (cpp/eanim.get_part_joint_weights meshes-ptr mi pi))}))
+        mesh (cpp/aget (cpp/* meshes-ptr) (cpp/int mesh-index))
+        part (cpp/aget (cpp/.-parts mesh) (cpp/int part-index))]
+    {:positions (cpp/box (cpp/.data (cpp/.-positions part)))
+     :normals (cpp/box (cpp/.data (cpp/.-normals part)))
+     :uvs (cpp/box (cpp/.data (cpp/.-uvs part)))
+     :joint-indices (cpp/box (cpp/.data (cpp/.-joint_indices part)))
+     :joint-weights (cpp/box (cpp/.data (cpp/.-joint_weights part)))}))
 
 ;; Compute skinning matrices
 (defn compute-skinning-matrices
@@ -729,7 +508,8 @@
   [{:keys [context meshes mesh-index]}]
   (let [ctx (cpp/unbox (:* AnimationContext) context)
         meshes-ptr (cpp/unbox (:* (ozz.vector ozz.sample.Mesh)) meshes)
-        joint-count (cpp/eanim.get_mesh_joint_remap_count meshes-ptr (cpp/int mesh-index))
+        mesh (cpp/aget (cpp/* meshes-ptr) (cpp/int mesh-index))
+        joint-count (cpp/.size (cpp/.-joint_remaps mesh))
         ;; Allocate buffer on heap so it survives function return
         buffer (cpp/new (std.vector float))
         _ (do (cpp/.resize buffer (cpp/* joint-count (cpp/int 16))) nil)
@@ -744,14 +524,16 @@
    Returns: {:num-joints n :joint-names [...]}"
   [{:keys [context]}]
   (let [ctx (cpp/unbox (:* AnimationContext) context)
-        num-joints-cpp (cpp/eanim.get_context_num_joints ctx)
+        skel (cpp/* (cpp/.-skeleton ctx))
+        num-joints-cpp (cpp/.num_joints skel)
         num-joints (int num-joints-cpp)]
     (when (> num-joints 0)
-      (let [names (loop [i 0 acc []]
+      (let [joint-names (cpp/.joint_names skel)
+            names (loop [i 0 acc []]
                     (if (>= i num-joints)
                       acc
                       (recur (inc i)
-                             (conj acc (str (cpp/eanim.get_context_joint_name ctx (cpp/int i)))))))]
+                             (conj acc (str (cpp/aget joint-names (cpp/int i)))))))]
         {:num-joints num-joints
          :joint-names names}))))
 

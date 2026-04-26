@@ -132,8 +132,9 @@
         vertex-count (cpp/emesh.build_skinned_vertices meshes-ptr mi vertices)
 
         ;; Get index data
-        index-count (cpp/eanim.get_mesh_index_count meshes-ptr mi)
-        indices-ptr (cpp/eanim.get_mesh_indices meshes-ptr mi)
+        mesh (cpp/aget (cpp/* meshes-ptr) mi)
+        index-count (cpp/.triangle_index_count mesh)
+        indices-ptr (cpp/.data (cpp/.-triangle_indices mesh))
 
         ;; Create VAO
         vao (shaders/create-vertex-array-object)
