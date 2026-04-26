@@ -4,27 +4,23 @@
             [examples.strafe-designer.brush.pieces :as pieces]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
-            [engine.gfx3d.collision.interface :as collision]
             [engine.gl.constants :as gl]
-            [examples.demo.camera :as camera]))
+            [examples.demo.camera :as camera]
+            [examples.demo.shared :as shared]
+            [examples.demo.client :as client]))
 
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
 #include <cstdio>")
 (cpp/raw "#include \"examples/strafe_designer_impl.h\"")
+(cpp/raw "#include \"examples/client_impl.h\"")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
 (cpp/raw "#include <math.h>")
+(cpp/raw "#include \"gl_utils.h\"")
 
-;; Physics constants (same as demo for strafe testing)
-(def GRAVITY 25.6)
-(def JUMP_VELOCITY 7.2)
-(def GROUND_ACCEL 10.0)
-(def AIR_ACCEL 1.0)
-(def FRICTION 6.0)
-(def STOP_SPEED 2.5)
-(def MAX_SPEED 8.0)
+
 
 ;; ============================================================================
 ;; Test course definition
@@ -96,6 +92,8 @@
       (assoc :right true)
       (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
       (assoc :jump-held true)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_LEFT_CONTROL) gl/GLFW_PRESS)
+      (assoc :crouch true)
       (= (cpp/glfwGetKey window #cpp GLFW_KEY_TAB) gl/GLFW_PRESS)
       (assoc :toggle-camera true))))
 
@@ -143,89 +141,6 @@
     (cpp/= delta-time (cpp/- current-frame last-frame))
     (cpp/= last-frame current-frame)))
 
-;; ============================================================================
-;; Physics (simplified from demo)
-;; ============================================================================
-
-(defn pm-friction [vx vz friction stopspeed dt]
-  (let [vx-f (cpp/float vx) vz-f (cpp/float vz)
-        speed (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f))))]
-    (if (cpp/< speed (cpp/float 0.1))
-      [(cpp/float 0.0) (cpp/float 0.0)]
-      (let [control (if (cpp/< speed (cpp/float stopspeed)) (cpp/float stopspeed) speed)
-            drop (cpp/* control (cpp/* (cpp/float friction) (cpp/float dt)))
-            newspeed (cpp/- speed drop)
-            newspeed (if (cpp/< newspeed (cpp/float 0.0)) (cpp/float 0.0) newspeed)
-            scale (cpp// newspeed speed)]
-        [(cpp/* vx-f scale) (cpp/* vz-f scale)]))))
-
-(defn pm-accelerate [vx vz dx dz wishspeed accel dt]
-  (let [dx-f (cpp/float dx) dz-f (cpp/float dz)
-        vx-f (cpp/float vx) vz-f (cpp/float vz)
-        wish-len (cpp/float (cpp/sqrt (cpp/+ (cpp/* dx-f dx-f) (cpp/* dz-f dz-f))))]
-    (if (cpp/< wish-len (cpp/float 0.001))
-      [vx-f vz-f]
-      (let [dx-norm (cpp// dx-f wish-len) dz-norm (cpp// dz-f wish-len)
-            currentspeed (cpp/+ (cpp/* vx-f dx-norm) (cpp/* vz-f dz-norm))
-            addspeed (cpp/- (cpp/float wishspeed) currentspeed)]
-        (if (cpp/<= addspeed (cpp/float 0.0))
-          [vx-f vz-f]
-          (let [accelspeed (cpp/* (cpp/float accel) (cpp/* (cpp/float dt) (cpp/float wishspeed)))
-                accelspeed (if (cpp/> accelspeed addspeed) addspeed accelspeed)]
-            [(cpp/+ vx-f (cpp/* accelspeed dx-norm))
-             (cpp/+ vz-f (cpp/* accelspeed dz-norm))]))))))
-
-(defn update-physics
-  [{:keys [position velocity grounded level-collision]} input]
-  (let [{:keys [forward backward left right jump-held yaw delta-time]} input
-        [px py pz] position
-        [vx vy vz] velocity
-
-        ground-y (when level-collision
-                   (collision/raycast-ground level-collision [px py pz]))
-        is-grounded (and ground-y (<= py (+ ground-y 0.2)))
-
-        yaw-radians (cpp/glm.radians (cpp/float yaw))
-        front-x (cpp/cos yaw-radians)
-        front-z (cpp/sin yaw-radians)
-        right-x (cpp/sin yaw-radians)
-        right-z (cpp/- (cpp/float 0.0) (cpp/cos yaw-radians))
-
-        wish-x (cond-> 0.0
-                 forward (+ front-x)
-                 backward (- front-x)
-                 left (+ right-x)
-                 right (- right-x))
-        wish-z (cond-> 0.0
-                 forward (+ front-z)
-                 backward (- front-z)
-                 left (+ right-z)
-                 right (- right-z))
-
-        [vx vz] (if is-grounded
-                  (pm-friction vx vz FRICTION STOP_SPEED delta-time)
-                  [vx vz])
-        accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
-        [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
-
-        [vy is-grounded] (if (and is-grounded jump-held)
-                           [JUMP_VELOCITY false]
-                           [vy is-grounded])
-        vy (if (not is-grounded) (- vy (* GRAVITY delta-time)) vy)
-
-        new-px (+ px (* vx delta-time))
-        new-py (+ py (* vy delta-time))
-        new-pz (+ pz (* vz delta-time))
-
-        ground-y-new (when level-collision
-                       (collision/raycast-ground level-collision [new-px new-py new-pz]))
-        [new-py vy is-grounded] (if (and ground-y-new (< new-py ground-y-new))
-                                  [ground-y-new 0.0 true]
-                                  [new-py vy is-grounded])]
-
-    {:position [new-px new-py new-pz]
-     :velocity [vx vy vz]
-     :grounded is-grounded}))
 
 ;; ============================================================================
 ;; Rendering
@@ -249,7 +164,8 @@
      (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))))
 
 (defn draw-3D
-  [{:keys [shader level-draw camera-state player-state camera-mode] :as context}]
+  [{:keys [shader line-shader line-vao line-vbo level-draw camera-state
+           player-state player-anim camera-mode] :as context}]
   (let [_ (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
         _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
         _ (cpp/wrap_glUseProgram shader)
@@ -282,7 +198,40 @@
      (cpp/glm.value_ptr (cpp/identity_matrix)))
 
     ;; Draw the level
-    (level-draw {:shader shader :model/local-matrix-uniform "local"})))
+    (level-draw {:shader shader :model/local-matrix-uniform "local"})
+
+    ;; Draw player skeleton
+    (when (= @camera-mode :fps)
+      (let [[px py pz] (:position @player-state)
+            yaw (:yaw @player-state 0.0)
+            input (:last-input @player-state {})]
+        ;; Switch to line shader
+        (cpp/wrap_glUseProgram line-shader)
+        (cpp/wrap_glUniformMatrix4fv
+         (cpp/wrap_glGetUniformLocation line-shader "projection")
+         (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
+        ;; Reuse view matrix from camera
+        (let [cam @camera-state]
+          (let [view-m (cpp/glm.lookAt
+                        (cpp/glm.vec3 (cpp/float (:cur-loc-x cam))
+                                      (cpp/float (:cur-loc-y cam))
+                                      (cpp/float (:cur-loc-z cam)))
+                        (cpp/glm.vec3 (cpp/float (:cur-target-x cam))
+                                      (cpp/float (:cur-target-y cam))
+                                      (cpp/float (:cur-target-z cam)))
+                        (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))]
+            (cpp/wrap_glUniformMatrix4fv
+             (cpp/wrap_glGetUniformLocation line-shader "view")
+             (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))))
+        ;; Line style
+        (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
+        (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
+        (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)
+        ;; Enable blending for soft edges
+        (cpp/wrap_glEnable gl/GL_BLEND)
+        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+        (client/render-skeleton-entity line-shader line-vao line-vbo @player-anim [px py pz] yaw input)
+        (cpp/wrap_glDisable gl/GL_BLEND)))))
 
 ;; ============================================================================
 ;; Main loop
@@ -310,18 +259,31 @@
                                 gl/GLFW_CURSOR gl/GLFW_CURSOR_NORMAL)))
       (swap! player-state assoc :tab-was-pressed (:toggle-camera input))
 
-      ;; FPS mode: update cursor and physics
+      ;; FPS mode: update cursor, physics, animation
       (when (= @camera-mode :fps)
         (update-cursor context)
         (let [pitch (float (math/*-> :float (:cursor/pitch context)))
-              yaw (float (math/*-> :float (:cursor/yaw context)))]
+              yaw (float (math/*-> :float (:cursor/yaw context)))
+              phys-input (assoc input :yaw yaw :pitch pitch)]
           (swap! player-state
                  (fn [state]
                    (merge state
-                          (update-physics
-                           (assoc state :level-collision level-collision)
-                           (assoc input :yaw yaw :pitch pitch :delta-time dt)))))
-          (swap! player-state assoc :yaw yaw :pitch pitch)))
+                          (shared/simulate-physics state phys-input dt level-collision)
+                          {:last-input phys-input})))
+          ;; Update animation with full input (speed, height, vy, grounded)
+          (let [state @player-state
+                [vx vy vz] (:velocity state [0 0 0])
+                [_ py _] (:position state [0 0 0])
+                grounded (:grounded? state false)
+                speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                       (cpp/* (cpp/float vz) (cpp/float vz))))
+                anim-input (assoc phys-input
+                                  :grounded grounded
+                                  :speed (double speed)
+                                  :height (double py)
+                                  :vy (double vy))]
+            (swap! (:player-anim context)
+                   (fn [ad] (client/update-player-animation ad anim-input grounded dt))))))
 
       ;; Render
       (draw-3D context)
@@ -349,6 +311,15 @@
         _ (cpp/wrap_glUniform1i
            (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
+        ;; Line shader for skeleton rendering
+        line-shader (shaders/load-shader-program-with-geometry
+                     {:vertex-shader-path "shaders/line_vertex.glsl"
+                      :geometry-shader-path "shaders/line_geometry.glsl"
+                      :fragment-shader-path "shaders/line_fragment.glsl"})
+        line-vbo-ptr (cpp/new cpp/GLuint)
+        line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
+        line-vbo (cpp/* line-vbo-ptr)
+
         ;; Load level from piece definitions
         loaded (level/load-course test-course)
         _ (println "Level loaded:" (if (:collision loaded) "with collision" "no collision"))
@@ -356,10 +327,16 @@
         ;; Export .map file
         _ (map-format/save-map test-course "output.map")
 
+        ;; Initialize player animation
+        player-anim-data (client/init-player-animation)
+        player-anim (atom player-anim-data)
+
         ;; Player state
         player-state (atom {:position [10.0 4.0 10.0]
                             :velocity [0.0 0.0 0.0]
-                            :grounded false
+                            :grounded? false
+                            :jump-z-start nil
+                            :backflip-jump? false
                             :yaw -90.0
                             :pitch 0.0})
 
@@ -369,9 +346,13 @@
 
         context {:window window
                  :shader shader
+                 :line-shader line-shader
+                 :line-vao line-vao
+                 :line-vbo line-vbo
                  :level-draw (:draw loaded)
                  :level-collision (:collision loaded)
                  :player-state player-state
+                 :player-anim player-anim
                  :camera-mode camera-mode
                  :camera-state camera-state
                  :delta-time (math/gimmie :boxed :float 0.0)
