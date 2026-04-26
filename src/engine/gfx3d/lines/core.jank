@@ -29,20 +29,6 @@
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
 
-  // Bind line VAO
-  inline void bind_line_vao(unsigned int vao) {
-    glBindVertexArray(vao);
-  }
-
-  // Unbind VAO
-  inline void unbind_line_vao() {
-    glBindVertexArray(0);
-  }
-
-  // Draw lines
-  inline void draw_lines(int line_count) {
-    glDrawArrays(GL_LINES, 0, line_count * 2);
-  }
   } // namespace elines
 ")
 
@@ -69,14 +55,14 @@
 (defn bind-line-vao
   "Binds the line VAO for rendering."
   [{:keys [vao]}]
-  (cpp/elines.bind_line_vao vao))
+  (cpp/wrap_glBindVertexArray vao))
 
 (defn unbind-line-vao
   "Unbinds the line VAO."
   []
-  (cpp/elines.unbind_line_vao))
+  (cpp/wrap_glBindVertexArray (cpp/int 0)))
 
 (defn draw-lines
   "Draws lines. line-count is the number of lines (each line = 2 vertices)."
   [line-count]
-  (cpp/elines.draw_lines (cpp/int line-count)))
+  (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2))))

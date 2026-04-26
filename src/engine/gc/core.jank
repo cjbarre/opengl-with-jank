@@ -4,30 +4,7 @@
    Provides functions to control GC behavior for performance-critical code
    like game render loops.")
 
-(cpp/raw
- "#include <gc/gc.h>
-
-  namespace egc {
-  // Wrapper to get heap size as size_t
-  inline size_t gc_get_heap_size() {
-    return GC_get_heap_size();
-  }
-
-  // Wrapper to get free bytes as size_t
-  inline size_t gc_get_free_bytes() {
-    return GC_get_free_bytes();
-  }
-
-  // Wrapper to get memory use as size_t
-  inline size_t gc_get_memory_use() {
-    return GC_get_memory_use();
-  }
-
-  // Wrapper to get collection count
-  inline size_t gc_get_gc_no() {
-    return GC_get_gc_no();
-  }
-  }")
+(cpp/raw "#include <gc/gc.h>")
 
 ;; =============================================================================
 ;; Core GC Control
@@ -80,22 +57,22 @@
 (defn heap-size
   "Returns total heap size in bytes."
   []
-  (cpp/egc.gc_get_heap_size))
+  (cpp/GC_get_heap_size))
 
 (defn free-bytes
   "Returns free bytes in the heap."
   []
-  (cpp/egc.gc_get_free_bytes))
+  (cpp/GC_get_free_bytes))
 
 (defn memory-use
   "Returns memory in use (heap-size - free-bytes)."
   []
-  (cpp/egc.gc_get_memory_use))
+  (cpp/GC_get_memory_use))
 
 (defn collection-count
   "Returns number of collections that have occurred."
   []
-  (cpp/egc.gc_get_gc_no))
+  (cpp/GC_get_gc_no))
 
 (defn stats
   "Returns a map of GC statistics."

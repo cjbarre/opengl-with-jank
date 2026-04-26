@@ -1,150 +1,75 @@
 (ns engine.gl.constants
-  "Centralized OpenGL and GLFW constants for AOT compilation compatibility.
-   Using inline functions instead of cpp/value to avoid symbol redefinition.")
+  "Centralized OpenGL and GLFW constants.")
 
-(cpp/raw
- "#include \"gl_wrappers.h\"
-  #include <GLFW/glfw3.h>
-
-  namespace egl {
-  // OpenGL constants as inline functions
-  inline int gl_array_buffer() { return GL_ARRAY_BUFFER; }
-  inline int gl_element_array_buffer() { return GL_ELEMENT_ARRAY_BUFFER; }
-  inline int gl_static_draw() { return GL_STATIC_DRAW; }
-  inline int gl_dynamic_draw() { return GL_DYNAMIC_DRAW; }
-  inline int gl_float() { return GL_FLOAT; }
-  inline int gl_false() { return GL_FALSE; }
-  inline int gl_triangles() { return GL_TRIANGLES; }
-  inline int gl_unsigned_byte() { return GL_UNSIGNED_BYTE; }
-  inline int gl_unsigned_short() { return GL_UNSIGNED_SHORT; }
-  inline int gl_texture_2d() { return GL_TEXTURE_2D; }
-  inline int gl_texture_wrap_s() { return GL_TEXTURE_WRAP_S; }
-  inline int gl_texture_wrap_t() { return GL_TEXTURE_WRAP_T; }
-  inline int gl_texture_min_filter() { return GL_TEXTURE_MIN_FILTER; }
-  inline int gl_texture_mag_filter() { return GL_TEXTURE_MAG_FILTER; }
-  inline int gl_repeat() { return GL_REPEAT; }
-  inline int gl_linear() { return GL_LINEAR; }
-  inline int gl_rgba() { return GL_RGBA; }
-  inline int gl_rgb() { return GL_RGB; }
-  inline int gl_fragment_shader() { return GL_FRAGMENT_SHADER; }
-  inline int gl_vertex_shader() { return GL_VERTEX_SHADER; }
-  inline int gl_compile_status() { return GL_COMPILE_STATUS; }
-  inline int gl_link_status() { return GL_LINK_STATUS; }
-  inline int gl_true() { return GL_TRUE; }
-  inline int gl_depth_test() { return GL_DEPTH_TEST; }
-  inline int gl_color_buffer_bit() { return GL_COLOR_BUFFER_BIT; }
-  inline int gl_depth_buffer_bit() { return GL_DEPTH_BUFFER_BIT; }
-  inline int gl_color_depth_buffer_bits() { return GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT; }
-  inline int gl_cull_face() { return GL_CULL_FACE; }
-  inline int gl_texture0() { return GL_TEXTURE0; }
-  inline int gl_unsigned_int() { return GL_UNSIGNED_INT; }
-  inline int gl_geometry_shader() { return GL_GEOMETRY_SHADER; }
-  inline int gl_blend() { return GL_BLEND; }
-  inline int gl_src_alpha() { return GL_SRC_ALPHA; }
-  inline int gl_one_minus_src_alpha() { return GL_ONE_MINUS_SRC_ALPHA; }
-  inline int gl_red() { return GL_RED; }
-
-  // GLFW constants
-  inline int glfw_press() { return GLFW_PRESS; }
-  inline int glfw_key_escape() { return GLFW_KEY_ESCAPE; }
-  inline int glfw_key_w() { return GLFW_KEY_W; }
-  inline int glfw_key_s() { return GLFW_KEY_S; }
-  inline int glfw_key_a() { return GLFW_KEY_A; }
-  inline int glfw_key_d() { return GLFW_KEY_D; }
-  inline int glfw_key_f3() { return GLFW_KEY_F3; }
-  inline int glfw_key_f4() { return GLFW_KEY_F4; }
-  inline int glfw_key_space() { return GLFW_KEY_SPACE; }
-  inline int glfw_key_left_control() { return GLFW_KEY_LEFT_CONTROL; }
-  inline int glfw_context_version_major() { return GLFW_CONTEXT_VERSION_MAJOR; }
-  inline int glfw_context_version_minor() { return GLFW_CONTEXT_VERSION_MINOR; }
-  inline int glfw_opengl_profile() { return GLFW_OPENGL_PROFILE; }
-  inline int glfw_opengl_core_profile() { return GLFW_OPENGL_CORE_PROFILE; }
-  inline int glfw_opengl_forward_compat() { return GLFW_OPENGL_FORWARD_COMPAT; }
-  inline int glfw_cursor() { return GLFW_CURSOR; }
-  inline int glfw_cursor_normal() { return GLFW_CURSOR_NORMAL; }
-  inline int glfw_cursor_disabled() { return GLFW_CURSOR_DISABLED; }
-  inline int glfw_key_left() { return GLFW_KEY_LEFT; }
-  inline int glfw_key_right() { return GLFW_KEY_RIGHT; }
-  inline int glfw_key_1() { return GLFW_KEY_1; }
-  inline int glfw_key_2() { return GLFW_KEY_2; }
-  inline int glfw_key_3() { return GLFW_KEY_3; }
-  inline int glfw_key_4() { return GLFW_KEY_4; }
-  inline int glfw_key_5() { return GLFW_KEY_5; }
-  inline int glfw_key_6() { return GLFW_KEY_6; }
-  inline int glfw_key_7() { return GLFW_KEY_7; }
-  inline int glfw_key_8() { return GLFW_KEY_8; }
-  inline int glfw_key_9() { return GLFW_KEY_9; }
-  inline int glfw_key_0() { return GLFW_KEY_0; }
-  inline int gl_lines() { return GL_LINES; }
-  }
-  ")
+(cpp/raw "#include \"gl_wrappers.h\"
+          #include <GLFW/glfw3.h>")
 
 ;; OpenGL constants
-(def GL_ARRAY_BUFFER (cpp/egl.gl_array_buffer))
-(def GL_ELEMENT_ARRAY_BUFFER (cpp/egl.gl_element_array_buffer))
-(def GL_STATIC_DRAW (cpp/egl.gl_static_draw))
-(def GL_DYNAMIC_DRAW (cpp/egl.gl_dynamic_draw))
-(def GL_FLOAT (cpp/egl.gl_float))
-(def GL_FALSE (cpp/egl.gl_false))
-(def GL_TRIANGLES (cpp/egl.gl_triangles))
-(def GL_UNSIGNED_BYTE (cpp/egl.gl_unsigned_byte))
-(def GL_UNSIGNED_SHORT (cpp/egl.gl_unsigned_short))
-(def GL_TEXTURE_2D (cpp/egl.gl_texture_2d))
-(def GL_TEXTURE_WRAP_S (cpp/egl.gl_texture_wrap_s))
-(def GL_TEXTURE_WRAP_T (cpp/egl.gl_texture_wrap_t))
-(def GL_TEXTURE_MIN_FILTER (cpp/egl.gl_texture_min_filter))
-(def GL_TEXTURE_MAG_FILTER (cpp/egl.gl_texture_mag_filter))
-(def GL_REPEAT (cpp/egl.gl_repeat))
-(def GL_LINEAR (cpp/egl.gl_linear))
-(def GL_RGBA (cpp/egl.gl_rgba))
-(def GL_RGB (cpp/egl.gl_rgb))
-(def GL_FRAGMENT_SHADER (cpp/egl.gl_fragment_shader))
-(def GL_VERTEX_SHADER (cpp/egl.gl_vertex_shader))
-(def GL_COMPILE_STATUS (cpp/egl.gl_compile_status))
-(def GL_LINK_STATUS (cpp/egl.gl_link_status))
-(def GL_TRUE (cpp/egl.gl_true))
-(def GL_DEPTH_TEST (cpp/egl.gl_depth_test))
-(def GL_COLOR_BUFFER_BIT (cpp/egl.gl_color_buffer_bit))
-(def GL_DEPTH_BUFFER_BIT (cpp/egl.gl_depth_buffer_bit))
-(def GL_COLOR_DEPTH_BUFFER_BITS (cpp/egl.gl_color_depth_buffer_bits))
-(def GL_CULL_FACE (cpp/egl.gl_cull_face))
-(def GL_TEXTURE0 (cpp/egl.gl_texture0))
-(def GL_UNSIGNED_INT (cpp/egl.gl_unsigned_int))
-(def GL_GEOMETRY_SHADER (cpp/egl.gl_geometry_shader))
-(def GL_BLEND (cpp/egl.gl_blend))
-(def GL_SRC_ALPHA (cpp/egl.gl_src_alpha))
-(def GL_ONE_MINUS_SRC_ALPHA (cpp/egl.gl_one_minus_src_alpha))
-(def GL_RED (cpp/egl.gl_red))
+(def GL_ARRAY_BUFFER #cpp GL_ARRAY_BUFFER)
+(def GL_ELEMENT_ARRAY_BUFFER #cpp GL_ELEMENT_ARRAY_BUFFER)
+(def GL_STATIC_DRAW #cpp GL_STATIC_DRAW)
+(def GL_DYNAMIC_DRAW #cpp GL_DYNAMIC_DRAW)
+(def GL_FLOAT #cpp GL_FLOAT)
+(def GL_FALSE #cpp GL_FALSE)
+(def GL_TRIANGLES #cpp GL_TRIANGLES)
+(def GL_UNSIGNED_BYTE #cpp GL_UNSIGNED_BYTE)
+(def GL_UNSIGNED_SHORT #cpp GL_UNSIGNED_SHORT)
+(def GL_TEXTURE_2D #cpp GL_TEXTURE_2D)
+(def GL_TEXTURE_WRAP_S #cpp GL_TEXTURE_WRAP_S)
+(def GL_TEXTURE_WRAP_T #cpp GL_TEXTURE_WRAP_T)
+(def GL_TEXTURE_MIN_FILTER #cpp GL_TEXTURE_MIN_FILTER)
+(def GL_TEXTURE_MAG_FILTER #cpp GL_TEXTURE_MAG_FILTER)
+(def GL_REPEAT #cpp GL_REPEAT)
+(def GL_LINEAR #cpp GL_LINEAR)
+(def GL_RGBA #cpp GL_RGBA)
+(def GL_RGB #cpp GL_RGB)
+(def GL_FRAGMENT_SHADER #cpp GL_FRAGMENT_SHADER)
+(def GL_VERTEX_SHADER #cpp GL_VERTEX_SHADER)
+(def GL_COMPILE_STATUS #cpp GL_COMPILE_STATUS)
+(def GL_LINK_STATUS #cpp GL_LINK_STATUS)
+(def GL_TRUE #cpp GL_TRUE)
+(def GL_DEPTH_TEST #cpp GL_DEPTH_TEST)
+(def GL_COLOR_BUFFER_BIT #cpp GL_COLOR_BUFFER_BIT)
+(def GL_DEPTH_BUFFER_BIT #cpp GL_DEPTH_BUFFER_BIT)
+(def GL_COLOR_DEPTH_BUFFER_BITS (cpp/| #cpp GL_COLOR_BUFFER_BIT #cpp GL_DEPTH_BUFFER_BIT))
+(def GL_CULL_FACE #cpp GL_CULL_FACE)
+(def GL_TEXTURE0 #cpp GL_TEXTURE0)
+(def GL_UNSIGNED_INT #cpp GL_UNSIGNED_INT)
+(def GL_GEOMETRY_SHADER #cpp GL_GEOMETRY_SHADER)
+(def GL_BLEND #cpp GL_BLEND)
+(def GL_SRC_ALPHA #cpp GL_SRC_ALPHA)
+(def GL_ONE_MINUS_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+(def GL_RED #cpp GL_RED)
+(def GL_LINES #cpp GL_LINES)
 
 ;; GLFW constants
-(def GLFW_PRESS (cpp/egl.glfw_press))
-(def GLFW_KEY_ESCAPE (cpp/egl.glfw_key_escape))
-(def GLFW_KEY_W (cpp/egl.glfw_key_w))
-(def GLFW_KEY_S (cpp/egl.glfw_key_s))
-(def GLFW_KEY_A (cpp/egl.glfw_key_a))
-(def GLFW_KEY_D (cpp/egl.glfw_key_d))
-(def GLFW_KEY_F3 (cpp/egl.glfw_key_f3))
-(def GLFW_KEY_F4 (cpp/egl.glfw_key_f4))
-(def GLFW_KEY_SPACE (cpp/egl.glfw_key_space))
-(def GLFW_KEY_LEFT_CONTROL (cpp/egl.glfw_key_left_control))
-(def GLFW_CONTEXT_VERSION_MAJOR (cpp/egl.glfw_context_version_major))
-(def GLFW_CONTEXT_VERSION_MINOR (cpp/egl.glfw_context_version_minor))
-(def GLFW_OPENGL_PROFILE (cpp/egl.glfw_opengl_profile))
-(def GLFW_OPENGL_CORE_PROFILE (cpp/egl.glfw_opengl_core_profile))
-(def GLFW_OPENGL_FORWARD_COMPAT (cpp/egl.glfw_opengl_forward_compat))
-(def GLFW_CURSOR (cpp/egl.glfw_cursor))
-(def GLFW_CURSOR_NORMAL (cpp/egl.glfw_cursor_normal))
-(def GLFW_CURSOR_DISABLED (cpp/egl.glfw_cursor_disabled))
-(def GLFW_KEY_LEFT (cpp/egl.glfw_key_left))
-(def GLFW_KEY_RIGHT (cpp/egl.glfw_key_right))
-(def GLFW_KEY_1 (cpp/egl.glfw_key_1))
-(def GLFW_KEY_2 (cpp/egl.glfw_key_2))
-(def GLFW_KEY_3 (cpp/egl.glfw_key_3))
-(def GLFW_KEY_4 (cpp/egl.glfw_key_4))
-(def GLFW_KEY_5 (cpp/egl.glfw_key_5))
-(def GLFW_KEY_6 (cpp/egl.glfw_key_6))
-(def GLFW_KEY_7 (cpp/egl.glfw_key_7))
-(def GLFW_KEY_8 (cpp/egl.glfw_key_8))
-(def GLFW_KEY_9 (cpp/egl.glfw_key_9))
-(def GLFW_KEY_0 (cpp/egl.glfw_key_0))
-(def GL_LINES (cpp/egl.gl_lines))
+(def GLFW_PRESS #cpp GLFW_PRESS)
+(def GLFW_KEY_ESCAPE #cpp GLFW_KEY_ESCAPE)
+(def GLFW_KEY_W #cpp GLFW_KEY_W)
+(def GLFW_KEY_S #cpp GLFW_KEY_S)
+(def GLFW_KEY_A #cpp GLFW_KEY_A)
+(def GLFW_KEY_D #cpp GLFW_KEY_D)
+(def GLFW_KEY_F3 #cpp GLFW_KEY_F3)
+(def GLFW_KEY_F4 #cpp GLFW_KEY_F4)
+(def GLFW_KEY_SPACE #cpp GLFW_KEY_SPACE)
+(def GLFW_KEY_LEFT_CONTROL #cpp GLFW_KEY_LEFT_CONTROL)
+(def GLFW_CONTEXT_VERSION_MAJOR #cpp GLFW_CONTEXT_VERSION_MAJOR)
+(def GLFW_CONTEXT_VERSION_MINOR #cpp GLFW_CONTEXT_VERSION_MINOR)
+(def GLFW_OPENGL_PROFILE #cpp GLFW_OPENGL_PROFILE)
+(def GLFW_OPENGL_CORE_PROFILE #cpp GLFW_OPENGL_CORE_PROFILE)
+(def GLFW_OPENGL_FORWARD_COMPAT #cpp GLFW_OPENGL_FORWARD_COMPAT)
+(def GLFW_CURSOR #cpp GLFW_CURSOR)
+(def GLFW_CURSOR_NORMAL #cpp GLFW_CURSOR_NORMAL)
+(def GLFW_CURSOR_DISABLED #cpp GLFW_CURSOR_DISABLED)
+(def GLFW_KEY_LEFT #cpp GLFW_KEY_LEFT)
+(def GLFW_KEY_RIGHT #cpp GLFW_KEY_RIGHT)
+(def GLFW_KEY_1 #cpp GLFW_KEY_1)
+(def GLFW_KEY_2 #cpp GLFW_KEY_2)
+(def GLFW_KEY_3 #cpp GLFW_KEY_3)
+(def GLFW_KEY_4 #cpp GLFW_KEY_4)
+(def GLFW_KEY_5 #cpp GLFW_KEY_5)
+(def GLFW_KEY_6 #cpp GLFW_KEY_6)
+(def GLFW_KEY_7 #cpp GLFW_KEY_7)
+(def GLFW_KEY_8 #cpp GLFW_KEY_8)
+(def GLFW_KEY_9 #cpp GLFW_KEY_9)
+(def GLFW_KEY_0 #cpp GLFW_KEY_0)

@@ -73,9 +73,6 @@ inline bool init_glew() {
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
 
-  inline float* get_vector_data(std::vector<float>* v) {
-    return v->data();
-  }
   } // namespace edemo
 ")
 
@@ -296,7 +293,7 @@ inline bool init_glew() {
       (let [lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
             line-count (int (:line-count lines-data))
             verts-box (:vertices lines-data)
-            verts-ptr (cpp/edemo.get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))]
+            verts-ptr (cpp/.data (cpp/unbox (:* (std.vector float)) verts-box))]
         ;; Update VBO with line vertices
         (cpp/edemo.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
         ;; Draw lines
