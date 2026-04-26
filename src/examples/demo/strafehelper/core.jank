@@ -6,7 +6,8 @@
 (cpp/raw
  "#include <math.h>
 
-  inline float normalize_angle_cpp(float a) {
+  namespace strafe {
+  inline float normalize_angle(float a) {
     const float PI = 3.14159265358979f;
     const float TWO_PI = 6.28318530717959f;
     while (a > PI) a -= TWO_PI;
@@ -16,7 +17,8 @@
 
   inline float deg_to_rad(float deg) {
     return deg * 0.0174532925199433f; // PI / 180
-  }")
+  }
+  } // namespace strafe")
 
 ;; Math constants
 (def PI 3.14159)
@@ -28,7 +30,7 @@
 (defn normalize-angle
   "Normalize angle to -PI to PI range."
   [a]
-  (cpp/normalize_angle_cpp (cpp/float a)))
+  (cpp/strafe.normalize_angle (cpp/float a)))
 
 (defn calc-velocity-angle
   "Calculate the velocity angle in XZ plane (radians)."
@@ -113,7 +115,7 @@
         ;; Calculate angles
         speed (calc-speed vx vz)
         vel-angle (calc-velocity-angle vx vz)
-        yaw-rad (normalize-angle (cpp/deg_to_rad (cpp/float yaw)))
+        yaw-rad (normalize-angle (cpp/strafe.deg_to_rad (cpp/float yaw)))
         optimal-angle (calc-optimal-angle speed max-speed)
         min-accel (calc-min-accel-angle speed max-speed)
 

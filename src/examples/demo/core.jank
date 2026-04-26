@@ -23,6 +23,7 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 
+namespace edemo {
 // GLEW initialization for Linux - must be called after glfwMakeContextCurrent
 inline bool init_glew() {
 #ifndef __APPLE__
@@ -38,7 +39,8 @@ inline bool init_glew() {
 #else
     return true;
 #endif
-}")
+}
+} // namespace edemo")
 
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
@@ -51,7 +53,8 @@ inline bool init_glew() {
 
 ;; Line rendering helpers for skeleton visualization
 (cpp/raw "
-  inline GLuint create_line_vao_demo(GLuint* vbo_out) {
+  namespace edemo {
+  inline GLuint create_line_vao(GLuint* vbo_out) {
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -65,21 +68,24 @@ inline bool init_glew() {
     return vao;
   }
 
-  inline void update_line_vbo_demo(GLuint vbo, float* vertices, int line_count) {
+  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
 
-  inline float* get_vector_data_demo(std::vector<float>* v) {
+  inline float* get_vector_data(std::vector<float>* v) {
     return v->data();
   }
+  } // namespace edemo
 ")
 
 (cpp/raw
- "inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+ "namespace edemo {
+  inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
-    }")
+    }
+  } // namespace edemo")
 
 ;; Using centralized GLFW constants from engine.gl.constants
 
@@ -140,18 +146,20 @@ inline bool init_glew() {
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
     ;; Initialize GLEW for Linux (no-op on macOS)
-    (when (cpp/! (cpp/init_glew))
+    (when (cpp/! (cpp/edemo.init_glew))
       (println "GLEW initialization failed")
       (cpp/exit 1))
     (cpp/glfwSwapInterval 0)  ;; Disable VSync
-    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/edemo.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
 (cpp/raw
- "inline glm::mat4* new_identity_matrix () {
+ "namespace edemo {
+  inline glm::mat4* new_identity_matrix () {
     return new glm::mat4(1.0f);
-  }")
+  }
+  } // namespace edemo")
 
 (defn transform-system
   [{:keys [shader]} {:keys [tags] :as entity}]
@@ -264,7 +272,8 @@ inline bool init_glew() {
           (swap! state assoc-in [:entities id :animation/player-state] new-player-state))))))
 
 (cpp/raw
- "inline void upload_identity_bones(GLint loc, int count) {
+ "namespace edemo {
+  inline void upload_identity_bones(GLint loc, int count) {
     // Upload identity matrices for debugging
     std::vector<float> identity_bones(count * 16);
     for (int i = 0; i < count; ++i) {
@@ -275,7 +284,8 @@ inline bool init_glew() {
       identity_bones[i*16 + 15] = 1.0f;
     }
     glUniformMatrix4fv(loc, count, GL_FALSE, identity_bones.data());
-  }")
+  }
+  } // namespace edemo")
 
 (defn render-skeleton-system
   "Renders an animated entity as line skeleton"
@@ -286,9 +296,9 @@ inline bool init_glew() {
       (let [lines-data (anim/build-skeleton-lines {:context ctx :max-lines 128})
             line-count (int (:line-count lines-data))
             verts-box (:vertices lines-data)
-            verts-ptr (cpp/get_vector_data_demo (cpp/unbox (:* (std.vector float)) verts-box))]
+            verts-ptr (cpp/edemo.get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))]
         ;; Update VBO with line vertices
-        (cpp/update_line_vbo_demo line-vbo verts-ptr (cpp/int line-count))
+        (cpp/edemo.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
         ;; Draw lines
         (cpp/wrap_glBindVertexArray line-vao)
         (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))

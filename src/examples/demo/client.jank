@@ -29,8 +29,9 @@
 #include <GLFW/glfw3.h>
 #include <cstdio>
 
+namespace eclient {
 // GLEW initialization for Linux - must be called after glfwMakeContextCurrent
-inline bool init_glew_client() {
+inline bool init_glew() {
 #ifndef __APPLE__
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
@@ -44,7 +45,8 @@ inline bool init_glew_client() {
 #else
     return true;
 #endif
-}")
+}
+} // namespace eclient")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")
@@ -57,7 +59,8 @@ inline bool init_glew_client() {
 
 ;; Line rendering helpers for skeleton visualization
 (cpp/raw "
-  inline GLuint create_line_vao_client(GLuint* vbo_out) {
+  namespace eclient {
+  inline GLuint create_line_vao(GLuint* vbo_out) {
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -71,19 +74,21 @@ inline bool init_glew_client() {
     return vao;
   }
 
-  inline void update_line_vbo_client(GLuint vbo, float* vertices, int line_count) {
+  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
 
-  inline float* get_vector_data_client(std::vector<float>* v) {
+  inline float* get_vector_data(std::vector<float>* v) {
     return v->data();
   }
+  } // namespace eclient
 ")
 
 ;; C++ helper for identity bones (same as core.jank)
 (cpp/raw
- "inline void client_upload_identity_bones(GLint loc, int count) {
+ "namespace eclient {
+  inline void upload_identity_bones(GLint loc, int count) {
     std::vector<float> identity_bones(count * 16);
     for (int i = 0; i < count; ++i) {
       identity_bones[i*16 + 0] = 1.0f;
@@ -92,13 +97,16 @@ inline bool init_glew_client() {
       identity_bones[i*16 + 15] = 1.0f;
     }
     glUniformMatrix4fv(loc, count, GL_FALSE, identity_bones.data());
-  }")
+  }
+  } // namespace eclient")
 
 (cpp/raw
- "inline void framebuffer_size_callback_client(GLFWwindow* window, int width, int height) {
+ "namespace eclient {
+  inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
-    }")
+    }
+  } // namespace eclient")
 
 ;; =============================================================================
 ;; Constants (GLFW constants from engine.gl.constants)
@@ -241,9 +249,9 @@ inline bool init_glew_client() {
     (let [skeleton-lines (anim/build-skeleton-lines {:context ctx :max-lines 128})
           line-count (int (:line-count skeleton-lines))
           verts-box (:vertices skeleton-lines)
-          verts-ptr (cpp/get_vector_data_client (cpp/unbox (:* (std.vector float)) verts-box))
+          verts-ptr (cpp/eclient.get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))
           ;; Update VBO with line vertices
-          _ (cpp/update_line_vbo_client line-vbo verts-ptr (cpp/int line-count))
+          _ (cpp/eclient.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
           ;; Draw lines
           _ (cpp/wrap_glBindVertexArray line-vao)
           _ (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))
@@ -315,11 +323,11 @@ inline bool init_glew_client() {
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
     ;; Initialize GLEW for Linux (no-op on macOS)
-    (when (cpp/! (cpp/init_glew_client))
+    (when (cpp/! (cpp/eclient.init_glew))
       (println "GLEW initialization failed")
       (cpp/exit 1))
     (cpp/glfwSwapInterval 0)
-    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_client)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/eclient.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
@@ -744,6 +752,7 @@ inline bool init_glew_client() {
   #include <string>
   #include <cstdlib>
 
+  namespace eclient {
   inline std::string parse_host_helper(const char* addr) {
     std::string s(addr);
     if (s.rfind(\"tcp://\", 0) == 0) s = s.substr(6);
@@ -763,17 +772,18 @@ inline bool init_glew_client() {
     }
     return default_port;
   }
+  } // namespace eclient
 ")
 
 (defn parse-host
   "Extract host from address string like 'tcp://host:port' or 'host:port'."
   [addr]
-  (str (cpp/parse_host_helper addr)))
+  (str (cpp/eclient.parse_host_helper addr)))
 
 (defn parse-port
   "Extract port from address string, or return default if not found."
   [addr default-port]
-  (cpp/parse_port_helper addr default-port))
+  (cpp/eclient.parse_port_helper addr default-port))
 
 (defn run-client
   "Run the game client."
@@ -803,7 +813,7 @@ inline bool init_glew_client() {
                        :geometry-shader-path "shaders/line_geometry.glsl"
                        :fragment-shader-path "shaders/line_fragment.glsl"})
          line-vbo-ptr (cpp/new cpp/GLuint)
-         line-vao (cpp/create_line_vao_client line-vbo-ptr)
+         line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
          line-vbo (cpp/* line-vbo-ptr)
 
          text-shader (shaders/load-shader-program

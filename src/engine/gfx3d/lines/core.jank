@@ -7,8 +7,9 @@
 ;; C++ helpers for line VAO/VBO management
 ;; These are necessary because Jank can't auto-cast to GL types from boxed objects
 (cpp/raw "
+  namespace elines {
   // Create line VAO and VBO, returns them via output parameters
-  inline void create_line_vao_helper(int max_lines, unsigned int* vao_out, unsigned int* vbo_out) {
+  inline void create_line_vao(int max_lines, unsigned int* vao_out, unsigned int* vbo_out) {
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -23,25 +24,26 @@
   }
 
   // Update line VBO with vertex data
-  inline void update_line_vbo_helper(unsigned int vbo, float* vertices, int line_count) {
+  inline void update_line_vbo(unsigned int vbo, float* vertices, int line_count) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
 
   // Bind line VAO
-  inline void bind_line_vao_helper(unsigned int vao) {
+  inline void bind_line_vao(unsigned int vao) {
     glBindVertexArray(vao);
   }
 
   // Unbind VAO
-  inline void unbind_line_vao_helper() {
+  inline void unbind_line_vao() {
     glBindVertexArray(0);
   }
 
   // Draw lines
-  inline void draw_lines_helper(int line_count) {
+  inline void draw_lines(int line_count) {
     glDrawArrays(GL_LINES, 0, line_count * 2);
   }
+  } // namespace elines
 ")
 
 (defn create-line-vao
@@ -51,7 +53,7 @@
     :or {max-lines 128}}]
   (let [vao-ptr (cpp/new (:unsigned int))
         vbo-ptr (cpp/new (:unsigned int))
-        _ (cpp/create_line_vao_helper (cpp/int max-lines) vao-ptr vbo-ptr)
+        _ (cpp/elines.create_line_vao (cpp/int max-lines) vao-ptr vbo-ptr)
         vao (cpp/* vao-ptr)
         vbo (cpp/* vbo-ptr)]
     {:vao vao :vbo vbo :max-lines max-lines}))
@@ -62,19 +64,19 @@
    vertices: raw float pointer (from get_vector_data or similar)
    line-count: number of lines (each line = 2 vertices = 6 floats)"
   [{:keys [vbo]} vertices line-count]
-  (cpp/update_line_vbo_helper vbo vertices (cpp/int line-count)))
+  (cpp/elines.update_line_vbo vbo vertices (cpp/int line-count)))
 
 (defn bind-line-vao
   "Binds the line VAO for rendering."
   [{:keys [vao]}]
-  (cpp/bind_line_vao_helper vao))
+  (cpp/elines.bind_line_vao vao))
 
 (defn unbind-line-vao
   "Unbinds the line VAO."
   []
-  (cpp/unbind_line_vao_helper))
+  (cpp/elines.unbind_line_vao))
 
 (defn draw-lines
   "Draws lines. line-count is the number of lines (each line = 2 vertices)."
   [line-count]
-  (cpp/draw_lines_helper (cpp/int line-count)))
+  (cpp/elines.draw_lines (cpp/int line-count)))

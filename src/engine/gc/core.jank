@@ -7,6 +7,7 @@
 (cpp/raw
  "#include <gc/gc.h>
 
+  namespace egc {
   // Wrapper to get heap size as size_t
   inline size_t gc_get_heap_size() {
     return GC_get_heap_size();
@@ -25,6 +26,7 @@
   // Wrapper to get collection count
   inline size_t gc_get_gc_no() {
     return GC_get_gc_no();
+  }
   }")
 
 ;; =============================================================================
@@ -78,22 +80,22 @@
 (defn heap-size
   "Returns total heap size in bytes."
   []
-  (cpp/gc_get_heap_size))
+  (cpp/egc.gc_get_heap_size))
 
 (defn free-bytes
   "Returns free bytes in the heap."
   []
-  (cpp/gc_get_free_bytes))
+  (cpp/egc.gc_get_free_bytes))
 
 (defn memory-use
   "Returns memory in use (heap-size - free-bytes)."
   []
-  (cpp/gc_get_memory_use))
+  (cpp/egc.gc_get_memory_use))
 
 (defn collection-count
   "Returns number of collections that have occurred."
   []
-  (cpp/gc_get_gc_no))
+  (cpp/egc.gc_get_gc_no))
 
 (defn stats
   "Returns a map of GC statistics."

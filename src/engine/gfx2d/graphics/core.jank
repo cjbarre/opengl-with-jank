@@ -27,6 +27,7 @@ inline Graphics2DState*& get_g_gfx2d() {
 }
 #define g_gfx2d (get_g_gfx2d())
 
+namespace egfx2d {
 inline void init_gfx2d_state(GLuint vao, GLuint vbo, GLuint shader) {
     if (g_gfx2d) delete g_gfx2d;
     g_gfx2d = new Graphics2DState();
@@ -36,8 +37,10 @@ inline void init_gfx2d_state(GLuint vao, GLuint vbo, GLuint shader) {
 }
 
 inline size_t get_float_size_2d() { return sizeof(float); }
-#define float_size_2d (get_float_size_2d())
+} // namespace egfx2d
+#define float_size_2d (egfx2d::get_float_size_2d())
 
+namespace egfx2d {
 inline void* voidify_int_2d(int i) {
     return (void*)(intptr_t)i;
 }
@@ -151,6 +154,7 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
     glBufferSubData(GL_ARRAY_BUFFER, 0, vertices.size() * sizeof(float), vertices.data());
     glDrawArrays(GL_TRIANGLES, 0, vertices.size() / 2);
 }
+} // namespace egfx2d
 
 ")
 
@@ -180,7 +184,7 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
                                       gl/GL_FLOAT
                                       gl/GL_FALSE
                                       (cpp/* (cpp/int 2) cpp/float_size_2d)
-                                      (cpp/voidify_int_2d 0))
+                                      (cpp/egfx2d.voidify_int_2d 0))
          _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
 
          ;; Unbind
@@ -188,40 +192,40 @@ inline void render_filled_arc_impl(float cx, float cy, float radius, float start
          _ (cpp/wrap_glBindVertexArray (cpp/int 0))
 
          ;; Store state in C++ struct for reliable access from closures
-         _ (cpp/init_gfx2d_state vao vbo shader)]
+         _ (cpp/egfx2d.init_gfx2d_state vao vbo shader)]
 
         ;; Return map of closures - they use the global C++ state
         {:begin-2d
          (fn [screen-width screen-height]
-           (cpp/begin_2d_impl (cpp/int screen-width) (cpp/int screen-height)))
+           (cpp/egfx2d.begin_2d_impl (cpp/int screen-width) (cpp/int screen-height)))
 
          :end-2d
          (fn []
-           (cpp/end_2d_impl))
+           (cpp/egfx2d.end_2d_impl))
 
          :set-color
          (fn [[r g b a]]
-           (cpp/set_color_impl (cpp/float. r)
+           (cpp/egfx2d.set_color_impl (cpp/float. r)
                                (cpp/float. g)
                                (cpp/float. b)
                                (cpp/float. a)))
 
          :render-line
          (fn [x1 y1 x2 y2 thickness]
-           (cpp/render_line_impl (cpp/float. x1) (cpp/float. y1)
+           (cpp/egfx2d.render_line_impl (cpp/float. x1) (cpp/float. y1)
                                  (cpp/float. x2) (cpp/float. y2)
                                  (cpp/float. thickness)))
 
          :render-arc-outline
          (fn [cx cy radius start-angle end-angle segments thickness]
-           (cpp/render_arc_outline_impl (cpp/float. cx) (cpp/float. cy)
+           (cpp/egfx2d.render_arc_outline_impl (cpp/float. cx) (cpp/float. cy)
                                         (cpp/float. radius)
                                         (cpp/float. start-angle) (cpp/float. end-angle)
                                         (cpp/int segments) (cpp/float. thickness)))
 
          :render-filled-arc
          (fn [cx cy radius start-angle end-angle segments]
-           (cpp/render_filled_arc_impl (cpp/float. cx) (cpp/float. cy)
+           (cpp/egfx2d.render_filled_arc_impl (cpp/float. cx) (cpp/float. cy)
                                        (cpp/float. radius)
                                        (cpp/float. start-angle) (cpp/float. end-angle)
                                        (cpp/int segments)))}))

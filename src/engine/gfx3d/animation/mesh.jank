@@ -21,6 +21,7 @@
     float weights[4];   // 16 bytes, offset 40
   };
 
+  namespace emesh {
   // Build interleaved vertex buffer from ozz mesh parts
   // Returns vertex count, fills output buffer
   inline int build_skinned_vertices(
@@ -96,12 +97,14 @@
     }
     return total_verts;
   }
+  } // namespace emesh
   ")
 
 ;; Using centralized GL constants from engine.gl.constants
 
 (cpp/raw
- "inline void* int_to_ptr(size_t offset) {
+ "namespace emesh {
+  inline void* int_to_ptr(size_t offset) {
     return reinterpret_cast<void*>(offset);
   }
 
@@ -113,6 +116,7 @@
   inline void set_vertex_attrib_i_pointer(GLuint index, GLint size, GLenum type, GLsizei stride, size_t offset) {
     glVertexAttribIPointer(index, size, type, stride, reinterpret_cast<void*>(offset));
   }
+  } // namespace emesh
   ")
 
 (defn create-skinned-vao
@@ -125,11 +129,11 @@
 
         ;; Build interleaved vertex buffer
         vertices (#cpp (std.vector SkinnedVertex))
-        vertex-count (cpp/build_skinned_vertices meshes-ptr mi vertices)
+        vertex-count (cpp/emesh.build_skinned_vertices meshes-ptr mi vertices)
 
         ;; Get index data
-        index-count (cpp/get_mesh_index_count meshes-ptr mi)
-        indices-ptr (cpp/get_mesh_indices_impl meshes-ptr mi)
+        index-count (cpp/eanim.get_mesh_index_count meshes-ptr mi)
+        indices-ptr (cpp/eanim.get_mesh_indices meshes-ptr mi)
 
         ;; Create VAO
         vao (shaders/create-vertex-array-object)
@@ -139,7 +143,7 @@
         vbo (#cpp (:unsigned int))
         _ (cpp/wrap_glGenBuffers (cpp/int 1) (cpp/& vbo))
         _ (cpp/wrap_glBindBuffer gl/GL_ARRAY_BUFFER vbo)
-        vbo-size (cpp/* (cpp/skinned_vertex_size) (cpp/.size vertices))
+        vbo-size (cpp/* (cpp/emesh.skinned_vertex_size) (cpp/.size vertices))
         _ (cpp/wrap_glBufferData gl/GL_ARRAY_BUFFER
                             vbo-size
                             (cpp/cast (:* (:const void)) (cpp/.data vertices))
@@ -156,26 +160,26 @@
                             gl/GL_STATIC_DRAW)
 
         ;; Vertex stride = sizeof(SkinnedVertex) = 48
-        stride (cpp/skinned_vertex_size)
+        stride (cpp/emesh.skinned_vertex_size)
 
         ;; location 0: position (3 floats at offset 0)
-        _ (cpp/wrap_glVertexAttribPointer (cpp/int 0) (cpp/int 3) gl/GL_FLOAT gl/GL_FALSE stride (cpp/int_to_ptr 0))
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 0) (cpp/int 3) gl/GL_FLOAT gl/GL_FALSE stride (cpp/emesh.int_to_ptr 0))
         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 0))
 
         ;; location 1: normal (3 floats at offset 12)
-        _ (cpp/wrap_glVertexAttribPointer (cpp/int 1) (cpp/int 3) gl/GL_FLOAT gl/GL_FALSE stride (cpp/int_to_ptr 12))
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 1) (cpp/int 3) gl/GL_FLOAT gl/GL_FALSE stride (cpp/emesh.int_to_ptr 12))
         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 1))
 
         ;; location 2: texcoord (2 floats at offset 24)
-        _ (cpp/wrap_glVertexAttribPointer (cpp/int 2) (cpp/int 2) gl/GL_FLOAT gl/GL_FALSE stride (cpp/int_to_ptr 24))
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 2) (cpp/int 2) gl/GL_FLOAT gl/GL_FALSE stride (cpp/emesh.int_to_ptr 24))
         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 2))
 
         ;; location 3: joints (4 uint16 at offset 32) - use integer attribute
-        _ (cpp/set_vertex_attrib_i_pointer (cpp/int 3) (cpp/int 4) gl/GL_UNSIGNED_SHORT stride (cpp/int 32))
+        _ (cpp/emesh.set_vertex_attrib_i_pointer (cpp/int 3) (cpp/int 4) gl/GL_UNSIGNED_SHORT stride (cpp/int 32))
         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 3))
 
         ;; location 4: weights (4 floats at offset 40)
-        _ (cpp/wrap_glVertexAttribPointer (cpp/int 4) (cpp/int 4) gl/GL_FLOAT gl/GL_FALSE stride (cpp/int_to_ptr 40))
+        _ (cpp/wrap_glVertexAttribPointer (cpp/int 4) (cpp/int 4) gl/GL_FLOAT gl/GL_FALSE stride (cpp/emesh.int_to_ptr 40))
         _ (cpp/wrap_glEnableVertexAttribArray (cpp/int 4))
 
         ;; Unbind VAO

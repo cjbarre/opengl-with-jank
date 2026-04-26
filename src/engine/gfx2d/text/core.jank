@@ -43,6 +43,7 @@ inline FontData*& get_g_font() {
 }
 #define g_font (get_g_font())
 
+namespace etext {
 inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
     // Read font file
     FILE* f = fopen(font_path, \"rb\");
@@ -173,19 +174,20 @@ inline void render_text_cpp(const char* text, float x, float y, float r, float g
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
 }
+} // namespace etext
 ")
 
 (defn init-font
   "Initialize font rendering. Call once at startup.
    Returns true on success."
   [font-path font-size shader]
-  (cpp/init_font_cpp font-path (cpp/float. font-size) shader))
+  (cpp/etext.init_font_cpp font-path (cpp/float. font-size) shader))
 
 (defn render-text
   "Render text at screen position (pixels from top-left).
    color: [r g b] values 0.0-1.0"
   [text x y [r g b] screen-width screen-height]
-  (cpp/render_text_cpp text
+  (cpp/etext.render_text_cpp text
                        (cpp/float. x) (cpp/float. y)
                        (cpp/float. r) (cpp/float. g) (cpp/float. b)
                        (cpp/int screen-width) (cpp/int screen-height)))

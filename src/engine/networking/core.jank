@@ -10,7 +10,8 @@
 
 ;; C helper functions for ENet - only keeping what requires struct init, NULL pointers, or complex logic
 (cpp/raw
- "// Client needs NULL pointer as first arg (NULL -> pointer cast not supported)
+ "namespace enet_impl {
+  // Client needs NULL pointer as first arg (NULL -> pointer cast not supported)
   inline ENetHost* create_client_host() {
     return enet_host_create(NULL, 1, 2, 0, 0);
   }
@@ -83,7 +84,8 @@
     if (data) {
       free(data);
     }
-  }")
+  }
+  } // namespace enet_impl")
 
 ;; Lifecycle
 
@@ -103,7 +105,7 @@
   "Create a server host listening on the given port.
    Returns a boxed ENetHost* or nil on failure."
   [{:keys [port max-clients] :or {max-clients 32} :as args}]
-  (let [host (cpp/create_server_host (cpp/int port) (cpp/int max-clients))]
+  (let [host (cpp/enet_impl.create_server_host (cpp/int port) (cpp/int max-clients))]
     (when-not (cpp/! host)
       (cpp/box host))))
 
@@ -111,7 +113,7 @@
   "Create a client host (not bound to any port).
    Returns a boxed ENetHost* or nil on failure."
   []
-  (clet [host (cpp/create_client_host)
+  (clet [host (cpp/enet_impl.create_client_host)
          :when (cpp/! host)
          :error nil]
     (cpp/box host)))
@@ -128,7 +130,7 @@
    Returns a boxed ENetPeer* or nil on failure."
   [host {:keys [address port] :as args}]
   (clet [host* (cpp/unbox (:* ENetHost) host)
-         peer (cpp/connect_to_host host* address (cpp/int port))
+         peer (cpp/enet_impl.connect_to_host host* address (cpp/int port))
          :when (cpp/! peer)
          :error nil]
     (cpp/box peer)))
@@ -151,7 +153,7 @@
   [peer data]
   (let [peer* (cpp/unbox (:* ENetPeer) peer)
         len (count data)]
-    (cpp/send_packet peer* data (cpp/int len) 0 true)))
+    (cpp/enet_impl.send_packet peer* data (cpp/int len) 0 true)))
 
 (defn send-unreliable
   "Send data unreliably to a peer (may be lost, but lower latency).
@@ -159,21 +161,21 @@
   [peer data]
   (let [peer* (cpp/unbox (:* ENetPeer) peer)
         len (count data)]
-    (cpp/send_packet peer* data (cpp/int len) 1 false)))
+    (cpp/enet_impl.send_packet peer* data (cpp/int len) 1 false)))
 
 (defn broadcast-reliable
   "Broadcast data reliably to all connected peers."
   [host data]
   (let [host* (cpp/unbox (:* ENetHost) host)
         len (count data)]
-    (cpp/broadcast_packet host* data (cpp/int len) 0 true)))
+    (cpp/enet_impl.broadcast_packet host* data (cpp/int len) 0 true)))
 
 (defn broadcast-unreliable
   "Broadcast data unreliably to all connected peers."
   [host data]
   (let [host* (cpp/unbox (:* ENetHost) host)
         len (count data)]
-    (cpp/broadcast_packet host* data (cpp/int len) 1 false)))
+    (cpp/enet_impl.broadcast_packet host* data (cpp/int len) 1 false)))
 
 ;; Event polling
 
@@ -195,7 +197,7 @@
         (if (> result 0)
           (let [event-type (cpp/.-type event)
                 peer-ptr (cpp/.-peer event)
-                peer-id (cpp/get_peer_id peer-ptr)
+                peer-id (cpp/enet_impl.get_peer_id peer-ptr)
                 evt (cond
                       ;; ENET_EVENT_TYPE_CONNECT = 1
                       (= event-type 1)
@@ -211,10 +213,10 @@
 
                       ;; ENET_EVENT_TYPE_RECEIVE = 3
                       (= event-type 3)
-                      (let [data-copy (cpp/get_event_data_copy event)
-                            _ (cpp/destroy_event_packet event)
+                      (let [data-copy (cpp/enet_impl.get_event_data_copy event)
+                            _ (cpp/enet_impl.destroy_event_packet event)
                             data-str (when data-copy (str data-copy))
-                            _ (cpp/free_data_copy data-copy)]
+                            _ (cpp/enet_impl.free_data_copy data-copy)]
                         {:type :receive
                          :peer (cpp/box peer-ptr)
                          :peer-id peer-id

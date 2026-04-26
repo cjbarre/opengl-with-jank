@@ -89,14 +89,16 @@
            (range count))}))
 
 (cpp/raw
- "inline bool cgltf_primitive_has_material(cgltf_primitive* prim) {
+ "namespace egltf {
+  inline bool cgltf_primitive_has_material(cgltf_primitive* prim) {
       return (prim->material != nullptr);
- }")
+  }
+  } // namespace egltf")
 
 (defn parse-material
   [primitive]
   (let [primitive (cpp/unbox (:* cgltf_primitive) primitive)]
-    (when (cpp/cgltf_primitive_has_material primitive)
+    (when (cpp/egltf.cgltf_primitive_has_material primitive)
       (let [material (cpp/* (cpp/.-material primitive))]
         {:material (cond-> {}
                      (not= 0 (cpp/.-has_pbr_metallic_roughness material))
@@ -144,17 +146,16 @@
 
 
 (cpp/raw
- "inline cgltf_float* get_node_translation (cgltf_node* node) {
-  return node->translation;
-  }")
+ "namespace egltf {
+  inline cgltf_float* get_node_translation (cgltf_node* node) {
+    return node->translation;
+  }
 
-(cpp/raw
- "inline cgltf_float* get_node_scale (cgltf_node* node) {
-  return node->scale;
-  }")
+  inline cgltf_float* get_node_scale (cgltf_node* node) {
+    return node->scale;
+  }
 
-(cpp/raw
- "inline bool node_is_colonly(cgltf_node* node) {
+  inline bool node_is_colonly(cgltf_node* node) {
     if (!node || !node->name) return false;
     const char* str = node->name;
     const char* suffix = \"-colonly\";
@@ -162,7 +163,8 @@
     size_t slen = 8;
     if (len < slen) return false;
     return strcmp(str + len - slen, suffix) == 0;
-  }")
+  }
+  } // namespace egltf")
 
 (defn parse-node
   [node]
@@ -171,20 +173,20 @@
          :error (throw (ex-info "Parsing node children not implemented" {}))
          mesh (cpp/box (cpp/.-mesh node))
          node-name (str (cpp/.-name node))
-         is-collision (cpp/node_is_colonly node)]
+         is-collision (cpp/egltf.node_is_colonly node)]
         (cond-> {:name node-name
                  :mesh (parse-mesh mesh)
                  :collision-only (cpp/!= cpp/false is-collision)}
           (cpp/!= cpp/false (cpp/.-has_translation node))
           (assoc :translation
-                 (let [translation (cpp/get_node_translation node)]
+                 (let [translation (cpp/egltf.get_node_translation node)]
                    [(cpp/aget translation (cpp/int 0))
                     (cpp/aget translation (cpp/int 1))
                     (cpp/aget translation (cpp/int 2))]))
 
           (cpp/!= cpp/false (cpp/.-has_scale node))
           (assoc :scale
-                 (let [scale (cpp/get_node_scale node)]
+                 (let [scale (cpp/egltf.get_node_scale node)]
                    [(cpp/aget scale (cpp/int 0))
                     (cpp/aget scale (cpp/int 1))
                     (cpp/aget scale (cpp/int 2))]))

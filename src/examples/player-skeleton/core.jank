@@ -14,8 +14,9 @@
 #include <vector>
 #include <iostream>
 
+namespace pskel {
 // GLEW initialization for Linux
-inline bool init_glew_player() {
+inline bool init_glew() {
 #ifndef __APPLE__
     glewExperimental = GL_TRUE;
     GLenum err = glewInit();
@@ -29,6 +30,7 @@ inline bool init_glew_player() {
     return true;
 #endif
 }
+} // namespace pskel
 ")
 
 (cpp/raw "#include <glm/glm.hpp>
@@ -36,15 +38,18 @@ inline bool init_glew_player() {
           #include <glm/gtc/type_ptr.hpp>
           #include \"gl_utils.h\"
 
+          namespace pskel {
           inline glm::mat4 zup_to_yup_matrix() {
               // gla2ozz now converts correctly - no rotation needed
               return glm::mat4(1.0f);
-          }")
+          }
+          } // namespace pskel")
 
 (cpp/raw "#include \"animation_types.h\"")
 
 (cpp/raw "
-  inline void framebuffer_size_callback_player(GLFWwindow* window, int width, int height) {
+  namespace pskel {
+  inline void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
       (void) window;
       glViewport(0, 0, width, height);
   }
@@ -72,7 +77,7 @@ inline bool init_glew_player() {
     return prog;
   }
 
-  inline GLuint create_line_vao_player(GLuint* vbo_out) {
+  inline GLuint create_line_vao(GLuint* vbo_out) {
     GLuint vao, vbo;
     glGenVertexArrays(1, &vao);
     glGenBuffers(1, &vbo);
@@ -86,7 +91,7 @@ inline bool init_glew_player() {
     return vao;
   }
 
-  inline void update_line_vbo_player(GLuint vbo, float* vertices, int line_count) {
+  inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
   }
@@ -115,6 +120,7 @@ inline bool init_glew_player() {
                 << (line_count < max_print ? line_count : max_print)
                 << \" of \" << line_count << \") ===\" << std::endl;
   }
+  } // namespace pskel
 ")
 
 ;; Simple line shader for skeleton visualization
@@ -147,11 +153,11 @@ inline bool init_glew_player() {
       (println "Window creation failed")
       (cpp/exit 0))
     (cpp/glfwMakeContextCurrent window)
-    (when (cpp/! (cpp/init_glew_player))
+    (when (cpp/! (cpp/pskel.init_glew))
       (println "GLEW initialization failed")
       (cpp/exit 1))
     (cpp/glfwSwapInterval 1)
-    (cpp/glfwSetFramebufferSizeCallback window cpp/framebuffer_size_callback_player)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/pskel.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
     (cpp/box window)))
 
@@ -162,6 +168,7 @@ inline bool init_glew_player() {
 (def PAGE_SIZE 9)
 
 (cpp/raw "
+  namespace pskel {
   // Debug: Compare animation model matrices vs rest pose model matrices
   inline void debug_compare_anim_vs_rest(AnimationContext* ctx) {
     if (!ctx || !ctx->skeleton) return;
@@ -313,6 +320,7 @@ inline bool init_glew_player() {
 
     printf(\"=== END DEBUG ===\\n\\n\");
   }
+  } // namespace pskel
 ")
 
 (defn load-animations
@@ -659,7 +667,7 @@ inline bool init_glew_player() {
           (println "DEBUG: Playing animation:" (:name anim-info))
           ;; Compare animation vs rest pose matrices
           (let [ctx (cpp/unbox (:* AnimationContext) context)]
-            (cpp/debug_compare_anim_vs_rest ctx))
+            (cpp/pskel.debug_compare_anim_vs_rest ctx))
           (swap! state assoc :debug-printed true))))))
 
 ;; ============================================================================
@@ -677,21 +685,21 @@ inline bool init_glew_player() {
                      (anim/build-skeleton-lines {:context context :max-lines 128}))
         line-count (int (:line-count lines-data))
         verts-box (:vertices lines-data)
-        verts-ptr (cpp/get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))
+        verts-ptr (cpp/pskel.get_vector_data (cpp/unbox (:* (std.vector float)) verts-box))
 
         ;; Debug: print ALL bone lines (once)
         _ (when (and (not lines-printed) (pos? line-count))
-            (cpp/print_bone_lines verts-ptr line-count (cpp/int 100))
+            (cpp/pskel.print_bone_lines verts-ptr line-count (cpp/int 100))
             (swap! state assoc :lines-printed true))
 
         ;; Update VBO
-        _ (cpp/update_line_vbo_player line-vbo verts-ptr (cpp/int line-count))
+        _ (cpp/pskel.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
 
         ;; Setup matrices
-        model (cpp/zup_to_yup_matrix)
-        view (cpp/glm.lookAt (cpp/make_vec3 3.0 2.0 3.0)
-                              (cpp/make_vec3 0.0 1.0 0.0)
-                              (cpp/make_vec3 0.0 1.0 0.0))
+        model (cpp/pskel.zup_to_yup_matrix)
+        view (cpp/glm.lookAt (cpp/pskel.make_vec3 3.0 2.0 3.0)
+                              (cpp/pskel.make_vec3 0.0 1.0 0.0)
+                              (cpp/pskel.make_vec3 0.0 1.0 0.0))
         projection (cpp/glm.perspective (cpp/glm.radians (cpp/float 45.0))
                                          (cpp/float (/ 1280.0 720.0))
                                          (cpp/float 0.1)
@@ -748,9 +756,9 @@ inline bool init_glew_player() {
         window (setup-window {:width 1280 :height 720 :name "Player Skeleton Viewer"})
 
         ;; Create shaders
-        line-shader (cpp/create_line_shader line-vertex-shader line-fragment-shader)
+        line-shader (cpp/pskel.create_line_shader line-vertex-shader line-fragment-shader)
         line-vbo-ptr (cpp/new cpp/GLuint)
-        line-vao (cpp/create_line_vao_player line-vbo-ptr)
+        line-vao (cpp/pskel.create_line_vao line-vbo-ptr)
         line-vbo (cpp/* line-vbo-ptr)
 
         ;; Load text shader

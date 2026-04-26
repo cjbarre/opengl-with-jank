@@ -93,7 +93,8 @@
 
 
 (cpp/raw
- "inline bool node_is_colonly_headless(cgltf_node* node) {
+ "namespace egltf_hl {
+  inline bool node_is_colonly(cgltf_node* node) {
     if (!node || !node->name) return false;
     const char* str = node->name;
     const char* suffix = \"-colonly\";
@@ -103,13 +104,14 @@
     return strcmp(str + len - slen, suffix) == 0;
   }
 
-  inline cgltf_float* get_node_translation_headless (cgltf_node* node) {
+  inline cgltf_float* get_node_translation (cgltf_node* node) {
     return node->translation;
   }
 
-  inline cgltf_float* get_node_scale_headless (cgltf_node* node) {
+  inline cgltf_float* get_node_scale (cgltf_node* node) {
     return node->scale;
-  }")
+  }
+  } // namespace egltf_hl")
 
 (defn parse-node
   [node]
@@ -118,20 +120,20 @@
          :error (throw (ex-info "Parsing node children not implemented" {}))
          mesh (cpp/box (cpp/.-mesh node))
          node-name (str (cpp/.-name node))
-         is-collision (cpp/node_is_colonly_headless node)]
+         is-collision (cpp/egltf_hl.node_is_colonly node)]
         (cond-> {:name node-name
                  :mesh (parse-mesh mesh)
                  :collision-only (cpp/!= cpp/false is-collision)}
           (cpp/!= cpp/false (cpp/.-has_translation node))
           (assoc :translation
-                 (let [translation (cpp/get_node_translation_headless node)]
+                 (let [translation (cpp/egltf_hl.get_node_translation node)]
                    [(cpp/aget translation (cpp/int 0))
                     (cpp/aget translation (cpp/int 1))
                     (cpp/aget translation (cpp/int 2))]))
 
           (cpp/!= cpp/false (cpp/.-has_scale node))
           (assoc :scale
-                 (let [scale (cpp/get_node_scale_headless node)]
+                 (let [scale (cpp/egltf_hl.get_node_scale node)]
                    [(cpp/aget scale (cpp/int 0))
                     (cpp/aget scale (cpp/int 1))
                     (cpp/aget scale (cpp/int 2))]))
