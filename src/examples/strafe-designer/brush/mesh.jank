@@ -88,8 +88,8 @@
        :normals (vec (repeat n normal))
        :indices (vec (mapcat (fn [i]
                                [(+ base-index 0)
-                                (+ base-index i)
-                                (+ base-index (inc i))])
+                                (+ base-index (inc i))
+                                (+ base-index i)])
                              (range 1 (dec n))))})))
 
 (defn brush-to-mesh

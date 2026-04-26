@@ -22,10 +22,12 @@ uniform mat4 view;
 uniform mat4 projection;
 
 out vec2 TexCoord;
+out vec3 Normal;
 
 void main()
 {
     mat4 world = model * local;
     gl_Position = projection * view * world * vec4(aPos, 1.0);
-    TexCoord = aTexCoord; // pass UVs to fragment shader
+    TexCoord = aTexCoord;
+    Normal = mat3(transpose(inverse(world))) * aNormal;
 }

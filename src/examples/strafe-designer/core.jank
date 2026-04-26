@@ -33,14 +33,24 @@
 (def test-course
   {:grid-size 2
    :name "strafe-test"
-   :spawn [4 2 4]
+   :spawn [5 2 5]
    :pieces
-   [;; Main floor
+   [;; Starting platform
     {:type :platform :pos [0 0 0] :size [10 1 10] :texture "textures/base"}
-    ;; Raised platform
-    {:type :platform :pos [12 2 0] :size [6 1 6] :texture "textures/base"}
-    ;; Wall along back
-    {:type :wall :pos [0 1 0] :size [10 4 1] :texture "textures/base"}]})
+    ;; Back wall
+    {:type :wall :pos [0 1 0] :size [10 4 1] :texture "textures/base"}
+    ;; Side wall
+    {:type :wall :pos [0 1 0] :size [1 4 10] :texture "textures/base"}
+    ;; Ramp up to second platform
+    {:type :ramp :pos [10 0 2] :size [4 2 6] :facing :east :texture "textures/base"}
+    ;; Second platform (raised)
+    {:type :platform :pos [14 2 0] :size [8 1 8] :texture "textures/base"}
+    ;; Gap jump target
+    {:type :platform :pos [26 2 2] :size [6 1 4] :texture "textures/base"}
+    ;; High pillar
+    {:type :pillar :pos [30 3 4] :size [1 5 1] :texture "textures/base"}
+    ;; Third platform (higher)
+    {:type :platform :pos [34 4 0] :size [8 1 8] :texture "textures/base"}]})
 
 ;; ============================================================================
 ;; Window setup
@@ -63,6 +73,9 @@
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/esd.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    ;; Our brush normals point inward, so front faces are CW from outside
+    (cpp/wrap_glEnable gl/GL_CULL_FACE)
+    (cpp/glFrontFace #cpp GL_CW)
     (cpp/box window)))
 
 ;; ============================================================================
@@ -221,37 +234,47 @@
 ;; ============================================================================
 
 (defn draw-3D
-  [{:keys [shader level-draw camera-state player-state] :as context}]
+  [{:keys [shader level-draw orbit-time] :as context}]
   (let [_ (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
         _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
         _ (cpp/wrap_glUseProgram shader)
 
         projection-m (cpp/glm.perspective
-                      (cpp/glm.radians (cpp/float 90.0))
+                      (cpp/glm.radians (cpp/float 70.0))
                       (cpp// (cpp/float 1280.0) (cpp/float 720.0))
                       (cpp/float 0.1) (cpp/float 500.0))
         _ (cpp/wrap_glUniformMatrix4fv
            (cpp/wrap_glGetUniformLocation shader "projection")
            (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
 
-        ;; Update camera
-        [px py pz] (:position @player-state)
-        yaw (:yaw @player-state 0.0)
-        pitch (:pitch @player-state 0.0)
-        dt (float (math/*-> :float (:delta-time context)))
-        new-camera-state (camera/update-camera
-                          shader @camera-state camera/default-config
-                          [px py pz] yaw pitch (* dt 1000.0))
-        _ (reset! camera-state new-camera-state)
+        ;; Debug orbit camera - circles around the level center
+        t (cpp/glfwGetTime)
+        orbit-speed 0.3
+        orbit-radius 50.0
+        orbit-height 25.0
+        ;; Level center (approximate)
+        cx 30.0 cy 4.0 cz 10.0
+        angle (cpp/* (cpp/float t) (cpp/float orbit-speed))
+        cam-x (cpp/+ (cpp/float cx) (cpp/* (cpp/float orbit-radius) (cpp/cos angle)))
+        cam-z (cpp/+ (cpp/float cz) (cpp/* (cpp/float orbit-radius) (cpp/sin angle)))
+        cam-y (cpp/float (+ cy orbit-height))
 
-        ;; Draw the level
-        _ (level-draw {:shader shader :model/local-matrix-uniform "local"})
+        camera-pos (cpp/glm.vec3 cam-x cam-y cam-z)
+        look-target (cpp/glm.vec3 (cpp/float cx) (cpp/float cy) (cpp/float cz))
+        camera-up (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
+        view-m (cpp/glm.lookAt camera-pos look-target camera-up)
+        _ (cpp/wrap_glUniformMatrix4fv
+           (cpp/wrap_glGetUniformLocation shader "view")
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))
 
-        ;; Set model matrix for identity (level is already in world space)
+        ;; Identity model matrix
         model-m (cpp/identity_matrix)
         _ (cpp/wrap_glUniformMatrix4fv
            (cpp/wrap_glGetUniformLocation shader "model")
-           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr model-m))]
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr model-m))
+
+        ;; Draw the level
+        _ (level-draw {:shader shader :model/local-matrix-uniform "local"})]
     nil))
 
 ;; ============================================================================
@@ -259,34 +282,17 @@
 ;; ============================================================================
 
 (defn run-loop
-  [{:keys [window player-state level-collision] :as context}]
+  [{:keys [window] :as context}]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
-    (let [_ (update-time context)
-          _ (update-cursor context)
-          input (process-input context)
-          dt (float (math/*-> :float (:delta-time context)))
-          pitch (float (math/*-> :float (:cursor/pitch context)))
-          yaw (float (math/*-> :float (:cursor/yaw context)))]
-
+    (let [window* (cpp/unbox (:* GLFWwindow) window)]
       ;; Handle exit
-      (when (:exit input)
-        (cpp/glfwSetWindowShouldClose (cpp/unbox (:* GLFWwindow) window) 1))
+      (when (= (cpp/glfwGetKey window* gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
+        (cpp/glfwSetWindowShouldClose window* 1))
 
-      ;; Update physics
-      (swap! player-state
-             (fn [state]
-               (merge state
-                      (update-physics
-                       (assoc state :level-collision level-collision)
-                       (assoc input :yaw yaw :pitch pitch :delta-time dt)))))
-
-      ;; Store yaw/pitch on player state for camera
-      (swap! player-state assoc :yaw yaw :pitch pitch)
-
-      ;; Render
+      ;; Render (orbit camera drives itself from glfwGetTime)
       (draw-3D context)
 
-      (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
+      (cpp/glfwSwapBuffers window*)
       (cpp/glfwPollEvents))))
 
 ;; ============================================================================
@@ -299,9 +305,6 @@
 
   (let [_ (cpp/glfwInit)
         window (setup-window {:width 1280 :height 720 :name "Strafe Designer"})
-        _ (cpp/glfwSetInputMode
-           (cpp/unbox (:* GLFWwindow) window)
-           gl/GLFW_CURSOR gl/GLFW_CURSOR_DISABLED)
 
         ;; Load shader
         shader (shaders/load-shader-program
@@ -318,32 +321,11 @@
         ;; Export .map file
         _ (map-format/save-map test-course "output.map")
 
-        ;; Player state
-        player-state (atom {:position [10.0 5.0 10.0]
-                            :velocity [0.0 0.0 0.0]
-                            :grounded false
-                            :yaw -90.0
-                            :pitch 0.0})
-
-        ;; Camera state
-        camera-state (atom (camera/create-state))
-
         context {:window window
                  :shader shader
-                 :level-draw (:draw loaded)
-                 :level-collision (:collision loaded)
-                 :player-state player-state
-                 :camera-state camera-state
-                 :delta-time (math/gimmie :boxed :float 0.0)
-                 :last-frame (math/gimmie :boxed :float 0.0)
-                 :cursor/last-x (math/gimmie :boxed :float 0.0)
-                 :cursor/last-y (math/gimmie :boxed :float 0.0)
-                 :cursor/sensitivity (math/gimmie :boxed :float 0.05)
-                 :cursor/yaw (math/gimmie :boxed :float -90.0)
-                 :cursor/pitch (math/gimmie :boxed :float 0.0)
-                 :cursor/initialized? (atom false)}]
+                 :level-draw (:draw loaded)}]
 
-    (println "Starting game loop... WASD to move, Space to jump, Esc to quit")
+    (println "Starting game loop... Orbit camera mode. Esc to quit.")
     (run-loop context)
 
     (cpp/glfwTerminate)
