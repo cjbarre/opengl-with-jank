@@ -192,39 +192,57 @@
 
         ;; Horizontal collision - block movement toward walls
         ;; Cast ray at waist height, reject movement if wall within buffer
-        waist-y (+ py 0.5)
+        waist-y (+ py 0.1)
         wall-buffer 0.3
-        new-px (if (and collision-mesh
-                        (> (cpp/fabs (cpp/float (- new-px px))) 0.001))
-                 (let [dir-x (if (> new-px px) 1.0 -1.0)
-                       dist (collision/raycast-horizontal
-                             collision-mesh
-                             [px waist-y pz]
-                             [dir-x 0.0 0.0]
-                             2.0)]
-                   (if (and dist (< dist wall-buffer))
-                     px
-                     new-px))
-                 new-px)
-        new-pz (if (and collision-mesh
-                        (> (cpp/fabs (cpp/float (- new-pz pz))) 0.001))
-                 (let [dir-z (if (> new-pz pz) 1.0 -1.0)
-                       dist (collision/raycast-horizontal
-                             collision-mesh
-                             [new-px waist-y pz]
-                             [0.0 0.0 dir-z]
-                             2.0)]
-                   (if (and dist (< dist wall-buffer))
-                     pz
-                     new-pz))
-                 new-pz)
+        ;; X-axis wall check
+        x-blocked (and collision-mesh
+                       (> (cpp/fabs (cpp/float (- new-px px))) 0.001)
+                       (let [dir-x (if (> new-px px) 1.0 -1.0)
+                             dist (collision/raycast-horizontal
+                                   collision-mesh
+                                   [px waist-y pz]
+                                   [dir-x 0.0 0.0]
+                                   2.0)]
+                         (and dist (< dist wall-buffer))))
+        new-px (if x-blocked px new-px)
+        ;; Clip velocity: zero perpendicular component (JKA PM_ClipVelocity style)
+        vx (if x-blocked 0.0 vx)
+
+        ;; Z-axis wall check
+        z-blocked (and collision-mesh
+                       (> (cpp/fabs (cpp/float (- new-pz pz))) 0.001)
+                       (let [dir-z (if (> new-pz pz) 1.0 -1.0)
+                             dist (collision/raycast-horizontal
+                                   collision-mesh
+                                   [new-px waist-y pz]
+                                   [0.0 0.0 dir-z]
+                                   2.0)]
+                         (and dist (< dist wall-buffer))))
+        new-pz (if z-blocked pz new-pz)
+        vz (if z-blocked 0.0 vz)
 
         ;; Clamp to ground (raycast collision)
-        ground-y-at-new-pos (when collision-mesh
-                              (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
+        ;; Raycast at both old and new XZ to detect ledge transitions
+        ground-y-old (when collision-mesh
+                       (collision/raycast-ground collision-mesh [px new-py pz]))
+        ground-y-new (when collision-mesh
+                       (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
+        ;; Use new ground only if it's not much higher than old ground
+        ;; (prevents suction onto wall tops when crossing edges)
+        max-step 1.0
+        ground-y-at-new-pos (cond
+                              ;; No ground at new pos
+                              (not ground-y-new) nil
+                              ;; No ground at old pos - only use new if near player
+                              (not ground-y-old) (when (< (- ground-y-new py) max-step)
+                                                   ground-y-new)
+                              ;; New ground is within step height of old - use new
+                              (< (- ground-y-new ground-y-old) max-step) ground-y-new
+                              ;; New ground is way higher (wall top) - use old
+                              :else ground-y-old)
         [new-py vy is-grounded backflip-jump?]
         (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
-          [ground-y-at-new-pos 0.0 true false]  ; Clear backflip flag on landing
+          [ground-y-at-new-pos 0.0 true false]
           [new-py vy is-grounded backflip-jump?])]
 
     ;; Return updated entity state
