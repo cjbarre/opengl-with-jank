@@ -1,10 +1,12 @@
 (ns examples.strafe-designer.core
-  (:require [examples.strafe-designer.level :as level]
+  (:require [examples.strafe-designer.course :as course]
+            [examples.strafe-designer.editor :as editor]
             [examples.strafe-designer.map-format :as map-format]
-            [examples.strafe-designer.brush.pieces :as pieces]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
+            [engine.gfx2d.text.interface :as text]
             [engine.gl.constants :as gl]
+            [engine.events.interface :as es]
             [examples.demo.camera :as camera]
             [examples.demo.shared :as shared]
             [examples.demo.client :as client]))
@@ -19,34 +21,6 @@
           #include <glm/gtc/type_ptr.hpp>")
 (cpp/raw "#include <math.h>")
 (cpp/raw "#include \"gl_utils.h\"")
-
-
-
-;; ============================================================================
-;; Test course definition
-;; ============================================================================
-
-(def test-course
-  {:grid-size 2
-   :name "strafe-test"
-   :spawn [5 2 5]
-   :pieces
-   [;; Starting platform
-    {:type :platform :pos [0 0 0] :size [10 1 10] :texture "textures/base"}
-    ;; Back wall
-    {:type :wall :pos [0 1 0] :size [10 4 1] :texture "textures/base"}
-    ;; Side wall
-    {:type :wall :pos [0 1 0] :size [1 4 10] :texture "textures/base"}
-    ;; Ramp from platform top (y=1) up to second platform (y=3)
-    {:type :ramp :pos [10 1 2] :size [4 2 6] :facing :east :texture "textures/base"}
-    ;; Second platform (raised, top of ramp)
-    {:type :platform :pos [14 3 0] :size [8 1 8] :texture "textures/base"}
-    ;; Gap jump target (same height as second platform)
-    {:type :platform :pos [26 3 2] :size [6 1 4] :texture "textures/base"}
-    ;; High pillar
-    {:type :pillar :pos [30 4 4] :size [1 5 1] :texture "textures/base"}
-    ;; Third platform (higher)
-    {:type :platform :pos [34 5 0] :size [8 1 8] :texture "textures/base"}]})
 
 ;; ============================================================================
 ;; Window setup
@@ -69,7 +43,6 @@
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/esd.framebuffer_size_callback)
     (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
-    ;; No face culling - winding is inconsistent across piece types
     (cpp/box window)))
 
 ;; ============================================================================
@@ -78,27 +51,34 @@
 
 (defn process-input
   [{:keys [window]}]
-  (let [window (cpp/unbox (:* GLFWwindow) window)]
+  (let [w (cpp/unbox (:* GLFWwindow) window)]
     (cond-> {}
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
-      (assoc :exit true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_W) gl/GLFW_PRESS)
-      (assoc :forward true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_S) gl/GLFW_PRESS)
-      (assoc :backward true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_A) gl/GLFW_PRESS)
-      (assoc :left true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_D) gl/GLFW_PRESS)
-      (assoc :right true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_SPACE) gl/GLFW_PRESS)
-      (assoc :jump-held true)
-      (= (cpp/glfwGetKey window gl/GLFW_KEY_LEFT_CONTROL) gl/GLFW_PRESS)
-      (assoc :crouch true)
-      (= (cpp/glfwGetKey window #cpp GLFW_KEY_TAB) gl/GLFW_PRESS)
-      (assoc :toggle-camera true))))
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS) (assoc :exit true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_W) gl/GLFW_PRESS) (assoc :forward true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_S) gl/GLFW_PRESS) (assoc :backward true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_A) gl/GLFW_PRESS) (assoc :left true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_D) gl/GLFW_PRESS) (assoc :right true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_SPACE) gl/GLFW_PRESS) (assoc :place true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_LEFT_CONTROL) gl/GLFW_PRESS) (assoc :crouch true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_TAB) gl/GLFW_PRESS) (assoc :toggle-mode true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_BACKSPACE) gl/GLFW_PRESS) (assoc :remove-piece true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_R) gl/GLFW_PRESS) (assoc :rotate true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_Q) gl/GLFW_PRESS) (assoc :raise true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_E) gl/GLFW_PRESS) (assoc :lower true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_UP) gl/GLFW_PRESS) (assoc :arrow-up true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_DOWN) gl/GLFW_PRESS) (assoc :arrow-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT) gl/GLFW_PRESS) (assoc :arrow-left true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT) gl/GLFW_PRESS) (assoc :arrow-right true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_1) gl/GLFW_PRESS) (assoc :num-1 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_2) gl/GLFW_PRESS) (assoc :num-2 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_3) gl/GLFW_PRESS) (assoc :num-3 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :num-4 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :num-5 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :num-6 true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true))))
 
 ;; ============================================================================
-;; Cursor
+;; Cursor / Time
 ;; ============================================================================
 
 (defn update-cursor
@@ -107,8 +87,7 @@
   (let [cursor-x (cpp/double)
         cursor-y (cpp/double)
         _ (cpp/glfwGetCursorPos (cpp/unbox (:* GLFWwindow) window)
-                                (cpp/& cursor-x)
-                                (cpp/& cursor-y))
+                                (cpp/& cursor-x) (cpp/& cursor-y))
         cursor-last-x (math/*-> :float last-x)
         cursor-last-y (math/*-> :float last-y)
         _ (when-not @initialized?
@@ -124,14 +103,11 @@
     (cpp/= cursor-pitch (cpp/- cursor-pitch y-offset))
     (cpp/= cursor-last-x cursor-x)
     (cpp/= cursor-last-y cursor-y)
-    (when (cpp/> cursor-pitch (cpp/float 60.0))
-      (cpp/= cursor-pitch (cpp/float 60.0)))
-    (when (cpp/< cursor-pitch (cpp/float -30.0))
-      (cpp/= cursor-pitch (cpp/float -30.0)))))
-
-;; ============================================================================
-;; Time
-;; ============================================================================
+    ;; Wider pitch range for free-fly camera in build mode
+    (when (cpp/> cursor-pitch (cpp/float 89.0))
+      (cpp/= cursor-pitch (cpp/float 89.0)))
+    (when (cpp/< cursor-pitch (cpp/float -89.0))
+      (cpp/= cursor-pitch (cpp/float -89.0)))))
 
 (defn update-time
   [{:keys [delta-time last-frame]}]
@@ -141,31 +117,111 @@
     (cpp/= delta-time (cpp/- current-frame last-frame))
     (cpp/= last-frame current-frame)))
 
+;; ============================================================================
+;; Build mode camera (free-fly, no player physics)
+;; ============================================================================
+
+(defn update-build-camera
+  "Free-fly camera for build mode. WASD moves, mouse looks."
+  [state shader input dt context]
+  (let [yaw (float (math/*-> :float (:cursor/yaw context)))
+        pitch (float (math/*-> :float (:cursor/pitch context)))
+        speed 20.0
+        [cx cy cz] (:cam-pos state [20.0 15.0 20.0])
+        yaw-rad (cpp/glm.radians (cpp/float yaw))
+        pitch-rad (cpp/glm.radians (cpp/float pitch))
+        ;; Forward/right vectors
+        fwd-x (cpp/* (cpp/- (cpp/float 0.0) (cpp/cos yaw-rad)) (cpp/cos pitch-rad))
+        fwd-y (cpp/- (cpp/float 0.0) (cpp/sin pitch-rad))
+        fwd-z (cpp/* (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad)) (cpp/cos pitch-rad))
+        right-x (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad))
+        right-z (cpp/cos yaw-rad)
+        move-speed (* speed dt)
+        cx (cond-> cx
+             (:forward input) (+ (* (double fwd-x) move-speed))
+             (:backward input) (- (* (double fwd-x) move-speed)))
+        cy (cond-> cy
+             (:forward input) (+ (* (double fwd-y) move-speed))
+             (:backward input) (- (* (double fwd-y) move-speed)))
+        cz (cond-> cz
+             (:forward input) (+ (* (double fwd-z) move-speed))
+             (:backward input) (- (* (double fwd-z) move-speed)))
+        cx (cond-> cx
+             (:left input) (+ (* (double right-x) move-speed))
+             (:right input) (- (* (double right-x) move-speed)))
+        cz (cond-> cz
+             (:left input) (+ (* (double right-z) move-speed))
+             (:right input) (- (* (double right-z) move-speed)))
+        ;; Look target
+        lx (+ cx (double fwd-x))
+        ly (+ cy (double fwd-y))
+        lz (+ cz (double fwd-z))
+        view-m (cpp/glm.lookAt
+                (cpp/glm.vec3 (cpp/float cx) (cpp/float cy) (cpp/float cz))
+                (cpp/glm.vec3 (cpp/float lx) (cpp/float ly) (cpp/float lz))
+                (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))]
+    (cpp/wrap_glUniformMatrix4fv
+     (cpp/wrap_glGetUniformLocation shader "view")
+     (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))
+    (assoc state :cam-pos [cx cy cz] :yaw yaw :pitch pitch)))
 
 ;; ============================================================================
 ;; Rendering
 ;; ============================================================================
 
-(defn draw-orbit-camera
-  "Debug orbit camera that circles the level center."
-  [shader]
-  (let [t (cpp/glfwGetTime)
-        angle (cpp/* (cpp/float t) (cpp/float 0.3))
-        cx 30.0 cy 4.0 cz 10.0
-        cam-x (cpp/+ (cpp/float cx) (cpp/* (cpp/float 50.0) (cpp/cos angle)))
-        cam-z (cpp/+ (cpp/float cz) (cpp/* (cpp/float 50.0) (cpp/sin angle)))
-        cam-y (cpp/float 29.0)
-        view-m (cpp/glm.lookAt
-                (cpp/glm.vec3 cam-x cam-y cam-z)
-                (cpp/glm.vec3 (cpp/float cx) (cpp/float cy) (cpp/float cz))
-                (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))]
+(cpp/raw "
+inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
+                                 float x2, float y2, float z2) {
+  float lines[] = {
+    // Bottom
+    x1,y1,z1, x2,y1,z1, x2,y1,z1, x2,y1,z2,
+    x2,y1,z2, x1,y1,z2, x1,y1,z2, x1,y1,z1,
+    // Top
+    x1,y2,z1, x2,y2,z1, x2,y2,z1, x2,y2,z2,
+    x2,y2,z2, x1,y2,z2, x1,y2,z2, x1,y2,z1,
+    // Vertical
+    x1,y1,z1, x1,y2,z1, x2,y1,z1, x2,y2,z1,
+    x2,y1,z2, x2,y2,z2, x1,y1,z2, x1,y2,z2
+  };
+  glBindBuffer(GL_ARRAY_BUFFER, vbo);
+  glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(lines), lines);
+}")
+
+(defn draw-cursor
+  "Draw wireframe box at cursor position using line shader."
+  [state {:keys [line-shader line-vao line-vbo]}]
+  (let [[wx wy wz] (editor/cursor-world-pos state)
+        [sw sh sd] (editor/cursor-world-size state)
+        x1 (cpp/float wx) y1 (cpp/float wy) z1 (cpp/float wz)
+        x2 (cpp/float (+ wx sw)) y2 (cpp/float (+ wy sh)) z2 (cpp/float (+ wz sd))]
+    (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.015)
+    (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 1.0 1.0)
+    (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.5 1.0 1.0)
     (cpp/wrap_glUniformMatrix4fv
-     (cpp/wrap_glGetUniformLocation shader "view")
-     (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))))
+     (cpp/wrap_glGetUniformLocation line-shader "model")
+     (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
+    (cpp/upload_cursor_lines line-vbo x1 y1 z1 x2 y2 z2)
+    (cpp/wrap_glBindVertexArray line-vao)
+    (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/int 24))
+    (cpp/wrap_glBindVertexArray (cpp/int 0))))
+
+(defn draw-hud
+  "Draw build mode HUD text."
+  [state]
+  (let [type-name (name (:piece-type state))
+        [cx cy cz] (:cursor-pos state)
+        facing-name (name (:facing state))
+        [sx sy sz] (:cursor-size state)
+        piece-count (count (:pieces state))]
+    (text/render-text (str "BUILD MODE | " type-name " " sx "x" sy "x" sz " " facing-name)
+                      10.0 30.0 [0.0 1.0 1.0] 1280 720)
+    (text/render-text (str "Cursor: " cx ", " cy ", " cz " | Pieces: " piece-count)
+                      10.0 55.0 [0.8 0.8 0.8] 1280 720)
+    (text/render-text "Arrows:move Q/E:height 1-6:type R:rotate Space:place Bksp:remove Tab:test"
+                      10.0 700.0 [0.5 0.5 0.5] 1280 720)))
 
 (defn draw-3D
-  [{:keys [shader line-shader line-vao line-vbo level-draw camera-state
-           player-state player-anim camera-mode] :as context}]
+  [{:keys [shader line-shader line-vao line-vbo camera-state] :as context} state input dt]
   (let [_ (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
         _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
         _ (cpp/wrap_glUseProgram shader)
@@ -178,41 +234,67 @@
            (cpp/wrap_glGetUniformLocation shader "projection")
            (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))]
 
-    (if (= @camera-mode :orbit)
-      ;; Orbit camera
-      (draw-orbit-camera shader)
-      ;; FPS third-person camera
-      (let [[px py pz] (:position @player-state)
-            yaw (:yaw @player-state 0.0)
-            pitch (:pitch @player-state 0.0)
-            dt (float (math/*-> :float (:delta-time context)))
-            new-cam (camera/update-camera
-                     shader @camera-state camera/default-config
-                     [px py pz] yaw pitch (* dt 1000.0))]
-        (reset! camera-state new-cam)))
-
-    ;; Identity model matrix
-    (cpp/wrap_glUniformMatrix4fv
-     (cpp/wrap_glGetUniformLocation shader "model")
-     (cpp/int 1) gl/GL_FALSE
-     (cpp/glm.value_ptr (cpp/identity_matrix)))
-
-    ;; Draw the level
-    (level-draw {:shader shader :model/local-matrix-uniform "local"})
-
-    ;; Draw player skeleton
-    (when (= @camera-mode :fps)
-      (let [[px py pz] (:position @player-state)
-            yaw (:yaw @player-state 0.0)
-            input (:last-input @player-state {})]
-        ;; Switch to line shader
+    (if (= (:mode state) :build)
+      ;; Build mode: free-fly camera
+      (let [new-state (update-build-camera state shader input dt context)]
+        ;; Identity model matrix
+        (cpp/wrap_glUniformMatrix4fv
+         (cpp/wrap_glGetUniformLocation shader "model")
+         (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
+        ;; Draw course
+        (course/draw-course state {:shader shader})
+        ;; Draw cursor with line shader
         (cpp/wrap_glUseProgram line-shader)
         (cpp/wrap_glUniformMatrix4fv
          (cpp/wrap_glGetUniformLocation line-shader "projection")
          (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
-        ;; Reuse view matrix from camera
-        (let [cam @camera-state]
-          (let [view-m (cpp/glm.lookAt
+        ;; Reuse view from build camera
+        (let [[cx cy cz] (:cam-pos new-state [20.0 15.0 20.0])
+              yaw (float (math/*-> :float (:cursor/yaw context)))
+              pitch (float (math/*-> :float (:cursor/pitch context)))
+              yaw-rad (cpp/glm.radians (cpp/float yaw))
+              pitch-rad (cpp/glm.radians (cpp/float pitch))
+              fwd-x (cpp/* (cpp/- (cpp/float 0.0) (cpp/cos yaw-rad)) (cpp/cos pitch-rad))
+              fwd-y (cpp/- (cpp/float 0.0) (cpp/sin pitch-rad))
+              fwd-z (cpp/* (cpp/- (cpp/float 0.0) (cpp/sin yaw-rad)) (cpp/cos pitch-rad))
+              view-m (cpp/glm.lookAt
+                      (cpp/glm.vec3 (cpp/float cx) (cpp/float cy) (cpp/float cz))
+                      (cpp/glm.vec3 (cpp/float (+ cx (double fwd-x)))
+                                    (cpp/float (+ cy (double fwd-y)))
+                                    (cpp/float (+ cz (double fwd-z))))
+                      (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))]
+          (cpp/wrap_glUniformMatrix4fv
+           (cpp/wrap_glGetUniformLocation line-shader "view")
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m)))
+        (cpp/wrap_glEnable gl/GL_BLEND)
+        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+        (draw-cursor new-state context)
+        (cpp/wrap_glDisable gl/GL_BLEND)
+        ;; Draw HUD
+        (draw-hud new-state)
+        new-state)
+
+      ;; Test mode: third-person camera + player
+      (let [[px py pz] (:position state)
+            yaw (:yaw state 0.0)
+            pitch (:pitch state 0.0)
+            dt-val (float dt)
+            new-cam (camera/update-camera
+                     shader @camera-state camera/default-config
+                     [px py pz] yaw pitch (* dt-val 1000.0))]
+        (reset! camera-state new-cam)
+        (cpp/wrap_glUniformMatrix4fv
+         (cpp/wrap_glGetUniformLocation shader "model")
+         (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
+        (course/draw-course state {:shader shader})
+        ;; Draw skeleton
+        (let [input-for-anim (:last-input state {})]
+          (cpp/wrap_glUseProgram line-shader)
+          (cpp/wrap_glUniformMatrix4fv
+           (cpp/wrap_glGetUniformLocation line-shader "projection")
+           (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr projection-m))
+          (let [cam @camera-state
+                view-m (cpp/glm.lookAt
                         (cpp/glm.vec3 (cpp/float (:cur-loc-x cam))
                                       (cpp/float (:cur-loc-y cam))
                                       (cpp/float (:cur-loc-z cam)))
@@ -222,71 +304,90 @@
                         (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))]
             (cpp/wrap_glUniformMatrix4fv
              (cpp/wrap_glGetUniformLocation line-shader "view")
-             (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m))))
-        ;; Line style
-        (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
-        (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
-        (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)
-        ;; Enable blending for soft edges
-        (cpp/wrap_glEnable gl/GL_BLEND)
-        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
-        (client/render-skeleton-entity line-shader line-vao line-vbo @player-anim [px py pz] yaw input)
-        (cpp/wrap_glDisable gl/GL_BLEND)))))
+             (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m)))
+          (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
+          (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
+          (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)
+          (cpp/wrap_glEnable gl/GL_BLEND)
+          (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+          (client/render-skeleton-entity line-shader line-vao line-vbo
+                                         @(:player-anim context) [px py pz] yaw input-for-anim)
+          (cpp/wrap_glDisable gl/GL_BLEND))
+        ;; Draw test mode HUD
+        (text/render-text "TEST MODE | Tab to return to build" 10.0 30.0 [1.0 0.8 0.0] 1280 720)
+        state))))
 
 ;; ============================================================================
 ;; Main loop
 ;; ============================================================================
 
 (defn run-loop
-  [{:keys [window player-state level-collision camera-mode] :as context}]
+  [{:keys [window] :as context} state-atom]
   (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
     (let [_ (update-time context)
+          _ (update-cursor context)
           input (process-input context)
-          dt (float (math/*-> :float (:delta-time context)))]
+          dt (float (math/*-> :float (:delta-time context)))
+          state @state-atom]
 
       ;; Handle exit
       (when (:exit input)
         (cpp/glfwSetWindowShouldClose (cpp/unbox (:* GLFWwindow) window) 1))
 
-      ;; Toggle camera mode on Tab (with debounce)
-      (when (and (:toggle-camera input) (not (:tab-was-pressed @player-state)))
-        (swap! camera-mode (fn [m] (if (= m :fps) :orbit :fps)))
-        (when (= @camera-mode :fps)
-          (cpp/glfwSetInputMode (cpp/unbox (:* GLFWwindow) window)
-                                gl/GLFW_CURSOR gl/GLFW_CURSOR_DISABLED))
-        (when (= @camera-mode :orbit)
-          (cpp/glfwSetInputMode (cpp/unbox (:* GLFWwindow) window)
-                                gl/GLFW_CURSOR gl/GLFW_CURSOR_NORMAL)))
-      (swap! player-state assoc :tab-was-pressed (:toggle-camera input))
+      ;; Toggle mode (Tab with debounce)
+      (when (and (:toggle-mode input) (not (:tab-was-pressed state)))
+        (let [new-mode (if (= (:mode state) :build) :test :build)]
+          (swap! state-atom assoc :mode new-mode)
+          ;; Both modes capture cursor - reset init so mouse doesn't jump
+          (reset! (:cursor/initialized? context) false)))
+      (swap! state-atom assoc :tab-was-pressed (:toggle-mode input))
 
-      ;; FPS mode: update cursor, physics, animation
-      (when (= @camera-mode :fps)
-        (update-cursor context)
-        (let [pitch (float (math/*-> :float (:cursor/pitch context)))
-              yaw (float (math/*-> :float (:cursor/yaw context)))
-              phys-input (assoc input :yaw yaw :pitch pitch)]
-          (swap! player-state
-                 (fn [state]
-                   (merge state
-                          (shared/simulate-physics state phys-input dt level-collision)
-                          {:last-input phys-input})))
-          ;; Update animation with full input (speed, height, vy, grounded)
-          (let [state @player-state
-                [vx vy vz] (:velocity state [0 0 0])
-                [_ py _] (:position state [0 0 0])
-                grounded (:grounded? state false)
-                speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
-                                       (cpp/* (cpp/float vz) (cpp/float vz))))
-                anim-input (assoc phys-input
-                                  :grounded grounded
-                                  :speed (double speed)
-                                  :height (double py)
-                                  :vy (double vy))]
-            (swap! (:player-anim context)
-                   (fn [ad] (client/update-player-animation ad anim-input grounded dt))))))
+      ;; Export on F5 (with debounce)
+      (when (and (:export input) (not (:f5-was-pressed @state-atom)))
+        (let [s @state-atom]
+          (map-format/save-map {:grid-size (:grid-size s)
+                                :name "course"
+                                :spawn (:cursor-pos s)
+                                :pieces (:pieces s)}
+                               "output.map")
+          (println "Map exported!")))
+      (swap! state-atom assoc :f5-was-pressed (:export input))
 
-      ;; Render
-      (draw-3D context)
+      ;; Mode-specific update
+      (let [state @state-atom]
+        (if (= (:mode state) :build)
+          ;; Build mode: editor handles input, draw returns updated state
+          (let [edited (editor/handle-build-input state input)
+                rendered (draw-3D context edited input dt)]
+            (reset! state-atom rendered))
+
+          ;; Test mode: physics + animation
+          (do
+            (let [pitch (float (math/*-> :float (:cursor/pitch context)))
+                  yaw (float (math/*-> :float (:cursor/yaw context)))
+                  phys-input (assoc input :yaw yaw :pitch pitch
+                                         :jump-held (:place input))]
+              (swap! state-atom
+                     (fn [s]
+                       (merge s
+                              (shared/simulate-physics s phys-input dt (:collision s))
+                              {:last-input phys-input})))
+              ;; Animation
+              (let [s @state-atom
+                    [vx vy vz] (:velocity s [0 0 0])
+                    [_ py _] (:position s [0 0 0])
+                    grounded (:grounded? s false)
+                    speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                           (cpp/* (cpp/float vz) (cpp/float vz))))
+                    anim-input (assoc phys-input
+                                      :grounded grounded
+                                      :speed (double speed)
+                                      :height (double py)
+                                      :vy (double vy))]
+                (swap! (:player-anim context)
+                       (fn [ad] (client/update-player-animation ad anim-input grounded dt)))))
+            (let [rendered (draw-3D context @state-atom input dt)]
+              (reset! state-atom rendered)))))
 
       (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
       (cpp/glfwPollEvents))))
@@ -297,13 +398,15 @@
 
 (defn -main []
   (println "=== Strafe Course Designer ===")
-  (println "Loading test course...")
 
   (let [_ (cpp/glfwInit)
         window (setup-window {:width 1280 :height 720 :name "Strafe Designer"})
-        ;; Start in orbit mode (no mouse capture)
 
-        ;; Load shader
+        ;; Capture cursor for mouse look
+        _ (cpp/glfwSetInputMode (cpp/unbox (:* GLFWwindow) window)
+                                gl/GLFW_CURSOR gl/GLFW_CURSOR_DISABLED)
+
+        ;; Shaders
         shader (shaders/load-shader-program
                 {:vertex-shader-path "shaders/basic_vertex.glsl"
                  :fragment-shader-path "shaders/basic_fragment.glsl"})
@@ -311,7 +414,6 @@
         _ (cpp/wrap_glUniform1i
            (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
-        ;; Line shader for skeleton rendering
         line-shader (shaders/load-shader-program-with-geometry
                      {:vertex-shader-path "shaders/line_vertex.glsl"
                       :geometry-shader-path "shaders/line_geometry.glsl"
@@ -320,52 +422,36 @@
         line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
         line-vbo (cpp/* line-vbo-ptr)
 
-        ;; Load level from piece definitions
-        loaded (level/load-course test-course)
-        _ (println "Level loaded:" (if (:collision loaded) "with collision" "no collision"))
+        ;; Text rendering
+        text-shader (shaders/load-shader-program
+                     {:vertex-shader-path "shaders/text_vertex.glsl"
+                      :fragment-shader-path "shaders/text_fragment.glsl"})
+        _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 20.0 text-shader)
 
-        ;; Export .map file
-        _ (map-format/save-map test-course "output.map")
+        ;; Animation
+        player-anim (atom (client/init-player-animation))
 
-        ;; Initialize player animation
-        player-anim-data (client/init-player-animation)
-        player-anim (atom player-anim-data)
-
-        ;; Player state
-        player-state (atom {:position [10.0 4.0 10.0]
-                            :velocity [0.0 0.0 0.0]
-                            :grounded? false
-                            :jump-z-start nil
-                            :backflip-jump? false
-                            :yaw -90.0
-                            :pitch 0.0})
-
-        ;; Camera mode: :fps or :orbit
-        camera-mode (atom :orbit)
-        camera-state (atom (camera/create-state))
+        ;; State
+        state-atom (atom (course/initial-state))
 
         context {:window window
                  :shader shader
                  :line-shader line-shader
                  :line-vao line-vao
                  :line-vbo line-vbo
-                 :level-draw (:draw loaded)
-                 :level-collision (:collision loaded)
-                 :player-state player-state
                  :player-anim player-anim
-                 :camera-mode camera-mode
-                 :camera-state camera-state
+                 :camera-state (atom (camera/create-state))
                  :delta-time (math/gimmie :boxed :float 0.0)
                  :last-frame (math/gimmie :boxed :float 0.0)
                  :cursor/last-x (math/gimmie :boxed :float 0.0)
                  :cursor/last-y (math/gimmie :boxed :float 0.0)
                  :cursor/sensitivity (math/gimmie :boxed :float 0.05)
                  :cursor/yaw (math/gimmie :boxed :float -90.0)
-                 :cursor/pitch (math/gimmie :boxed :float 0.0)
+                 :cursor/pitch (math/gimmie :boxed :float 15.0)
                  :cursor/initialized? (atom false)}]
 
-    (println "Starting game loop... WASD+mouse to play, Tab to toggle orbit camera, Esc to quit.")
-    (run-loop context)
+    (println "Build mode ready. Arrow keys to move cursor, 1-6 for pieces, Space to place, Tab to test.")
+    (run-loop context state-atom)
 
     (cpp/glfwTerminate)
     (println "Done.")))

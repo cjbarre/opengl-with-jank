@@ -1,0 +1,136 @@
+(ns examples.strafe-designer.editor
+  (:require [examples.strafe-designer.course :as course]))
+
+;; Piece types mapped to number keys
+(def piece-types [:platform :ramp :wall :pillar :stairs :curve])
+(def facings [:north :east :south :west])
+
+(defn next-facing
+  "Cycle to next facing direction."
+  [current]
+  (let [idx (loop [i 0]
+              (cond
+                (>= i (count facings)) 0
+                (= (get facings i) current) i
+                :else (recur (inc i))))
+        next-idx (mod (inc idx) (count facings))]
+    (get facings next-idx)))
+
+(defn camera-grid-dirs
+  "Get forward [dx dz] and right [dx dz] grid directions based on camera yaw.
+   Snaps yaw to nearest 90 degrees."
+  [yaw]
+  (let [;; Normalize yaw to 0-360
+        y (mod (+ (mod yaw 360.0) 360.0) 360.0)
+        ;; Snap to nearest cardinal: 0=+X, 90=+Z, 180=-X, 270=-Z
+        ;; Our camera yaw: -90 is default looking at -Z
+        ;; Adjusted: yaw 0 -> looking -X, yaw 90 -> looking -Z
+        ;; Forward direction based on yaw quadrant
+        sector (int (/ (+ y 45.0) 90.0))]
+    (case (mod sector 4)
+      0 {:fwd [1 0]  :right [0 1]}    ;; looking +X
+      1 {:fwd [0 1]  :right [-1 0]}   ;; looking +Z
+      2 {:fwd [-1 0] :right [0 -1]}   ;; looking -X
+      3 {:fwd [0 -1] :right [1 0]}))) ;; looking -Z
+
+(defn handle-build-input
+  "Process build-mode input and return updated state.
+   Input is a map of pressed keys. Debounce keys are tracked in state."
+  [state input]
+  (let [{:keys [cursor-pos cursor-size piece-type facing grid-size]} state
+        [cx cy cz] cursor-pos
+        ;; Get camera-relative grid directions
+        {:keys [fwd right]} (camera-grid-dirs (or (:yaw state) -90.0))
+        [fwd-x fwd-z] fwd
+        [right-x right-z] right
+
+        ;; Cursor movement relative to camera (with debounce)
+        state (cond
+                (and (:arrow-up input) (not (:up-was-pressed state)))
+                (assoc state :cursor-pos [(- cx fwd-x) cy (- cz fwd-z)])
+
+                (and (:arrow-down input) (not (:down-was-pressed state)))
+                (assoc state :cursor-pos [(+ cx fwd-x) cy (+ cz fwd-z)])
+
+                (and (:arrow-left input) (not (:left-was-pressed state)))
+                (assoc state :cursor-pos [(+ cx right-x) cy (+ cz right-z)])
+
+                (and (:arrow-right input) (not (:right-was-pressed state)))
+                (assoc state :cursor-pos [(- cx right-x) cy (- cz right-z)])
+
+                :else state)
+
+        ;; Height (Q/E with debounce)
+        [cx2 cy2 cz2] (:cursor-pos state)
+        state (cond
+                (and (:raise input) (not (:q-was-pressed state)))
+                (assoc state :cursor-pos [cx2 (inc cy2) cz2])
+
+                (and (:lower input) (not (:e-was-pressed state)))
+                (assoc state :cursor-pos [cx2 (dec cy2) cz2])
+
+                :else state)
+
+        ;; Piece type (number keys with debounce)
+        state (reduce
+               (fn [s i]
+                 (let [key-name (keyword (str "num-" (inc i)))]
+                   (if (and (get input key-name)
+                            (not (get state (keyword (str "num" (inc i) "-was-pressed")))))
+                     (assoc s :piece-type (get piece-types i (:piece-type s)))
+                     s)))
+               state
+               (range (count piece-types)))
+
+        ;; Rotate facing (R with debounce)
+        state (if (and (:rotate input) (not (:r-was-pressed state)))
+                (assoc state :facing (next-facing (:facing state)))
+                state)
+
+        ;; Place piece (Space with debounce)
+        state (if (and (:place input) (not (:space-was-pressed state)))
+                (let [piece {:type (:piece-type state)
+                             :pos (:cursor-pos state)
+                             :size (:cursor-size state)
+                             :facing (:facing state)
+                             :texture "textures/base"}]
+                  (course/place-piece state piece))
+                state)
+
+        ;; Remove piece (Backspace with debounce)
+        state (if (and (:remove-piece input) (not (:backspace-was-pressed state)))
+                (course/remove-piece-at state (:cursor-pos state))
+                state)
+
+        ;; Track key states for debounce
+        state (assoc state
+                     :up-was-pressed (:arrow-up input)
+                     :down-was-pressed (:arrow-down input)
+                     :left-was-pressed (:arrow-left input)
+                     :right-was-pressed (:arrow-right input)
+                     :q-was-pressed (:raise input)
+                     :e-was-pressed (:lower input)
+                     :r-was-pressed (:rotate input)
+                     :space-was-pressed (:place input)
+                     :backspace-was-pressed (:remove-piece input)
+                     :num1-was-pressed (:num-1 input)
+                     :num2-was-pressed (:num-2 input)
+                     :num3-was-pressed (:num-3 input)
+                     :num4-was-pressed (:num-4 input)
+                     :num5-was-pressed (:num-5 input)
+                     :num6-was-pressed (:num-6 input))]
+    state))
+
+(defn cursor-world-pos
+  "Convert cursor grid position to world coordinates."
+  [state]
+  (let [{:keys [cursor-pos grid-size]} state
+        [gx gy gz] cursor-pos]
+    [(float (* gx grid-size)) (float (* gy grid-size)) (float (* gz grid-size))]))
+
+(defn cursor-world-size
+  "Convert cursor grid size to world dimensions."
+  [state]
+  (let [{:keys [cursor-size grid-size]} state
+        [sx sy sz] cursor-size]
+    [(float (* sx grid-size)) (float (* sy grid-size)) (float (* sz grid-size))]))
