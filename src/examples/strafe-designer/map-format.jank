@@ -5,8 +5,8 @@
 
 ;; Quake 3 .map format serializer.
 ;; Handles Y-up (engine) to Z-up (Quake) coordinate swap on export.
-;; JKA uses ~1 unit = 1 inch. Player is 56 units tall.
-;; Our engine units are small, so we scale up for JKA.
+;; Quake units: ~1 unit = 1 inch. Player is 56 units tall.
+;; Our engine units are small, so we scale up for export.
 
 (def MAP_SCALE 16)
 
@@ -107,7 +107,7 @@
         ;; Add skybox to worldspawn
         skybox (make-skybox-brush 4096)
         brush-map (update-in brush-map [:entities 0 :brushes] conj skybox)
-        ;; Add info_player_deathmatch (for JKA FFA)
+        ;; Add info_player_deathmatch (for FFA spawns)
         spawn-entity (second (:entities brush-map))
         brush-map (update brush-map :entities conj
                           {:classname "info_player_deathmatch"

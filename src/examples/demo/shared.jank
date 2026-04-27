@@ -125,10 +125,14 @@
         [px py pz] position
         [vx vy vz] velocity
 
-        ;; Ground detection via raycast
-        ground-y (when collision-mesh
-                   (collision/raycast-ground collision-mesh [px py pz]))
-        is-grounded (and ground-y (<= py (+ ground-y 0.2)))
+        ;; Ground detection via raycast (with surface normal)
+        ground-hit (when collision-mesh
+                     (collision/raycast-ground-full collision-mesh [px py pz]))
+        ground-y (when ground-hit (:y ground-hit))
+        ground-normal (when ground-hit (:normal ground-hit))
+        ;; Walkable surface: normal Y >= 0.7 (~45 degrees, MIN_WALK_NORMAL)
+        ground-walkable (and ground-normal (>= (second ground-normal) 0.7))
+        is-grounded (and ground-y ground-walkable (<= py (+ ground-y 0.2)))
 
         ;; Clear backflip flag on landing (only when actually landing, not just near ground)
         ;; Must be falling (vy <= 0) and grounded to count as landing
@@ -185,16 +189,32 @@
              (- vy (* GRAVITY delta-time))
              vy)
 
+        ;; Clip velocity on slope IMPACT only (PM_SlideMove behavior)
+        ;; Only fires on landing frame (was airborne, now grounded)
+        ;; Removes perpendicular component: up-slopes lose speed, down-slopes gain
+        ;; While running on slope: speed preserved (PM_WalkMove behavior)
+        just-landed (and is-grounded (not grounded?))
+        [vx vy vz] (if (and just-landed ground-normal
+                            (< (second ground-normal) 0.99))
+                      (let [[nx ny nz] ground-normal
+                            backoff (+ (* vx nx) (* vy ny) (* vz nz))]
+                        [(- vx (* nx backoff))
+                         (- vy (* ny backoff))
+                         (- vz (* nz backoff))])
+                      [vx vy vz])
+
         ;; Integrate velocity to position
         new-px (+ px (* vx delta-time))
         new-py (+ py (* vy delta-time))
         new-pz (+ pz (* vz delta-time))
 
         ;; Horizontal collision - block movement toward walls
-        ;; Cast ray at waist height, reject movement if wall within buffer
-        waist-y (+ py 0.1)
+        ;; Cast rays at both foot and waist height
+        ;; Only block if waist ray hits (real wall), not just foot (ramp edge)
+        foot-y (+ py 0.15)
+        waist-y (+ py 0.5)
         wall-buffer 0.3
-        ;; X-axis wall check
+        ;; X-axis wall check (waist-level ray for walls)
         x-blocked (and collision-mesh
                        (> (cpp/fabs (cpp/float (- new-px px))) 0.001)
                        (let [dir-x (if (> new-px px) 1.0 -1.0)
@@ -205,7 +225,6 @@
                                    2.0)]
                          (and dist (< dist wall-buffer))))
         new-px (if x-blocked px new-px)
-        ;; Clip velocity: zero perpendicular component (JKA PM_ClipVelocity style)
         vx (if x-blocked 0.0 vx)
 
         ;; Z-axis wall check
@@ -223,10 +242,15 @@
 
         ;; Clamp to ground (raycast collision)
         ;; Raycast at both old and new XZ to detect ledge transitions
-        ground-y-old (when collision-mesh
-                       (collision/raycast-ground collision-mesh [px new-py pz]))
-        ground-y-new (when collision-mesh
-                       (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
+        ground-hit-old (when collision-mesh
+                         (collision/raycast-ground-full collision-mesh [px new-py pz]))
+        ground-hit-new (when collision-mesh
+                         (collision/raycast-ground-full collision-mesh [new-px new-py new-pz]))
+        ;; Only use walkable surfaces for ground clamping
+        ground-y-old (when (and ground-hit-old (>= (second (:normal ground-hit-old)) 0.7))
+                       (:y ground-hit-old))
+        ground-y-new (when (and ground-hit-new (>= (second (:normal ground-hit-new)) 0.7))
+                       (:y ground-hit-new))
         ;; Use new ground only if it's not much higher than old ground
         ;; (prevents suction onto wall tops when crossing edges)
         max-step 1.0
@@ -241,7 +265,11 @@
                               ;; New ground is way higher (wall top) - use old
                               :else ground-y-old)
         [new-py vy is-grounded backflip-jump?]
-        (if (and ground-y-at-new-pos (< new-py ground-y-at-new-pos))
+        (if (and ground-y-at-new-pos
+                 (< new-py ground-y-at-new-pos)
+                 ;; Don't snap when actively jumping (vy > JUMP_VELOCITY threshold)
+                 ;; Small positive vy from slope projection is OK to snap
+                 (< vy JUMP_VELOCITY))
           [ground-y-at-new-pos 0.0 true false]
           [new-py vy is-grounded backflip-jump?])]
 

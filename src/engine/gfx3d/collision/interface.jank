@@ -15,6 +15,12 @@
   [collision-mesh position]
   (core/raycast-ground collision-mesh position))
 
+(defn raycast-ground-full
+  "Cast ray down, return ground height and surface normal.
+   Returns {:y height :normal [nx ny nz]} or nil."
+  [collision-mesh position]
+  (core/raycast-ground-full collision-mesh position))
+
 (defn raycast-horizontal
   "Cast ray horizontally from origin in direction.
    Returns distance to nearest hit, or nil if no hit."

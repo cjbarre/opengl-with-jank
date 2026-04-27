@@ -41,6 +41,23 @@
     (when (> result -99998.0)
       result)))
 
+(defn raycast-ground-full
+  "Cast ray down from position, find ground height and surface normal.
+   Returns {:y ground-height :normal [nx ny nz]} or nil."
+  [{:keys [positions indices]} [px py pz]]
+  (let [positions-ptr (cpp/unbox (:* (std.vector glm.vec3)) positions)
+        indices-ptr (cpp/unbox (:* (std.vector (:unsigned int))) indices)
+        nx (cpp/float)
+        ny (cpp/float)
+        nz (cpp/float)
+        result (cpp/ecol.raycast_ground_normal positions-ptr indices-ptr
+                                               (cpp/float. px)
+                                               (cpp/float. py)
+                                               (cpp/float. pz)
+                                               (cpp/& nx) (cpp/& ny) (cpp/& nz))]
+    (when (> result -99998.0)
+      {:y result :normal [(double nx) (double ny) (double nz)]})))
+
 (defn raycast-horizontal
   "Cast ray horizontally from origin in direction.
    collision-mesh: prepared C++ mesh
