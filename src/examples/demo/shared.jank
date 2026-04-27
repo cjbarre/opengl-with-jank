@@ -190,6 +190,35 @@
         new-py (+ py (* vy delta-time))
         new-pz (+ pz (* vz delta-time))
 
+        ;; Horizontal collision - block movement toward walls
+        ;; Cast ray at waist height, reject movement if wall within buffer
+        waist-y (+ py 0.5)
+        wall-buffer 0.3
+        new-px (if (and collision-mesh
+                        (> (cpp/fabs (cpp/float (- new-px px))) 0.001))
+                 (let [dir-x (if (> new-px px) 1.0 -1.0)
+                       dist (collision/raycast-horizontal
+                             collision-mesh
+                             [px waist-y pz]
+                             [dir-x 0.0 0.0]
+                             2.0)]
+                   (if (and dist (< dist wall-buffer))
+                     px
+                     new-px))
+                 new-px)
+        new-pz (if (and collision-mesh
+                        (> (cpp/fabs (cpp/float (- new-pz pz))) 0.001))
+                 (let [dir-z (if (> new-pz pz) 1.0 -1.0)
+                       dist (collision/raycast-horizontal
+                             collision-mesh
+                             [new-px waist-y pz]
+                             [0.0 0.0 dir-z]
+                             2.0)]
+                   (if (and dist (< dist wall-buffer))
+                     pz
+                     new-pz))
+                 new-pz)
+
         ;; Clamp to ground (raycast collision)
         ground-y-at-new-pos (when collision-mesh
                               (collision/raycast-ground collision-mesh [new-px new-py new-pz]))
