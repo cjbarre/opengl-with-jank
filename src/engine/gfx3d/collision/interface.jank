@@ -14,3 +14,9 @@
    Returns: ground Y coordinate, or nil if no ground found"
   [collision-mesh position]
   (core/raycast-ground collision-mesh position))
+
+(defn raycast-horizontal
+  "Cast ray horizontally from origin in direction.
+   Returns distance to nearest hit, or nil if no hit."
+  [collision-mesh origin direction max-dist]
+  (core/raycast-horizontal collision-mesh origin direction max-dist))

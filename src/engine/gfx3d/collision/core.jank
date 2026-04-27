@@ -40,3 +40,24 @@
                                        (cpp/float. pz))]
     (when (> result -99998.0)
       result)))
+
+(defn raycast-horizontal
+  "Cast ray horizontally from origin in direction.
+   collision-mesh: prepared C++ mesh
+   origin: [x y z]
+   direction: [dx dy dz] (normalized)
+   max-dist: maximum ray distance
+   Returns: distance to nearest hit, or nil if no hit"
+  [{:keys [positions indices]} [ox oy oz] [dx dy dz] max-dist]
+  (let [positions-ptr (cpp/unbox (:* (std.vector glm.vec3)) positions)
+        indices-ptr (cpp/unbox (:* (std.vector (:unsigned int))) indices)
+        result (cpp/ecol.raycast_horizontal positions-ptr indices-ptr
+                                            (cpp/float. ox)
+                                            (cpp/float. oy)
+                                            (cpp/float. oz)
+                                            (cpp/float. dx)
+                                            (cpp/float. dy)
+                                            (cpp/float. dz)
+                                            (cpp/float. max-dist))]
+    (when (> result 0.0)
+      result)))

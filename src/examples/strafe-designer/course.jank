@@ -3,7 +3,6 @@
             [examples.strafe-designer.brush.mesh :as mesh]
             [examples.strafe-designer.level :as level]
             [engine.gfx3d.collision.interface :as collision]
-            [engine.io.interface :as io]
             [engine.gl.constants :as gl]))
 
 (cpp/raw "#include \"gl_wrappers.h\"")
@@ -172,23 +171,16 @@
   "Save course pieces to a file."
   [state path]
   (let [data {:grid-size (:grid-size state)
-              :pieces (:pieces state)}
-        content (pr-str data)
-        file* (cpp/fopen path "w")]
-    (if (cpp/! file*)
-      (println "Failed to save:" path)
-      (let [file (cpp/box file*)]
-        (cpp/fputs (cpp/cast (:* (:const char)) content)
-                   (cpp/unbox (:* FILE) file))
-        (cpp/fclose (cpp/unbox (:* FILE) file))
-        (println "Course saved to" path)))))
+              :pieces (:pieces state)}]
+    (spit path (pr-str data))
+    (println "Course saved to" path)))
 
 (defn load-course-file
   "Load course pieces from a file. Returns updated state."
   [state path]
-  (let [content (io/slurp {:path path})]
+  (let [content (slurp path)]
     (if content
-      (let [data (read-string (str content))
+      (let [data (read-string content)
             grid-size (or (:grid-size data) (:grid-size state))
             loaded-pieces (or (:pieces data) [])
             new-vaos (vec (keep #(upload-piece grid-size %) loaded-pieces))]
