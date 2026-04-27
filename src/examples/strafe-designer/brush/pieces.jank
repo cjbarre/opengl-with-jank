@@ -117,15 +117,31 @@
                  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x1 y2 z2]} dt)]})]))
 
 (defmethod piece->brushes :stairs
-  [grid-size {:keys [pos size texture]}]
+  [grid-size {:keys [pos size facing texture]}]
   (let [[gx gy gz] pos
         [sx sy sz] size
-        ;; Each step is 1 grid cell deep, 1 step-height tall
-        step-count sz
+        dir (or facing :north)
+        ;; Step direction determines which axis advances and step count
+        ;; North/south: step along Z, wide in X. step-size = [sx, h, 1]
+        ;; East/west: step along X, wide in Z. step-size = [1, h, sz]
+        [step-count advance-fn size-fn]
+        (case dir
+          :north [sz
+                  (fn [i h] [gx (+ gy (* i h)) (+ gz i)])
+                  (fn [h] [sx h 1])]
+          :south [sz
+                  (fn [i h] [gx (+ gy (* i h)) (- (+ gz (dec sz)) i)])
+                  (fn [h] [sx h 1])]
+          :east  [sx
+                  (fn [i h] [(+ gx i) (+ gy (* i h)) gz])
+                  (fn [h] [1 h sz])]
+          :west  [sx
+                  (fn [i h] [(- (+ gx (dec sx)) i) (+ gy (* i h)) gz])
+                  (fn [h] [1 h sz])])
         step-height (/ (float sy) step-count)]
     (vec (for [i (range step-count)]
-           (let [step-pos [gx (+ gy (* i step-height)) (+ gz i)]
-                 step-size [sx step-height 1]
+           (let [step-pos (advance-fn i step-height)
+                 step-size (size-fn step-height)
                  {:keys [origin width height depth]} (grid->world grid-size step-pos step-size)]
              (make-box-brush origin width height depth texture))))))
 
