@@ -9,7 +9,7 @@
    :wall     [4 3 1]
    :pillar   [1 4 1]
    :stairs   [3 4 4]
-   :curve    [4 1 4]})
+   :curve    [2 1 6]})
 (def facings [:north :east :south :west])
 
 (defn next-facing
