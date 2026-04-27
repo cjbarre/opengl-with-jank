@@ -233,7 +233,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
 
 (defn draw-3D
   [{:keys [shader line-shader line-vao line-vbo camera-state] :as context} state input dt]
-  (let [_ (cpp/wrap_glClearColor 0.15 0.15 0.2 1.0)
+  (let [_ (cpp/wrap_glClearColor 0.35 0.38 0.45 1.0)
         _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
         _ (cpp/wrap_glUseProgram shader)
 
