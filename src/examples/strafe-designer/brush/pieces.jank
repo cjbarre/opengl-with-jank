@@ -145,48 +145,13 @@
                  {:keys [origin width height depth]} (grid->world grid-size step-pos step-size)]
              (make-box-brush origin width height depth texture))))))
 
-(defn- make-curve-segment
-  "Create a trapezoidal brush for one segment of a curve.
-   4 bottom corners + thickness. 6 planes with inward normals."
-  [p1 p2 p3 p4 y-bot y-top tex]
-  ;; p1-p2 is one edge (at angle a1), p3-p4 is the other (at angle a2)
-  ;; p1/p3 = inner, p2/p4 = outer
-  ;; Looking down: p1, p2, p4, p3 go around the trapezoid
-  (let [[x1 z1] p1 [x2 z2] p2 [x3 z3] p3 [x4 z4] p4
-        dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
-        yb (float y-bot) yt (float y-top)]
-    {:planes
-     [;; Bottom (normal +Y inward)
-      (merge {:p1 [(float x1) yb (float z1)]
-              :p2 [(float x2) yb (float z2)]
-              :p3 [(float x4) yb (float z4)]} dt)
-      ;; Top (normal -Y inward)
-      (merge {:p1 [(float x2) yt (float z2)]
-              :p2 [(float x1) yt (float z1)]
-              :p3 [(float x3) yt (float z3)]} dt)
-      ;; Edge a1 (p1 to p2): normal points into segment
-      (merge {:p1 [(float x1) yb (float z1)]
-              :p2 [(float x1) yt (float z1)]
-              :p3 [(float x2) yt (float z2)]} dt)
-      ;; Edge a2 (p3 to p4): normal points into segment
-      (merge {:p1 [(float x4) yb (float z4)]
-              :p2 [(float x4) yt (float z4)]
-              :p3 [(float x3) yt (float z3)]} dt)
-      ;; Inner wall (p1 to p3): normal points outward (toward center)
-      (merge {:p1 [(float x3) yb (float z3)]
-              :p2 [(float x3) yt (float z3)]
-              :p3 [(float x1) yt (float z1)]} dt)
-      ;; Outer wall (p2 to p4): normal points inward
-      (merge {:p1 [(float x2) yb (float z2)]
-              :p2 [(float x2) yt (float z2)]
-              :p3 [(float x4) yt (float z4)]} dt)]}))
 
 (defmethod piece->brushes :curve
   [grid-size {:keys [pos size facing texture]}]
   (let [[gx gy gz] pos
         [sx sy sz] size
         ;; sx = width of path, sy = thickness, sz = radius
-        segments 8
+        segments 24
         radius (float (* sz grid-size))
         path-width (float (* sx grid-size))
         thickness (float (* sy grid-size))
@@ -217,8 +182,15 @@
                  p-out-1 [(+ center-x (* r-out cos-a1)) (+ center-z (* r-out sin-a1))]
                  p-in-2  [(+ center-x (* r-in cos-a2))  (+ center-z (* r-in sin-a2))]
                  p-out-2 [(+ center-x (* r-out cos-a2)) (+ center-z (* r-out sin-a2))]]
-             (make-curve-segment p-in-1 p-out-1 p-in-2 p-out-2
-                                 oy (+ oy thickness) tex))))))
+             ;; Bounding box of the 4 corners - overlapping boxes make smooth surface
+             (let [min-x (min (first p-in-1) (first p-out-1) (first p-in-2) (first p-out-2))
+                   max-x (max (first p-in-1) (first p-out-1) (first p-in-2) (first p-out-2))
+                   min-z (min (second p-in-1) (second p-out-1) (second p-in-2) (second p-out-2))
+                   max-z (max (second p-in-1) (second p-out-1) (second p-in-2) (second p-out-2))
+                   bw (max 0.1 (float (- max-x min-x)))
+                   bd (max 0.1 (float (- max-z min-z)))]
+               (make-box-brush [(float min-x) oy (float min-z)]
+                               bw thickness bd tex)))))))
 
 (defmethod piece->brushes :default
   [_grid-size piece]
