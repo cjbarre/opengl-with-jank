@@ -119,6 +119,11 @@
                 (course/remove-piece-at state (:cursor-pos state))
                 state)
 
+        ;; Undo (Z with debounce)
+        state (if (and (:undo input) (not (:z-was-pressed state)))
+                (course/undo state)
+                state)
+
         ;; Track key states for debounce
         state (assoc state
                      :up-was-pressed (:arrow-up input)
@@ -135,7 +140,8 @@
                      :num3-was-pressed (:num-3 input)
                      :num4-was-pressed (:num-4 input)
                      :num5-was-pressed (:num-5 input)
-                     :num6-was-pressed (:num-6 input))]
+                     :num6-was-pressed (:num-6 input)
+                     :z-was-pressed (:undo input))]
     state))
 
 (defn cursor-world-pos

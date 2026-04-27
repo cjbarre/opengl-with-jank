@@ -75,7 +75,10 @@
       (= (cpp/glfwGetKey w gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :num-4 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :num-5 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :num-6 true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true))))
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F6) gl/GLFW_PRESS) (assoc :save true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F7) gl/GLFW_PRESS) (assoc :load true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_Z) gl/GLFW_PRESS) (assoc :undo true))))
 
 ;; ============================================================================
 ;; Cursor / Time
@@ -217,7 +220,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
                       10.0 30.0 [0.0 1.0 1.0] 1280 720)
     (text/render-text (str "Cursor: " cx ", " cy ", " cz " | Pieces: " piece-count)
                       10.0 55.0 [0.8 0.8 0.8] 1280 720)
-    (text/render-text "Arrows:move Q/E:height 1-6:type R:rotate Space:place Bksp:remove Tab:test F5:export"
+    (text/render-text "Arrows:move Q/E:height 1-6:type R:rotate Space:place Bksp:remove Z:undo Tab:test F5:export"
                       10.0 700.0 [0.5 0.5 0.5] 1280 720)
     ;; Export confirmation flash
     (when (:export-msg state)
@@ -370,6 +373,17 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           (swap! state-atom assoc :export-msg true :export-time (cpp/glfwGetTime))
           (println "Map exported to output.map")))
       (swap! state-atom assoc :f5-was-pressed (:export input))
+      ;; Save on F6 (with debounce)
+      (when (and (:save input) (not (:f6-was-pressed @state-atom)))
+        (course/save-course @state-atom "course.edn")
+        (swap! state-atom assoc :export-msg true :export-time (cpp/glfwGetTime)))
+      (swap! state-atom assoc :f6-was-pressed (:save input))
+
+      ;; Load on F7 (with debounce)
+      (when (and (:load input) (not (:f7-was-pressed @state-atom)))
+        (swap! state-atom (fn [s] (course/load-course-file s "course.edn"))))
+      (swap! state-atom assoc :f7-was-pressed (:load input))
+
       ;; Clear export message after 2 seconds
       (when (:export-msg @state-atom)
         (when (> (- (cpp/glfwGetTime) (or (:export-time @state-atom) 0)) 2.0)

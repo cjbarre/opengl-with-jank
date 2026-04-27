@@ -29,7 +29,7 @@
   (str (format-point p1) " "
        (format-point p3) " "
        (format-point p2) " "
-       (or texture "textures/base") " "
+       (or texture "textures/system/concrete") " "
        (or x-offset 0) " " (or y-offset 0) " "
        (or rotation 0) " "
        (or x-scale 1.0) " " (or y-scale 1.0)))
@@ -80,10 +80,39 @@
                    (cpp/unbox (:* FILE) file))
         (cpp/fclose (cpp/unbox (:* FILE) file))))))
 
+(defn- make-skybox-brush
+  "Create a large hollow box around the level for q3map2 sealing.
+   Returns a brush with 6 inward-facing planes using sky texture."
+  [size]
+  (let [s (float size) ns (float (- size))
+        sky "textures/skies/sky"]
+    {:planes
+     [{:p1 [ns ns ns] :p2 [ns ns s] :p3 [s ns s]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      {:p1 [ns s s] :p2 [ns s ns] :p3 [s s ns]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      {:p1 [ns ns ns] :p2 [s ns ns] :p3 [s s ns]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      {:p1 [s ns s] :p2 [ns ns s] :p3 [ns s s]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      {:p1 [ns ns s] :p2 [ns ns ns] :p3 [ns s ns]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      {:p1 [s ns ns] :p2 [s ns s] :p3 [s s s]
+       :texture sky :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}]}))
+
 (defn save-map
   "Export a piece-grid course definition to a .map file."
   [course-def path]
   (let [brush-map (pieces/pieces->brush-map course-def)
+        ;; Add skybox to worldspawn
+        skybox (make-skybox-brush 4096)
+        brush-map (update-in brush-map [:entities 0 :brushes] conj skybox)
+        ;; Add info_player_deathmatch (for JKA FFA)
+        spawn-entity (second (:entities brush-map))
+        brush-map (update brush-map :entities conj
+                          {:classname "info_player_deathmatch"
+                           :properties (:properties spawn-entity)
+                           :brushes []})
         map-str (serialize-map brush-map)]
     (write-file path map-str)
     (println "Exported .map to" path)))
