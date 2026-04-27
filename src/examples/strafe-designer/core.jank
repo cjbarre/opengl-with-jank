@@ -5,11 +5,14 @@
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
             [engine.gfx2d.text.interface :as text]
+            [engine.gfx2d.graphics.interface :as gfx2d]
+            [engine.gc.interface :as gc]
             [engine.gl.constants :as gl]
             [engine.events.interface :as es]
             [examples.demo.camera :as camera]
             [examples.demo.shared :as shared]
-            [examples.demo.client :as client]))
+            [examples.demo.client :as client]
+            [examples.demo.strafehelper.interface :as strafehelper]))
 
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
@@ -75,6 +78,8 @@
       (= (cpp/glfwGetKey w gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :num-4 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :num-5 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :num-6 true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_F3) gl/GLFW_PRESS) (assoc :f3-pressed true)
+      (= (cpp/glfwGetKey w gl/GLFW_KEY_F4) gl/GLFW_PRESS) (assoc :f4-pressed true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F6) gl/GLFW_PRESS) (assoc :save true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F7) gl/GLFW_PRESS) (assoc :load true)
@@ -333,8 +338,27 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           (client/render-skeleton-entity line-shader line-vao line-vbo
                                          @(:player-anim context) [px py pz] yaw input-for-anim)
           (cpp/wrap_glDisable gl/GL_BLEND))
-        ;; Draw test mode HUD
-        (text/render-text "TEST MODE | Tab to return to build" 10.0 30.0 [1.0 0.8 0.0] 1280 720)
+        ;; Debug overlay (F3 toggles)
+        (when (get state :debug-visible true)
+          (let [dt-val (float (math/*-> :float (:delta-time context)))
+                fps (if (> dt-val 0.0) (/ 1.0 dt-val) 0.0)
+                [vx vy vz] (or (:velocity state) [0 0 0])
+                speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                       (cpp/* (cpp/float vz) (cpp/float vz))))
+                grounded (:grounded? state false)]
+            (text/render-text "TEST MODE | Tab:build F3:debug F4:strafe" 10.0 30.0 [1.0 0.8 0.0] 1280 720)
+            (text/render-text (str "FPS: " (int fps)) 10.0 55.0 [1.0 1.0 1.0] 1280 720)
+            (text/render-text (str "Pos: " (int px) ", " (int py) ", " (int pz))
+                              10.0 80.0 [0.8 0.8 0.8] 1280 720)
+            (text/render-text (str "Speed: " (int speed)) 10.0 105.0 [0.8 0.8 0.8] 1280 720)
+            (text/render-text (str "Grounded: " grounded) 10.0 130.0
+                              (if grounded [0.5 1.0 0.5] [1.0 0.5 0.5]) 1280 720)))
+        ;; Strafehelper (F4 toggles)
+        (when (:strafehelper-visible state)
+          (let [[vx vy vz] (or (:velocity state) [0 0 0])
+                yaw (:yaw state 0.0)
+                grounded (:grounded? state false)]
+            (strafehelper/render-strafehelper (:gfx2d context) [vx vy vz] yaw grounded 1280 720)))
         state))))
 
 ;; ============================================================================
@@ -361,6 +385,16 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           ;; Both modes capture cursor - reset init so mouse doesn't jump
           (reset! (:cursor/initialized? context) false)))
       (swap! state-atom assoc :tab-was-pressed (:toggle-mode input))
+
+      ;; F3 toggle debug overlay (with debounce)
+      (when (and (:f3-pressed input) (not (:f3-was-pressed @state-atom)))
+        (swap! state-atom update :debug-visible not))
+      (swap! state-atom assoc :f3-was-pressed (:f3-pressed input))
+
+      ;; F4 toggle strafehelper (with debounce)
+      (when (and (:f4-pressed input) (not (:f4-was-pressed @state-atom)))
+        (swap! state-atom update :strafehelper-visible not))
+      (swap! state-atom assoc :f4-was-pressed (:f4-pressed input))
 
       ;; Export on F5 (with debounce)
       (when (and (:export input) (not (:f5-was-pressed @state-atom)))
@@ -465,6 +499,12 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
                       :fragment-shader-path "shaders/text_fragment.glsl"})
         _ (text/init-font "fonts/JetBrainsMono-Regular.ttf" 20.0 text-shader)
 
+        ;; 2D graphics for strafehelper
+        graphics2d-shader (shaders/load-shader-program
+                           {:vertex-shader-path "shaders/graphics2d_vertex.glsl"
+                            :fragment-shader-path "shaders/graphics2d_fragment.glsl"})
+        gfx2d-ctx (gfx2d/init-graphics2d graphics2d-shader)
+
         ;; Animation
         player-anim (atom (client/init-player-animation))
 
@@ -473,6 +513,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
 
         context {:window window
                  :shader shader
+                 :gfx2d gfx2d-ctx
                  :line-shader line-shader
                  :line-vao line-vao
                  :line-vbo line-vbo
