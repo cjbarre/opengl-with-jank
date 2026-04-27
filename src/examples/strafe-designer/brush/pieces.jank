@@ -68,44 +68,54 @@
         x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
         tex (or texture "textures/base")
         dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
-        ;; 5-plane wedge: floor, two sides, back wall, sloped top
-        floor (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} dt)]
+        ;; Wedge ramp: 6 planes with inward-pointing normals.
+        ;; All normals verified via cross(p2-p1, p3-p1).
+        ;; Floor + 2 sides + high-end wall + low-end wall + slope.
+        ;; High-end and low-end walls are clip-only (not rendered).
+        floor (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} dt)
+        front (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
+        back  (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)]
     [(case (or facing :north)
-       ;; Rises toward +Z - back wall clip-only, low-end wall clip-only
+       ;; Rises toward +Z: from y1 at z1 to y2 at z2
+       ;; Slope inward normal: [0, dz, -dy]
        :north
-       {:planes [floor
-                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z2]} dt)
-                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt)
+       {:planes [floor front back
+                 ;; High-end wall (Z+) - clip-only
                  (assoc (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt) :clip-only true)
+                 ;; Low-end wall (Z-) - clip-only
                  (assoc (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt) :clip-only true)
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} dt)]}
+                 ;; Slope: normal [0, dz, -dy] (inward)
+                 (merge {:p1 [x2 y1 z1] :p2 [x1 y1 z1] :p3 [x1 y2 z2]} dt)]}
 
-       ;; Rises toward -Z - back wall clip-only, low-end wall clip-only
+       ;; Rises toward -Z: from y1 at z2 to y2 at z1
+       ;; Slope inward normal: [0, -dz, -dy]
        :south
-       {:planes [floor
-                 (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt)
-                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z1]} dt)
+       {:planes [floor front back
                  (assoc (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt) :clip-only true)
                  (assoc (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt) :clip-only true)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} dt)]}
+                 (merge {:p1 [x1 y1 z2] :p2 [x2 y1 z2] :p3 [x2 y2 z1]} dt)]}
 
-       ;; Rises toward +X - back wall clip-only, low-end wall clip-only
+       ;; Rises toward +X: from y1 at x1 to y2 at x2
+       ;; Slope inward normal: [dy, -dx, 0]
        :east
-       {:planes [floor
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
+       {:planes [floor front back
+                 ;; High-end wall (X+) - clip-only
                  (assoc (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt) :clip-only true)
-                 (assoc (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt) :clip-only true)
-                 (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y2 z2]} dt)]}
+                 ;; Low-end wall (X-) - clip-only
+                 (assoc (merge {:p1 [x1 y1 z1] :p2 [x1 y2 z2] :p3 [x1 y1 z2]} dt) :clip-only true)
+                 ;; Slope: normal [dy, -dx, 0] (inward)
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y2 z1] :p3 [x2 y2 z2]} dt)]}
 
-       ;; Rises toward -X - back wall clip-only, low-end wall clip-only
+       ;; Rises toward -X: from y1 at x2 to y2 at x1
+       ;; Slope inward normal: [-dy, -dx, 0]
        :west
-       {:planes [floor
-                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt)
-                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)
-                 (assoc (merge {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]} dt) :clip-only true)
+       {:planes [floor front back
+                 ;; High-end wall (X-) - clip-only
+                 (assoc (merge {:p1 [x1 y1 z1] :p2 [x1 y2 z2] :p3 [x1 y1 z2]} dt) :clip-only true)
+                 ;; Low-end wall (X+) - clip-only
                  (assoc (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt) :clip-only true)
-                 (merge {:p1 [x2 y1 z2] :p2 [x2 y1 z1] :p3 [x1 y2 z1]} dt)]})]))
+                 ;; Slope: normal [-dy, -dx, 0] (inward)
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x1 y2 z2]} dt)]})]))
 
 (defmethod piece->brushes :stairs
   [grid-size {:keys [pos size texture]}]
