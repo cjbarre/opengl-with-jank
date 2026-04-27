@@ -146,12 +146,50 @@
              (make-box-brush origin width height depth texture))))))
 
 
+(defn- make-trapezoid-brush
+  "Create a trapezoidal brush from 4 XZ corners + Y bounds.
+   Corners MUST be in CCW order from above: c0, c1, c2, c3.
+   Produces 6 planes with inward normals.
+   For CCW corners, each side wall c_i to c_{i+1} uses:
+     p1=c_i-bot, p2=c_i-top, p3=c_{i+1}-top
+   which always gives inward-pointing normal."
+  [[x0 z0] [x1 z1] [x2 z2] [x3 z3] yb yt tex]
+  (let [dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        yb (float yb) yt (float yt)
+        x0 (float x0) z0 (float z0)
+        x1 (float x1) z1 (float z1)
+        x2 (float x2) z2 (float z2)
+        x3 (float x3) z3 (float z3)]
+    {:planes
+     [;; Bottom (normal +Y): CCW from above = correct cross product
+      (merge {:p1 [x0 yb z0] :p2 [x1 yb z1] :p3 [x2 yb z2]} dt)
+      ;; Top (normal -Y): reverse winding
+      (merge {:p1 [x1 yt z1] :p2 [x0 yt z0] :p3 [x3 yt z3]} dt)
+      ;; Side 0->1
+      (merge {:p1 [x0 yb z0] :p2 [x0 yt z0] :p3 [x1 yt z1]} dt)
+      ;; Side 1->2
+      (merge {:p1 [x1 yb z1] :p2 [x1 yt z1] :p3 [x2 yt z2]} dt)
+      ;; Side 2->3
+      (merge {:p1 [x2 yb z2] :p2 [x2 yt z2] :p3 [x3 yt z3]} dt)
+      ;; Side 3->0
+      (merge {:p1 [x3 yb z3] :p2 [x3 yt z3] :p3 [x0 yt z0]} dt)]}))
+
+(defn- ensure-ccw
+  "Ensure 4 XZ corners are in CCW order from above.
+   Cross product of (c1-c0) x (c2-c0) in XZ: if Y component < 0, reverse."
+  [c0 c1 c2 c3]
+  (let [[x0 z0] c0 [x1 z1] c1 [x2 z2] c2
+        ;; Cross product Y component of (c1-c0) x (c2-c0) in 2D = (x1-x0)*(z2-z0) - (z1-z0)*(x2-x0)
+        cross-y (- (* (- x1 x0) (- z2 z0)) (* (- z1 z0) (- x2 x0)))]
+    (if (<= cross-y 0)
+      [c0 c1 c2 c3]
+      [c3 c2 c1 c0])))
+
 (defmethod piece->brushes :curve
   [grid-size {:keys [pos size facing texture]}]
   (let [[gx gy gz] pos
         [sx sy sz] size
-        ;; sx = width of path, sy = thickness, sz = radius
-        segments 24
+        segments 12
         radius (float (* sz grid-size))
         path-width (float (* sx grid-size))
         thickness (float (* sy grid-size))
@@ -160,7 +198,6 @@
         ox (float (* gx grid-size))
         oy (float (* gy grid-size))
         oz (float (* gz grid-size))
-        ;; Arc center and start angle per facing
         [center-x center-z start-angle]
         (case (or facing :north)
           :north [(+ ox radius) oz              pi]
@@ -177,20 +214,13 @@
                  sin-a1 (double (cpp/sin (cpp/float a1)))
                  cos-a2 (double (cpp/cos (cpp/float a2)))
                  sin-a2 (double (cpp/sin (cpp/float a2)))
-                 ;; 4 corners: inner1, outer1, inner2, outer2
                  p-in-1  [(+ center-x (* r-in cos-a1))  (+ center-z (* r-in sin-a1))]
                  p-out-1 [(+ center-x (* r-out cos-a1)) (+ center-z (* r-out sin-a1))]
                  p-in-2  [(+ center-x (* r-in cos-a2))  (+ center-z (* r-in sin-a2))]
-                 p-out-2 [(+ center-x (* r-out cos-a2)) (+ center-z (* r-out sin-a2))]]
-             ;; Bounding box of the 4 corners - overlapping boxes make smooth surface
-             (let [min-x (min (first p-in-1) (first p-out-1) (first p-in-2) (first p-out-2))
-                   max-x (max (first p-in-1) (first p-out-1) (first p-in-2) (first p-out-2))
-                   min-z (min (second p-in-1) (second p-out-1) (second p-in-2) (second p-out-2))
-                   max-z (max (second p-in-1) (second p-out-1) (second p-in-2) (second p-out-2))
-                   bw (max 0.1 (float (- max-x min-x)))
-                   bd (max 0.1 (float (- max-z min-z)))]
-               (make-box-brush [(float min-x) oy (float min-z)]
-                               bw thickness bd tex)))))))
+                 p-out-2 [(+ center-x (* r-out cos-a2)) (+ center-z (* r-out sin-a2))]
+                 ;; Ensure CCW order: in1, out1, out2, in2
+                 [c0 c1 c2 c3] (ensure-ccw p-in-1 p-out-1 p-out-2 p-in-2)]
+             (make-trapezoid-brush c0 c1 c2 c3 oy (+ oy thickness) tex))))))
 
 (defmethod piece->brushes :default
   [_grid-size piece]

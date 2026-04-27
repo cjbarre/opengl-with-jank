@@ -93,13 +93,15 @@
                (range (count piece-types)))
 
         ;; Rotate facing (R with debounce)
-        ;; For ramps/curves: cycles facing direction
-        ;; For walls/pillars/stairs: swaps width and depth
+        ;; For ramps/curves: only cycles facing (size has directional meaning)
+        ;; For walls/pillars/stairs: also swaps width and depth
         state (if (and (:rotate input) (not (:r-was-pressed state)))
-                (let [[sw sh sd] (:cursor-size state)]
+                (let [[sw sh sd] (:cursor-size state)
+                      pt (:piece-type state)
+                      swap-dims (not (or (= pt :ramp) (= pt :curve)))]
                   (assoc state
                          :facing (next-facing (:facing state))
-                         :cursor-size [sd sh sw]))
+                         :cursor-size (if swap-dims [sd sh sw] [sw sh sd])))
                 state)
 
         ;; Place piece (Space with debounce)
