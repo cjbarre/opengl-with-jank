@@ -1,8 +1,15 @@
 (ns examples.strafe-designer.editor
   (:require [examples.strafe-designer.course :as course]))
 
-;; Piece types mapped to number keys
+;; Piece types mapped to number keys, with default sizes [w h d]
 (def piece-types [:platform :ramp :wall :pillar :stairs :curve])
+(def default-sizes
+  {:platform [4 1 4]
+   :ramp     [4 2 4]
+   :wall     [4 3 1]
+   :pillar   [1 4 1]
+   :stairs   [3 4 4]
+   :curve    [4 1 4]})
 (def facings [:north :east :south :west])
 
 (defn next-facing
@@ -71,20 +78,28 @@
 
                 :else state)
 
-        ;; Piece type (number keys with debounce)
+        ;; Piece type (number keys with debounce) - also sets default size
         state (reduce
                (fn [s i]
                  (let [key-name (keyword (str "num-" (inc i)))]
                    (if (and (get input key-name)
                             (not (get state (keyword (str "num" (inc i) "-was-pressed")))))
-                     (assoc s :piece-type (get piece-types i (:piece-type s)))
+                     (let [new-type (get piece-types i (:piece-type s))]
+                       (assoc s
+                              :piece-type new-type
+                              :cursor-size (get default-sizes new-type [4 1 4])))
                      s)))
                state
                (range (count piece-types)))
 
         ;; Rotate facing (R with debounce)
+        ;; For ramps/curves: cycles facing direction
+        ;; For walls/pillars/stairs: swaps width and depth
         state (if (and (:rotate input) (not (:r-was-pressed state)))
-                (assoc state :facing (next-facing (:facing state)))
+                (let [[sw sh sd] (:cursor-size state)]
+                  (assoc state
+                         :facing (next-facing (:facing state))
+                         :cursor-size [sd sh sw]))
                 state)
 
         ;; Place piece (Space with debounce)

@@ -242,7 +242,21 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
          (cpp/wrap_glGetUniformLocation shader "model")
          (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
         ;; Draw course
-        (course/draw-course state {:shader shader})
+        (course/draw-course new-state {:shader shader})
+        ;; Draw ghost piece preview (transparent)
+        (cpp/wrap_glEnable gl/GL_BLEND)
+        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+        (cpp/wrap_glUniform1i
+         (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
+         (cpp/int 1))
+        (cpp/wrap_glUniform1i
+         (cpp/wrap_glGetUniformLocation shader "uHasBaseColorTex")
+         (cpp/int 0))
+        (course/draw-ghost new-state {:shader shader})
+        (cpp/wrap_glUniform1i
+         (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
+         (cpp/int 0))
+        (cpp/wrap_glDisable gl/GL_BLEND)
         ;; Draw cursor with line shader
         (cpp/wrap_glUseProgram line-shader)
         (cpp/wrap_glUniformMatrix4fv
@@ -358,7 +372,8 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         (if (= (:mode state) :build)
           ;; Build mode: editor handles input, draw returns updated state
           (let [edited (editor/handle-build-input state input)
-                rendered (draw-3D context edited input dt)]
+                with-ghost (course/update-ghost edited)
+                rendered (draw-3D context with-ghost input dt)]
             (reset! state-atom rendered))
 
           ;; Test mode: physics + animation

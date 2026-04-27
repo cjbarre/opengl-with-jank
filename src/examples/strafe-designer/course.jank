@@ -104,6 +104,46 @@
                :collision (rebuild-collision grid-size new-pieces)))
       state)))
 
+(defn make-ghost-piece
+  "Build a piece map from current editor cursor state."
+  [state]
+  {:type (:piece-type state)
+   :pos (:cursor-pos state)
+   :size (:cursor-size state)
+   :facing (:facing state)
+   :texture "textures/base"})
+
+(defn update-ghost
+  "Regenerate ghost preview VAO if cursor state changed.
+   Returns updated state with :ghost-vao data."
+  [state]
+  (let [ghost-key [(:piece-type state) (:cursor-pos state)
+                   (:cursor-size state) (:facing state)]
+        prev-key (:ghost-key state)]
+    (if (= ghost-key prev-key)
+      state
+      (let [piece (make-ghost-piece state)
+            vao-data (upload-piece (:grid-size state) piece)]
+        (assoc state
+               :ghost-key ghost-key
+               :ghost-vao vao-data)))))
+
+(defn draw-ghost
+  "Draw the ghost piece preview with transparency."
+  [state {:keys [shader]}]
+  (when-let [{:keys [vao index-count color]} (:ghost-vao state)]
+    (let [[r g b _] color]
+      ;; Semi-transparent
+      (cpp/wrap_glUniform4f
+       (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor")
+       r g b 0.4)
+      (cpp/wrap_glBindVertexArray vao)
+      (cpp/wrap_glDrawElements
+       gl/GL_TRIANGLES
+       (cpp/int index-count)
+       gl/GL_UNSIGNED_INT
+       (cpp/voidify_int (cpp/int 0))))))
+
 (defn draw-course
   "Draw all piece meshes."
   [state {:keys [shader] :as context}]
