@@ -66,35 +66,31 @@
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_TAB) gl/GLFW_PRESS) (assoc :toggle-mode true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_BACKSPACE) gl/GLFW_PRESS) (assoc :remove-piece true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_R) gl/GLFW_PRESS) (assoc :rotate true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_Q) gl/GLFW_PRESS) (assoc :raise true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_E) gl/GLFW_PRESS) (assoc :lower true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_UP) gl/GLFW_PRESS) (assoc :arrow-up true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_DOWN) gl/GLFW_PRESS) (assoc :arrow-down true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT) gl/GLFW_PRESS) (assoc :arrow-left true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT) gl/GLFW_PRESS) (assoc :arrow-right true)
+      ;; Cursor cluster: I/K fwd/back, J/L left/right, U/O Y down/up.
+      ;; Hold Shift on the same key to resize that axis instead.
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_I) gl/GLFW_PRESS) (assoc :cursor-fwd true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_K) gl/GLFW_PRESS) (assoc :cursor-back true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_J) gl/GLFW_PRESS) (assoc :cursor-left true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_L) gl/GLFW_PRESS) (assoc :cursor-right true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_U) gl/GLFW_PRESS) (assoc :cursor-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_O) gl/GLFW_PRESS) (assoc :cursor-up true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_1) gl/GLFW_PRESS) (assoc :num-1 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_2) gl/GLFW_PRESS) (assoc :num-2 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_3) gl/GLFW_PRESS) (assoc :num-3 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :num-4 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :num-5 true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :num-6 true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_F1) gl/GLFW_PRESS) (assoc :f1-pressed true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_F3) gl/GLFW_PRESS) (assoc :f3-pressed true)
       (= (cpp/glfwGetKey w gl/GLFW_KEY_F4) gl/GLFW_PRESS) (assoc :f4-pressed true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F6) gl/GLFW_PRESS) (assoc :save true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F7) gl/GLFW_PRESS) (assoc :load true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_Z) gl/GLFW_PRESS) (assoc :undo true)
-      ;; Resize keys: ,. for width, ;' for depth, -= for height
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_COMMA) gl/GLFW_PRESS) (assoc :width-down true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_PERIOD) gl/GLFW_PRESS) (assoc :width-up true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_SEMICOLON) gl/GLFW_PRESS) (assoc :depth-down true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_APOSTROPHE) gl/GLFW_PRESS) (assoc :depth-up true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_MINUS) gl/GLFW_PRESS) (assoc :height-down true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_EQUAL) gl/GLFW_PRESS) (assoc :height-up true)
       ;; Per-piece signature parameter
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT_BRACKET) gl/GLFW_PRESS) (assoc :param-down true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT_BRACKET) gl/GLFW_PRESS) (assoc :param-up true)
-      ;; Shift modifier for x2 step / secondary param
+      ;; Shift modifier: flips cursor cluster into resize mode; alt-param for [/]
       (or (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT_SHIFT) gl/GLFW_PRESS)
           (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT_SHIFT) gl/GLFW_PRESS))
       (assoc :shift-held true))))
@@ -232,7 +228,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
   [piece-type piece-params]
   (let [p (get piece-params piece-type {})]
     (case piece-type
-      (:platform :wall :pillar) (str "tilt:" (or (:tilt-deg p) 0) "deg")
+      (:platform :wall) (str "tilt:" (or (:tilt-deg p) 0) "deg")
       :curve (str "arc:" (or (:arc-deg p) 90) "deg segs:" (or (:segments p) 12))
       :stairs (str "steps:" (or (:steps p) 4))
       "")))
@@ -241,13 +237,61 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
   "Hint line for piece-specific [ ] keys."
   [piece-type]
   (case piece-type
-    (:platform :wall :pillar) "[ ]:tilt"
+    (:platform :wall) "[ ]:tilt"
     :curve "[ ]:arc Sh+[]:segs"
     :stairs "[ ]:steps"
     ""))
 
+(def build-bindings
+  [["IJKL"          "Move cursor (XZ, camera-relative)"]
+   ["U / O"         "Cursor down / up (Y)"]
+   ["Shift+IJKL/UO" "Resize W / D / H"]
+   ["1 - 5"         "Piece type (platform/ramp/wall/stairs/curve)"]
+   ["R"             "Rotate facing"]
+   ["[  ]"          "Tilt / arc / steps (piece signature)"]
+   ["Sh+[  ]"       "Alt param (curve segments, fine tilt)"]
+   ["Space"         "Place piece"]
+   ["Bksp"          "Remove piece at cursor"]
+   ["Z"             "Undo"]
+   ["Tab"           "Switch to test mode"]
+   ["F5 / F6 / F7"  "Export .map / Save course / Load course"]
+   ["F1"            "Toggle this overlay"]])
+
+(def test-bindings
+  [["WASD"          "Move"]
+   ["Mouse"         "Look"]
+   ["Space"         "Jump (hold for higher)"]
+   ["Ctrl"          "Crouch"]
+   ["Tab"           "Switch to build mode"]
+   ["F3"            "Debug overlay"]
+   ["F4"            "Strafehelper"]
+   ["F1"            "Toggle this overlay"]])
+
+(defn draw-controls-overlay
+  "Render a key-bindings list pinned center-left. Mode is :build or :test."
+  [mode]
+  (let [bindings (if (= mode :build) build-bindings test-bindings)
+        title (if (= mode :build) "BUILD CONTROLS" "TEST CONTROLS")
+        x-key 360.0
+        x-desc 580.0
+        y0 110.0
+        line-h 26.0
+        title-color [1.0 0.95 0.2]
+        key-color [0.6 1.0 1.0]
+        desc-color [0.85 0.85 0.85]]
+    (text/render-text title x-key (- y0 36.0) title-color 1280 720)
+    (loop [i 0]
+      (when (< i (count bindings))
+        (let [pair (get bindings i)
+              k (get pair 0)
+              d (get pair 1)
+              y (+ y0 (* line-h (double i)))]
+          (text/render-text k x-key y key-color 1280 720)
+          (text/render-text d x-desc y desc-color 1280 720))
+        (recur (inc i))))))
+
 (defn draw-hud
-  "Draw build mode HUD text."
+  "Draw build mode HUD text. Active param flashes yellow briefly."
   [state]
   (let [type-name (name (:piece-type state))
         [cx cy cz] (:cursor-pos state)
@@ -256,12 +300,25 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         piece-count (count (:pieces state))
         piece-params (:piece-params state)
         param-summary (piece-param-summary (:piece-type state) piece-params)
-        param-hint (piece-hint (:piece-type state))]
-    (text/render-text (str "BUILD | " type-name "  W" sx " H" sy " D" sz "  facing:" facing-name "  " param-summary)
-                      10.0 30.0 [0.0 1.0 1.0] 1280 720)
+        param-hint (piece-hint (:piece-type state))
+        flash (:param-flash state)
+        active-key (when (and flash (< (cpp/glfwGetTime) (or (:until flash) 0)))
+                     (:key flash))
+        cyan [0.0 1.0 1.0]
+        yellow [1.0 0.95 0.2]
+        size-color (if (or (= active-key :width)
+                            (= active-key :height)
+                            (= active-key :depth))
+                     yellow cyan)
+        param-color (if (= active-key :param) yellow cyan)]
+    ;; Left half: BUILD | type | size (flashes yellow on resize)
+    (let [left-text (str "BUILD | " type-name "  W" sx " H" sy " D" sz "  facing:" facing-name)]
+      (text/render-text left-text 10.0 30.0 size-color 1280 720))
+    ;; Right half: param summary (flashes yellow on param change)
+    (text/render-text param-summary 700.0 30.0 param-color 1280 720)
     (text/render-text (str "Cursor: " cx ", " cy ", " cz " | Pieces: " piece-count)
                       10.0 55.0 [0.8 0.8 0.8] 1280 720)
-    (text/render-text (str "arrows:move Q/E:height ,.:W ;':D -=:H " param-hint " R:rotate Space:place Bksp:remove Z:undo Tab:test F5/F6/F7")
+    (text/render-text (str "IJKL:move U/O:Y  Sh+IJKL/UO:resize  " param-hint "  R:rotate Space:place Bksp:remove Z:undo Tab:test  F1:help")
                       10.0 700.0 [0.5 0.5 0.5] 1280 720)
     (when (:export-msg state)
       (text/render-text "Exported output.map!" 500.0 360.0 [0.0 1.0 0.5] 1280 720))))
@@ -332,6 +389,8 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         (cpp/wrap_glDisable gl/GL_BLEND)
         ;; Draw HUD
         (draw-hud new-state)
+        (when (:controls-visible new-state)
+          (draw-controls-overlay :build))
         new-state)
 
       ;; Test mode: third-person camera + player
@@ -381,7 +440,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
                 speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
                                        (cpp/* (cpp/float vz) (cpp/float vz))))
                 grounded (:grounded? state false)]
-            (text/render-text "TEST MODE | Tab:build F3:debug F4:strafe" 10.0 30.0 [1.0 0.8 0.0] 1280 720)
+            (text/render-text "TEST MODE | Tab:build F3:debug F4:strafe F1:help" 10.0 30.0 [1.0 0.8 0.0] 1280 720)
             (text/render-text (str "FPS: " (int fps)) 10.0 55.0 [1.0 1.0 1.0] 1280 720)
             (text/render-text (str "Pos: " (int px) ", " (int py) ", " (int pz))
                               10.0 80.0 [0.8 0.8 0.8] 1280 720)
@@ -394,6 +453,8 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
                 yaw (:yaw state 0.0)
                 grounded (:grounded? state false)]
             (strafehelper/render-strafehelper (:gfx2d context) [vx vy vz] yaw grounded 1280 720)))
+        (when (:controls-visible state)
+          (draw-controls-overlay :test))
         state))))
 
 ;; ============================================================================
@@ -420,6 +481,11 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           ;; Both modes capture cursor - reset init so mouse doesn't jump
           (reset! (:cursor/initialized? context) false)))
       (swap! state-atom assoc :tab-was-pressed (:toggle-mode input))
+
+      ;; F1 toggle controls overlay (with debounce)
+      (when (and (:f1-pressed input) (not (:f1-was-pressed @state-atom)))
+        (swap! state-atom update :controls-visible not))
+      (swap! state-atom assoc :f1-was-pressed (:f1-pressed input))
 
       ;; F3 toggle debug overlay (with debounce)
       (when (and (:f3-pressed input) (not (:f3-was-pressed @state-atom)))
@@ -462,7 +528,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
       (let [state @state-atom]
         (if (= (:mode state) :build)
           ;; Build mode: editor handles input, draw returns updated state
-          (let [edited (editor/handle-build-input state input)
+          (let [edited (editor/handle-build-input state input (cpp/glfwGetTime))
                 with-ghost (course/update-ghost edited)
                 rendered (draw-3D context with-ghost input dt)]
             (reset! state-atom rendered))
@@ -563,7 +629,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
                  :cursor/pitch (math/gimmie :boxed :float 15.0)
                  :cursor/initialized? (atom false)}]
 
-    (println "Build mode ready. Arrow keys to move cursor, 1-6 for pieces, Space to place, Tab to test.")
+    (println "Build mode ready. IJKL/UO to move cursor, Shift+same to resize, 1-5 for pieces, Space to place, Tab to test.")
     (run-loop context state-atom)
 
     (cpp/glfwTerminate)

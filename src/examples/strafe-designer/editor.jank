@@ -2,12 +2,11 @@
   (:require [examples.strafe-designer.course :as course]))
 
 ;; Piece types mapped to number keys, with default sizes [w h d]
-(def piece-types [:platform :ramp :wall :pillar :stairs :curve])
+(def piece-types [:platform :ramp :wall :stairs :curve])
 (def default-sizes
   {:platform [4 1 4]
    :ramp     [4 2 4]
    :wall     [4 3 1]
-   :pillar   [1 4 1]
    :stairs   [3 4 4]
    :curve    [2 1 6]})
 (def facings [:north :east :south :west])
@@ -55,7 +54,7 @@
   [piece-params piece-type dir shift?]
   (let [params (get piece-params piece-type {})]
     (case piece-type
-      (:platform :wall :pillar)
+      (:platform :wall)
       ;; Tilt angle in 5-deg steps, -45 to +45
       (let [cur (or (:tilt-deg params) 0)
             step (if shift? 10 5)
@@ -101,40 +100,47 @@
       2 {:fwd [-1 0] :right [0 -1]}   ;; looking -X
       3 {:fwd [0 -1] :right [1 0]}))) ;; looking -Z
 
+(defn- set-flash
+  "Mark a parameter key as recently changed so the HUD can highlight it."
+  [state key now]
+  (assoc state :param-flash {:key key :until (+ (double now) 0.4)}))
+
 (defn handle-build-input
   "Process build-mode input and return updated state.
-   Input is a map of pressed keys. Debounce keys are tracked in state."
-  [state input]
+   Input is a map of pressed keys. Debounce keys are tracked in state.
+   now-time is current time in seconds (from glfwGetTime)."
+  [state input now-time]
   (let [{:keys [cursor-pos cursor-size piece-type facing grid-size]} state
         [cx cy cz] cursor-pos
         ;; Get camera-relative grid directions
         {:keys [fwd right]} (camera-grid-dirs (or (:yaw state) -90.0))
         [fwd-x fwd-z] fwd
         [right-x right-z] right
+        shift? (:shift-held input)
 
-        ;; Cursor movement relative to camera (with debounce)
+        ;; Cursor XZ movement (I/K/J/L without Shift; with Shift these resize)
         state (cond
-                (and (:arrow-up input) (not (:up-was-pressed state)))
+                (and (:cursor-fwd input) (not (:i-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [(- cx fwd-x) cy (- cz fwd-z)])
 
-                (and (:arrow-down input) (not (:down-was-pressed state)))
+                (and (:cursor-back input) (not (:k-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [(+ cx fwd-x) cy (+ cz fwd-z)])
 
-                (and (:arrow-left input) (not (:left-was-pressed state)))
+                (and (:cursor-left input) (not (:j-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [(+ cx right-x) cy (+ cz right-z)])
 
-                (and (:arrow-right input) (not (:right-was-pressed state)))
+                (and (:cursor-right input) (not (:l-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [(- cx right-x) cy (- cz right-z)])
 
                 :else state)
 
-        ;; Height (Q/E with debounce)
+        ;; Cursor Y movement (U/O without Shift; with Shift these resize height)
         [cx2 cy2 cz2] (:cursor-pos state)
         state (cond
-                (and (:raise input) (not (:q-was-pressed state)))
+                (and (:cursor-up input) (not (:o-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [cx2 (inc cy2) cz2])
 
-                (and (:lower input) (not (:e-was-pressed state)))
+                (and (:cursor-down input) (not (:u-was-pressed state)) (not shift?))
                 (assoc state :cursor-pos [cx2 (dec cy2) cz2])
 
                 :else state)
@@ -165,30 +171,44 @@
                          :cursor-size (if swap-dims [sd sh sw] [sw sh sd])))
                 state)
 
-        ;; Resize keys (with debounce). Shift modifier doubles step.
-        shift? (:shift-held input)
-        step (if shift? 2 1)
+        ;; Resize: Shift + cursor cluster keys (J/L width, I/K depth, U/O height)
         state (cond
-                (and (:width-down input) (not (:wd-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :x (- step)))
-                (and (:width-up input) (not (:wu-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :x step))
-                (and (:height-down input) (not (:hd-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :y (- step)))
-                (and (:height-up input) (not (:hu-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :y step))
-                (and (:depth-down input) (not (:dd-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :z (- step)))
-                (and (:depth-up input) (not (:du-was-pressed state)))
-                (assoc state :cursor-size (adjust-size (:cursor-size state) :z step))
+                (and shift? (:cursor-left input) (not (:j-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :x -1))
+                    (set-flash :width now-time))
+                (and shift? (:cursor-right input) (not (:l-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :x 1))
+                    (set-flash :width now-time))
+                (and shift? (:cursor-down input) (not (:u-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :y -1))
+                    (set-flash :height now-time))
+                (and shift? (:cursor-up input) (not (:o-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :y 1))
+                    (set-flash :height now-time))
+                (and shift? (:cursor-back input) (not (:k-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :z -1))
+                    (set-flash :depth now-time))
+                (and shift? (:cursor-fwd input) (not (:i-was-pressed state)))
+                (-> state
+                    (assoc :cursor-size (adjust-size (:cursor-size state) :z 1))
+                    (set-flash :depth now-time))
                 :else state)
 
         ;; Per-piece signature param ([ ] keys, with Shift modifier)
         state (cond
                 (and (:param-down input) (not (:pd-was-pressed state)))
-                (update state :piece-params adjust-piece-param (:piece-type state) -1 shift?)
+                (-> state
+                    (update :piece-params adjust-piece-param (:piece-type state) -1 shift?)
+                    (set-flash :param now-time))
                 (and (:param-up input) (not (:pu-was-pressed state)))
-                (update state :piece-params adjust-piece-param (:piece-type state) 1 shift?)
+                (-> state
+                    (update :piece-params adjust-piece-param (:piece-type state) 1 shift?)
+                    (set-flash :param now-time))
                 :else state)
 
         ;; Place piece (Space with debounce) - includes piece-params for this type
@@ -216,12 +236,12 @@
 
         ;; Track key states for debounce
         state (assoc state
-                     :up-was-pressed (:arrow-up input)
-                     :down-was-pressed (:arrow-down input)
-                     :left-was-pressed (:arrow-left input)
-                     :right-was-pressed (:arrow-right input)
-                     :q-was-pressed (:raise input)
-                     :e-was-pressed (:lower input)
+                     :i-was-pressed (:cursor-fwd input)
+                     :k-was-pressed (:cursor-back input)
+                     :j-was-pressed (:cursor-left input)
+                     :l-was-pressed (:cursor-right input)
+                     :u-was-pressed (:cursor-down input)
+                     :o-was-pressed (:cursor-up input)
                      :r-was-pressed (:rotate input)
                      :space-was-pressed (:place input)
                      :backspace-was-pressed (:remove-piece input)
@@ -232,12 +252,6 @@
                      :num5-was-pressed (:num-5 input)
                      :num6-was-pressed (:num-6 input)
                      :z-was-pressed (:undo input)
-                     :wd-was-pressed (:width-down input)
-                     :wu-was-pressed (:width-up input)
-                     :hd-was-pressed (:height-down input)
-                     :hu-was-pressed (:height-up input)
-                     :dd-was-pressed (:depth-down input)
-                     :du-was-pressed (:depth-up input)
                      :pd-was-pressed (:param-down input)
                      :pu-was-pressed (:param-up input))]
     state))

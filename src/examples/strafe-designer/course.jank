@@ -16,7 +16,6 @@
   {:platform [0.55 0.58 0.62 1.0]
    :wall     [0.65 0.50 0.40 1.0]
    :ramp     [0.45 0.62 0.45 1.0]
-   :pillar   [0.58 0.55 0.65 1.0]
    :stairs   [0.50 0.60 0.55 1.0]
    :curve    [0.50 0.55 0.68 1.0]})
 
@@ -34,7 +33,6 @@
    ;; Per-piece signature parameters (persist across piece-type switches)
    :piece-params {:platform {:tilt-deg 0}
                   :wall     {:tilt-deg 0}
-                  :pillar   {:tilt-deg 0}
                   :curve    {:arc-deg 90 :segments 12}
                   :stairs   {:steps 4}}
    ;; Course data
@@ -134,20 +132,25 @@
       state)))
 
 (defn make-ghost-piece
-  "Build a piece map from current editor cursor state."
+  "Build a piece map from current editor cursor state.
+   Merges in the piece's signature parameters (tilt, arc, segments, steps)."
   [state]
-  {:type (:piece-type state)
-   :pos (:cursor-pos state)
-   :size (:cursor-size state)
-   :facing (:facing state)
-   :texture "textures/base"})
+  (let [pt (:piece-type state)
+        pparams (get-in state [:piece-params pt] {})]
+    (merge {:type pt
+            :pos (:cursor-pos state)
+            :size (:cursor-size state)
+            :facing (:facing state)
+            :texture "textures/base"}
+           pparams)))
 
 (defn update-ghost
-  "Regenerate ghost preview VAO if cursor state changed.
-   Returns updated state with :ghost-vao data."
+  "Regenerate ghost preview VAO if cursor state OR piece-params changed."
   [state]
-  (let [ghost-key [(:piece-type state) (:cursor-pos state)
-                   (:cursor-size state) (:facing state)]
+  (let [pt (:piece-type state)
+        pparams (get-in state [:piece-params pt] {})
+        ghost-key [pt (:cursor-pos state)
+                   (:cursor-size state) (:facing state) pparams]
         prev-key (:ghost-key state)]
     (if (= ghost-key prev-key)
       state
