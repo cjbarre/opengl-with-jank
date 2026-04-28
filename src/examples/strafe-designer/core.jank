@@ -83,7 +83,21 @@
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F5) gl/GLFW_PRESS) (assoc :export true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F6) gl/GLFW_PRESS) (assoc :save true)
       (= (cpp/glfwGetKey w #cpp GLFW_KEY_F7) gl/GLFW_PRESS) (assoc :load true)
-      (= (cpp/glfwGetKey w #cpp GLFW_KEY_Z) gl/GLFW_PRESS) (assoc :undo true))))
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_Z) gl/GLFW_PRESS) (assoc :undo true)
+      ;; Resize keys: ,. for width, ;' for depth, -= for height
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_COMMA) gl/GLFW_PRESS) (assoc :width-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_PERIOD) gl/GLFW_PRESS) (assoc :width-up true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_SEMICOLON) gl/GLFW_PRESS) (assoc :depth-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_APOSTROPHE) gl/GLFW_PRESS) (assoc :depth-up true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_MINUS) gl/GLFW_PRESS) (assoc :height-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_EQUAL) gl/GLFW_PRESS) (assoc :height-up true)
+      ;; Per-piece signature parameter
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT_BRACKET) gl/GLFW_PRESS) (assoc :param-down true)
+      (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT_BRACKET) gl/GLFW_PRESS) (assoc :param-up true)
+      ;; Shift modifier for x2 step / secondary param
+      (or (= (cpp/glfwGetKey w #cpp GLFW_KEY_LEFT_SHIFT) gl/GLFW_PRESS)
+          (= (cpp/glfwGetKey w #cpp GLFW_KEY_RIGHT_SHIFT) gl/GLFW_PRESS))
+      (assoc :shift-held true))))
 
 ;; ============================================================================
 ;; Cursor / Time
@@ -213,6 +227,25 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
     (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/int 24))
     (cpp/wrap_glBindVertexArray (cpp/int 0))))
 
+(defn- piece-param-summary
+  "Build a string showing the active piece-specific parameter."
+  [piece-type piece-params]
+  (let [p (get piece-params piece-type {})]
+    (case piece-type
+      (:platform :wall :pillar) (str "tilt:" (or (:tilt-deg p) 0) "deg")
+      :curve (str "arc:" (or (:arc-deg p) 90) "deg segs:" (or (:segments p) 12))
+      :stairs (str "steps:" (or (:steps p) 4))
+      "")))
+
+(defn- piece-hint
+  "Hint line for piece-specific [ ] keys."
+  [piece-type]
+  (case piece-type
+    (:platform :wall :pillar) "[ ]:tilt"
+    :curve "[ ]:arc Sh+[]:segs"
+    :stairs "[ ]:steps"
+    ""))
+
 (defn draw-hud
   "Draw build mode HUD text."
   [state]
@@ -220,14 +253,16 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         [cx cy cz] (:cursor-pos state)
         facing-name (name (:facing state))
         [sx sy sz] (:cursor-size state)
-        piece-count (count (:pieces state))]
-    (text/render-text (str "BUILD MODE | " type-name " " sx "x" sy "x" sz " " facing-name)
+        piece-count (count (:pieces state))
+        piece-params (:piece-params state)
+        param-summary (piece-param-summary (:piece-type state) piece-params)
+        param-hint (piece-hint (:piece-type state))]
+    (text/render-text (str "BUILD | " type-name "  W" sx " H" sy " D" sz "  facing:" facing-name "  " param-summary)
                       10.0 30.0 [0.0 1.0 1.0] 1280 720)
     (text/render-text (str "Cursor: " cx ", " cy ", " cz " | Pieces: " piece-count)
                       10.0 55.0 [0.8 0.8 0.8] 1280 720)
-    (text/render-text "Arrows:move Q/E:height 1-6:type R:rotate Space:place Bksp:remove Z:undo Tab:test F5:export"
+    (text/render-text (str "arrows:move Q/E:height ,.:W ;':D -=:H " param-hint " R:rotate Space:place Bksp:remove Z:undo Tab:test F5/F6/F7")
                       10.0 700.0 [0.5 0.5 0.5] 1280 720)
-    ;; Export confirmation flash
     (when (:export-msg state)
       (text/render-text "Exported output.map!" 500.0 360.0 [0.0 1.0 0.5] 1280 720))))
 

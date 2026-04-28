@@ -31,6 +31,12 @@
    :cursor-size [4 1 4]
    :piece-type :platform
    :facing :north
+   ;; Per-piece signature parameters (persist across piece-type switches)
+   :piece-params {:platform {:tilt-deg 0}
+                  :wall     {:tilt-deg 0}
+                  :pillar   {:tilt-deg 0}
+                  :curve    {:arc-deg 90 :segments 12}
+                  :stairs   {:steps 4}}
    ;; Course data
    :grid-size 2
    :pieces []

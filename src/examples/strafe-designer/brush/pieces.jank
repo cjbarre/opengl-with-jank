@@ -41,24 +41,80 @@
       {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]
        :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}]}))
 
+(defn- make-rotated-box-brush
+  "Create a brush from 8 arbitrary 3D corners.
+   b0..b3: bottom corners (CCW from above), t0..t3: top corners (each above corresponding b_i)."
+  [b0 b1 b2 b3 t0 t1 t2 t3 tex]
+  (let [dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        f (fn [v] (mapv float v))]
+    {:planes
+     [(merge {:p1 (f b0) :p2 (f b1) :p3 (f b2)} dt)
+      (merge {:p1 (f t1) :p2 (f t0) :p3 (f t3)} dt)
+      (merge {:p1 (f b0) :p2 (f t0) :p3 (f t1)} dt)
+      (merge {:p1 (f b1) :p2 (f t1) :p3 (f t2)} dt)
+      (merge {:p1 (f b2) :p2 (f t2) :p3 (f t3)} dt)
+      (merge {:p1 (f b3) :p2 (f t3) :p3 (f t0)} dt)]}))
+
+(defn- rotate-around
+  "Rotate point [x y z] around an axis through center by angle (radians).
+   axis: :x or :z."
+  [[x y z] [cx cy cz] axis angle]
+  (let [c (cpp/cos (cpp/float angle))
+        s (cpp/sin (cpp/float angle))
+        dx (- x cx) dy (- y cy) dz (- z cz)]
+    (case axis
+      :x [(+ cx dx)
+          (+ cy (- (* (double c) dy) (* (double s) dz)))
+          (+ cz (+ (* (double s) dy) (* (double c) dz)))]
+      :z [(+ cx (- (* (double c) dx) (* (double s) dy)))
+          (+ cy (+ (* (double s) dx) (* (double c) dy)))
+          (+ cz dz)])))
+
+(defn- make-tilted-box-brush
+  "Create a tilted box brush. tilt-deg is rotation around the axis perpendicular to facing.
+   When tilt-deg is 0/nil, equivalent to make-box-brush."
+  [origin width height depth tilt-deg facing tex]
+  (if (or (nil? tilt-deg) (zero? tilt-deg))
+    (make-box-brush origin width height depth tex)
+    (let [[ox oy oz] origin
+          x1 (float ox) y1 (float oy) z1 (float oz)
+          x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+          center [(/ (+ x1 x2) 2.0) (/ (+ y1 y2) 2.0) (/ (+ z1 z2) 2.0)]
+          ;; Rotation axis: north/south face Z so tilt around X; east/west face X so tilt around Z
+          axis (case (or facing :north) (:north :south) :x (:east :west) :z)
+          sign (case (or facing :north) (:north :east) 1.0 (:south :west) -1.0)
+          angle (* (double sign) (* (double tilt-deg) (/ 3.14159265 180.0)))
+          b0 [x1 y1 z1] b1 [x2 y1 z1] b2 [x2 y1 z2] b3 [x1 y1 z2]
+          t0 [x1 y2 z1] t1 [x2 y2 z1] t2 [x2 y2 z2] t3 [x1 y2 z2]]
+      (make-rotated-box-brush
+       (rotate-around b0 center axis angle)
+       (rotate-around b1 center axis angle)
+       (rotate-around b2 center axis angle)
+       (rotate-around b3 center axis angle)
+       (rotate-around t0 center axis angle)
+       (rotate-around t1 center axis angle)
+       (rotate-around t2 center axis angle)
+       (rotate-around t3 center axis angle)
+       tex))))
+
 (defmulti piece->brushes
   "Convert a placed piece to a vector of brushes."
   (fn [_grid-size piece] (:type piece)))
 
 (defmethod piece->brushes :platform
-  [grid-size {:keys [pos size texture]}]
+  [grid-size {:keys [pos size facing texture tilt-deg]}]
   (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
-    [(make-box-brush origin width height depth texture)]))
+    [(make-tilted-box-brush origin width height depth tilt-deg (or facing :north) texture)]))
 
 (defmethod piece->brushes :wall
-  [grid-size {:keys [pos size texture]}]
+  [grid-size {:keys [pos size facing texture tilt-deg]}]
   (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
-    [(make-box-brush origin width height depth texture)]))
+    [(make-tilted-box-brush origin width height depth tilt-deg (or facing :north) texture)]))
 
 (defmethod piece->brushes :pillar
-  [grid-size {:keys [pos size texture]}]
+  [grid-size {:keys [pos size facing texture tilt-deg]}]
   (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
-    [(make-box-brush origin width height depth texture)]))
+    [(make-tilted-box-brush origin width height depth tilt-deg (or facing :north) texture)]))
 
 (defmethod piece->brushes :ramp
   [grid-size {:keys [pos size facing texture]}]
@@ -117,28 +173,29 @@
                  (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x1 y2 z2]} dt)]})]))
 
 (defmethod piece->brushes :stairs
-  [grid-size {:keys [pos size facing texture]}]
+  [grid-size {:keys [pos size facing texture steps]}]
   (let [[gx gy gz] pos
         [sx sy sz] size
         dir (or facing :north)
-        ;; Step direction determines which axis advances and step count
-        ;; North/south: step along Z, wide in X. step-size = [sx, h, 1]
-        ;; East/west: step along X, wide in Z. step-size = [1, h, sz]
-        [step-count advance-fn size-fn]
+        ;; Step direction determines which axis advances; depth dimension along that axis
+        ;; If :steps is provided, use that count. Else derive from depth.
+        depth-along-step (case dir (:north :south) sz (:east :west) sx)
+        step-count (or steps depth-along-step)
+        ;; Step depth in grid units (may be fractional if steps != depth)
+        step-depth (/ (float depth-along-step) step-count)
+        step-height (/ (float sy) step-count)
+        [advance-fn size-fn]
         (case dir
-          :north [sz
-                  (fn [i h] [gx (+ gy (* i h)) (+ gz i)])
-                  (fn [h] [sx h 1])]
-          :south [sz
-                  (fn [i h] [gx (+ gy (* i h)) (- (+ gz (dec sz)) i)])
-                  (fn [h] [sx h 1])]
-          :east  [sx
-                  (fn [i h] [(+ gx i) (+ gy (* i h)) gz])
-                  (fn [h] [1 h sz])]
-          :west  [sx
-                  (fn [i h] [(- (+ gx (dec sx)) i) (+ gy (* i h)) gz])
-                  (fn [h] [1 h sz])])
-        step-height (/ (float sy) step-count)]
+          :north [(fn [i h] [gx (+ gy (* i h)) (+ gz (* i step-depth))])
+                  (fn [h] [sx h step-depth])]
+          :south [(fn [i h] [gx (+ gy (* i h))
+                             (- (+ gz depth-along-step) (* (inc i) step-depth))])
+                  (fn [h] [sx h step-depth])]
+          :east  [(fn [i h] [(+ gx (* i step-depth)) (+ gy (* i h)) gz])
+                  (fn [h] [step-depth h sz])]
+          :west  [(fn [i h] [(- (+ gx depth-along-step) (* (inc i) step-depth))
+                             (+ gy (* i h)) gz])
+                  (fn [h] [step-depth h sz])])]
     (vec (for [i (range step-count)]
            (let [step-pos (advance-fn i step-height)
                  step-size (size-fn step-height)
@@ -186,15 +243,17 @@
       [c3 c2 c1 c0])))
 
 (defmethod piece->brushes :curve
-  [grid-size {:keys [pos size facing texture]}]
+  [grid-size {:keys [pos size facing texture arc-deg segments]}]
   (let [[gx gy gz] pos
         [sx sy sz] size
-        segments 12
+        segments (or segments 12)
+        arc-deg (or arc-deg 90)
         radius (float (* sz grid-size))
         path-width (float (* sx grid-size))
         thickness (float (* sy grid-size))
         tex (or texture "textures/base")
         pi (float 3.14159265)
+        arc-rad (* (float arc-deg) (/ pi 180.0))
         ox (float (* gx grid-size))
         oy (float (* gy grid-size))
         oz (float (* gz grid-size))
@@ -204,7 +263,7 @@
           :east  [ox             (+ oz radius)  (/ (* 3.0 pi) 2.0)]
           :south [(- ox radius) oz              0.0]
           :west  [ox             (- oz radius)  (/ pi 2.0)])
-        step-angle (/ (/ pi 2.0) segments)
+        step-angle (/ arc-rad segments)
         r-in (- radius (/ path-width 2.0))
         r-out (+ radius (/ path-width 2.0))]
     (vec (for [i (range segments)]

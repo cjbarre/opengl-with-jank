@@ -23,6 +23,67 @@
         next-idx (mod (inc idx) (count facings))]
     (get facings next-idx)))
 
+(defn- clamp [v lo hi]
+  (max lo (min hi v)))
+
+(defn- adjust-size
+  "Adjust cursor-size on a given axis by delta, clamped to bounds."
+  [size axis delta]
+  (let [[w h d] size
+        max-h 16
+        max-wd 32]
+    (case axis
+      :x [(clamp (+ w delta) 1 max-wd) h d]
+      :y [w (clamp (+ h delta) 1 max-h) d]
+      :z [w h (clamp (+ d delta) 1 max-wd)])))
+
+;; Curve arc angle cycle
+(def arc-angles [45 90 135 180 270 360])
+
+(defn- next-arc [cur dir]
+  (let [idx (loop [i 0]
+              (cond
+                (>= i (count arc-angles)) 0
+                (= (get arc-angles i) cur) i
+                :else (recur (inc i))))
+        n (count arc-angles)]
+    (get arc-angles (mod (+ idx dir) n))))
+
+(defn- adjust-piece-param
+  "Adjust the signature parameter for a piece type based on dir (-1 or +1)
+   and shift modifier. Returns updated piece-params map."
+  [piece-params piece-type dir shift?]
+  (let [params (get piece-params piece-type {})]
+    (case piece-type
+      (:platform :wall :pillar)
+      ;; Tilt angle in 5-deg steps, -45 to +45
+      (let [cur (or (:tilt-deg params) 0)
+            step (if shift? 10 5)
+            new (clamp (+ cur (* dir step)) -45 45)]
+        (assoc piece-params piece-type (assoc params :tilt-deg new)))
+
+      :curve
+      (if shift?
+        ;; Shift+[/]: segment count
+        (let [cur (or (:segments params) 12)
+              step 2
+              new (clamp (+ cur (* dir step)) 4 32)]
+          (assoc piece-params piece-type (assoc params :segments new)))
+        ;; [/]: arc angle cycle
+        (let [cur (or (:arc-deg params) 90)
+              new (next-arc cur dir)]
+          (assoc piece-params piece-type (assoc params :arc-deg new))))
+
+      :stairs
+      (let [cur (or (:steps params) 4)
+            cur (if (= cur :auto) 4 cur)
+            step (if shift? 2 1)
+            new (clamp (+ cur (* dir step)) 2 32)]
+        (assoc piece-params piece-type (assoc params :steps new)))
+
+      ;; default: no-op
+      piece-params)))
+
 (defn camera-grid-dirs
   "Get forward [dx dz] and right [dx dz] grid directions based on camera yaw.
    Snaps yaw to nearest 90 degrees."
@@ -104,13 +165,42 @@
                          :cursor-size (if swap-dims [sd sh sw] [sw sh sd])))
                 state)
 
-        ;; Place piece (Space with debounce)
+        ;; Resize keys (with debounce). Shift modifier doubles step.
+        shift? (:shift-held input)
+        step (if shift? 2 1)
+        state (cond
+                (and (:width-down input) (not (:wd-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :x (- step)))
+                (and (:width-up input) (not (:wu-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :x step))
+                (and (:height-down input) (not (:hd-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :y (- step)))
+                (and (:height-up input) (not (:hu-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :y step))
+                (and (:depth-down input) (not (:dd-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :z (- step)))
+                (and (:depth-up input) (not (:du-was-pressed state)))
+                (assoc state :cursor-size (adjust-size (:cursor-size state) :z step))
+                :else state)
+
+        ;; Per-piece signature param ([ ] keys, with Shift modifier)
+        state (cond
+                (and (:param-down input) (not (:pd-was-pressed state)))
+                (update state :piece-params adjust-piece-param (:piece-type state) -1 shift?)
+                (and (:param-up input) (not (:pu-was-pressed state)))
+                (update state :piece-params adjust-piece-param (:piece-type state) 1 shift?)
+                :else state)
+
+        ;; Place piece (Space with debounce) - includes piece-params for this type
         state (if (and (:place input) (not (:space-was-pressed state)))
-                (let [piece {:type (:piece-type state)
-                             :pos (:cursor-pos state)
-                             :size (:cursor-size state)
-                             :facing (:facing state)
-                             :texture "textures/base"}]
+                (let [pt (:piece-type state)
+                      pparams (get-in state [:piece-params pt] {})
+                      piece (merge {:type pt
+                                    :pos (:cursor-pos state)
+                                    :size (:cursor-size state)
+                                    :facing (:facing state)
+                                    :texture "textures/base"}
+                                   pparams)]
                   (course/place-piece state piece))
                 state)
 
@@ -141,7 +231,15 @@
                      :num4-was-pressed (:num-4 input)
                      :num5-was-pressed (:num-5 input)
                      :num6-was-pressed (:num-6 input)
-                     :z-was-pressed (:undo input))]
+                     :z-was-pressed (:undo input)
+                     :wd-was-pressed (:width-down input)
+                     :wu-was-pressed (:width-up input)
+                     :hd-was-pressed (:height-down input)
+                     :hu-was-pressed (:height-up input)
+                     :dd-was-pressed (:depth-down input)
+                     :du-was-pressed (:depth-up input)
+                     :pd-was-pressed (:param-down input)
+                     :pu-was-pressed (:param-up input))]
     state))
 
 (defn cursor-world-pos
