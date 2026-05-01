@@ -10,6 +10,16 @@
   [font-path font-size shader]
   (core/init-font font-path font-size shader))
 
+(defn init-font-from-resource
+  "Initialize font rendering using a TTF stored in the engine resource registry."
+  [resource-name font-size shader]
+  (core/init-font-from-resource resource-name font-size shader))
+
+(defn default-font
+  "Initialize the engine's bundled JetBrains Mono font at the given size."
+  [font-size shader]
+  (core/default-font font-size shader))
+
 (defn render-text
   "Render text at screen position (pixels from top-left).
    text: string to render

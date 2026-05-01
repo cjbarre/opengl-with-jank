@@ -10,13 +10,9 @@
   [{:keys [_max-lines] :as args}]
   (core/create-line-vao args))
 
-(defn update-line-vbo
-  "Updates the VBO with new line vertex data.
-   line-data should be the result from create-line-vao.
-   vertices should be a pointer to float data.
-   line-count is the number of lines."
-  [line-data vertices line-count]
-  (core/update-line-vbo line-data vertices line-count))
+;; update-line-vbo is intentionally not exposed here; see core.jank.
+;; Callers must invoke (cpp/elines.update_line_vbo vbo verts-ptr (cpp/int n))
+;; directly with already-typed C++ values.
 
 (defn bind-line-vao
   "Binds the line VAO for rendering."

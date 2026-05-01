@@ -1,0 +1,6 @@
+(ns engine.resources.interface
+  (:require [engine.resources.core]))
+
+;; Requiring this namespace transitively loads engine.resources.core, whose
+;; top-level form registers all engine-shipped assets. Most consumers do not
+;; touch this directly; engine.shaders and engine.gfx2d.text both depend on it.

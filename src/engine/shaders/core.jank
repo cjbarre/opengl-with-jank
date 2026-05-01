@@ -1,6 +1,7 @@
 (ns engine.shaders.core
   (:require [engine.macros :refer [clet]]
-            [engine.gl.constants :as gl]))
+            [engine.gl.constants :as gl]
+            [engine.resources.interface]))
 
 (cpp/raw
  "#include \"gl_wrappers.h\"
@@ -10,20 +11,31 @@
 ;; Compile shader entirely in C++ to avoid jank memory handling issues
 (cpp/raw "#include \"engine/shaders_impl.h\"")
 
+(defn- shader-type-for
+  [args type]
+  (or (case type
+        :fragment gl/GL_FRAGMENT_SHADER
+        :vertex gl/GL_VERTEX_SHADER
+        :geometry gl/GL_GEOMETRY_SHADER
+        nil)
+      (throw (ex-info "Invalid shader type"
+                      (assoc args :valid-types [:fragment :vertex :geometry])))))
+
 (defn compile-shader
   [{:keys [path type] :as args}]
-  (let [shader-type (case type
-                      :fragment gl/GL_FRAGMENT_SHADER
-                      :vertex gl/GL_VERTEX_SHADER
-                      :geometry gl/GL_GEOMETRY_SHADER
-                      nil)]
-    (when (not shader-type)
-      (throw (ex-info "Invalid shader type"
-                      (assoc args :valid-types [:fragment :vertex :geometry]))))
-    (let [shader (cpp/eshaders.compile_shader_from_file path shader-type)]
-      (when (= shader 0)
-        (throw (ex-info "Shader compilation failed" args)))
-      shader)))
+  (let [shader-type (shader-type-for args type)
+        shader (cpp/eshaders.compile_shader_from_file path shader-type)]
+    (when (= shader 0)
+      (throw (ex-info "Shader compilation failed" args)))
+    shader))
+
+(defn compile-shader-from-resource
+  [{:keys [resource type] :as args}]
+  (let [shader-type (shader-type-for args type)
+        shader (cpp/eshaders.compile_shader_from_resource resource shader-type)]
+    (when (= shader 0)
+      (throw (ex-info "Shader compilation failed (from resource)" args)))
+    shader))
 
 (defn load-shader-program
   [{:keys [vertex-shader-path
@@ -82,6 +94,69 @@
          _ (cpp/wrap_glDeleteShader fragment-shader)]
 
         program))
+
+(defn load-shader-program-from-resource
+  "Load a shader program from the engine resource registry. Pass :vertex-resource
+   and :fragment-resource (and optionally :geometry-resource)."
+  [{:keys [vertex-resource
+           geometry-resource
+           fragment-resource]
+    :as args}]
+  (let [vs (compile-shader-from-resource {:resource vertex-resource :type :vertex})
+        gs (when geometry-resource
+             (compile-shader-from-resource {:resource geometry-resource :type :geometry}))
+        fs (compile-shader-from-resource {:resource fragment-resource :type :fragment})]
+    (clet [program (cpp/wrap_glCreateProgram)
+           _ (cpp/wrap_glAttachShader program vs)
+           _ (when gs (cpp/wrap_glAttachShader program gs))
+           _ (cpp/wrap_glAttachShader program fs)
+           _ (cpp/wrap_glLinkProgram program)
+           success? (cpp/int)
+           _ (cpp/wrap_glGetProgramiv program gl/GL_LINK_STATUS (cpp/& success?))
+           :when (cpp/! success?)
+           :error (do
+                    (cpp/eshaders.log_link_error program)
+                    (throw (ex-info "Shader program linking failed" args)))
+           _ (cpp/wrap_glDeleteShader vs)
+           _ (when gs (cpp/wrap_glDeleteShader gs))
+           _ (cpp/wrap_glDeleteShader fs)]
+          program)))
+
+(defn default-basic-program
+  "Engine-shipped basic vertex+fragment program (used for solid/textured geometry)."
+  []
+  (load-shader-program-from-resource
+    {:vertex-resource "shaders/basic_vertex.glsl"
+     :fragment-resource "shaders/basic_fragment.glsl"}))
+
+(defn default-line-program
+  "Engine-shipped line-rendering program (vertex + geometry + fragment)."
+  []
+  (load-shader-program-from-resource
+    {:vertex-resource "shaders/line_vertex.glsl"
+     :geometry-resource "shaders/line_geometry.glsl"
+     :fragment-resource "shaders/line_fragment.glsl"}))
+
+(defn default-text-program
+  "Engine-shipped text-rendering program (used by engine.gfx2d.text)."
+  []
+  (load-shader-program-from-resource
+    {:vertex-resource "shaders/text_vertex.glsl"
+     :fragment-resource "shaders/text_fragment.glsl"}))
+
+(defn default-graphics2d-program
+  "Engine-shipped 2D graphics program (used by engine.gfx2d.graphics)."
+  []
+  (load-shader-program-from-resource
+    {:vertex-resource "shaders/graphics2d_vertex.glsl"
+     :fragment-resource "shaders/graphics2d_fragment.glsl"}))
+
+(defn default-skinned-program
+  "Engine-shipped skinned-mesh program (used by engine.gfx3d.animation)."
+  []
+  (load-shader-program-from-resource
+    {:vertex-resource "shaders/skinned_vertex.glsl"
+     :fragment-resource "shaders/skinned_fragment.glsl"}))
 
 (defn create-vertex-array-object
   []

@@ -20,13 +20,11 @@
         vbo (cpp/* vbo-ptr)]
     {:vao vao :vbo vbo :max-lines max-lines}))
 
-(defn update-line-vbo
-  "Updates the VBO with new line vertex data.
-   line-data: map with :vbo key
-   vertices: raw float pointer (from get_vector_data or similar)
-   line-count: number of lines (each line = 2 vertices = 6 floats)"
-  [{:keys [vbo]} vertices line-count]
-  (cpp/elines.update_line_vbo vbo vertices (cpp/int line-count)))
+;; NOTE: update-line-vbo (which would call elines/update_line_vbo with a
+;; raw float* and a GLuint) cannot be expressed as a generic jank fn because
+;; jank's analyzer can't coerce generic args to typed C++ values. Callers
+;; should invoke `(cpp/elines.update_line_vbo vbo verts-ptr (cpp/int n))`
+;; directly from a context where vbo and verts-ptr have known C++ types.
 
 (defn bind-line-vao
   "Binds the line VAO for rendering."

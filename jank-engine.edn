@@ -1,0 +1,9 @@
+;; Default config for running this monorepo as a jank-engine project.
+;;   jank-engine . server
+;; runs the demo server (which is what `examples.demo.core/-main` dispatches on
+;; when given the "server" arg).
+{:entry examples.demo.core
+ :paths ["src"]
+ ;; demo's own *_impl.h files (engine-internal headers like glm, glfw, ozz
+ ;; are auto-registered by the jank-engine binary itself)
+ :includes ["include"]}

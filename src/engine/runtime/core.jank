@@ -1,0 +1,247 @@
+(ns engine.runtime.core
+  "Entry point for the jank-engine runtime binary.
+
+   Bootstrap-requires every engine.* namespace so AOT bakes them all in.
+   -main resolves the game's configuration from a jank-engine.edn config
+   file (in the game dir) merged with CLI flags, then JIT-loads the
+   consumer's entry namespace and invokes its -main."
+  (:require [engine.behavior-tree.interface]
+            [engine.behavior-tree.protocol]
+            [engine.events.interface]
+            [engine.gc.interface]
+            [engine.gfx2d.graphics.interface]
+            [engine.gfx2d.text.interface]
+            [engine.gfx3d.animation.interface]
+            [engine.gfx3d.animation.mesh]
+            [engine.gfx3d.collision.interface]
+            [engine.gfx3d.geometry.interface]
+            [engine.gfx3d.gltf.interface]
+            [engine.gfx3d.gltf.headless]
+            [engine.gfx3d.lines.interface]
+            [engine.gfx3d.textures.interface]
+            [engine.gl.interface]
+            [engine.io.interface]
+            [engine.math.interface]
+            [engine.networking.interface]
+            [engine.networking.protocol]
+            [engine.resources.interface]
+            [engine.shaders.interface]))
+
+(cpp/raw "
+#include <jank/runtime/context.hpp>
+#include <jank/runtime/module/loader.hpp>
+#include <CppInterOp/CppInterOp.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <cstddef>
+#include <cstring>
+#include <string>
+#include <libgen.h>
+#include <stdlib.h>
+
+#ifdef __APPLE__
+#  include <mach-o/dyld.h>
+#endif
+
+static void runtime_add_path(char const *path)
+{
+  jank::runtime::__rt_ctx->module_loader.add_path(path);
+}
+
+static void runtime_add_include_path(char const *path)
+{
+  Cpp::AddIncludePath(path);
+}
+
+// Returns the directory containing the running binary, with symlinks resolved.
+// Empty string on failure.
+static std::string runtime_executable_dir()
+{
+  char buf[4096] = {0};
+#ifdef __APPLE__
+  uint32_t size = sizeof(buf);
+  if(_NSGetExecutablePath(buf, &size) != 0) { return std::string{}; }
+#else
+  ssize_t n = readlink(\"/proc/self/exe\", buf, sizeof(buf) - 1);
+  if(n <= 0) { return std::string{}; }
+  buf[n] = '\\0';
+#endif
+  char real[4096] = {0};
+  char const *resolved = realpath(buf, real);
+  char dir_buf[4096] = {0};
+  std::strncpy(dir_buf, resolved ? real : buf, sizeof(dir_buf) - 1);
+  return std::string{ dirname(dir_buf) };
+}
+
+// At runtime, register <executable-dir>/../include as a JIT include path.
+// build-engine populates that directory with engine headers (engine/*.h plus
+// glm, GLFW, ozz, cgltf.h, stb_*.h, gl_*.h, etc.) so the consumer's cpp/raw
+// blocks resolve every transitive engine #include without naming any path.
+static void runtime_register_bundled_includes()
+{
+  std::string dir = runtime_executable_dir();
+  if(dir.empty()) { return; }
+  std::string include_dir = dir + \"/../include\";
+  // realpath collapses the ../ for cleaner clang error messages
+  char real[4096] = {0};
+  if(realpath(include_dir.c_str(), real) != nullptr) {
+    Cpp::AddIncludePath(real);
+  } else {
+    Cpp::AddIncludePath(include_dir.c_str());
+  }
+}
+
+static int runtime_chdir(char const *path)
+{
+  return chdir(path);
+}
+
+static int runtime_dir_exists(char const *path)
+{
+  struct stat s;
+  if(stat(path, &s) != 0) { return 0; }
+  return S_ISDIR(s.st_mode) ? 1 : 0;
+}
+
+static int runtime_file_exists(char const *path)
+{
+  struct stat s;
+  if(stat(path, &s) != 0) { return 0; }
+  return S_ISREG(s.st_mode) ? 1 : 0;
+}
+")
+
+(defn- print-usage []
+  (println "usage: jank-engine [--include PATH ...] [--cwd PATH] <game-dir> [<namespace>] [args...]")
+  (println "")
+  (println "  Looks for <game-dir>/jank-engine.edn for default config:")
+  (println "    {:entry      my-game.core   ; entry namespace")
+  (println "     :paths      [\"src\"]        ; module-loader paths (relative to game-dir)")
+  (println "     :includes   [\"include\"]    ; JIT include paths (relative to game-dir)")
+  (println "     :cwd        \".\"}           ; chdir target relative to game-dir")
+  (println "")
+  (println "  --include PATH   add an extra JIT include path (repeatable)")
+  (println "  --cwd PATH       override the chdir target")
+  (println "  <game-dir>       directory containing the game (required)")
+  (println "  <namespace>      override config :entry; required if no config")
+  (println "  [args...]        forwarded to -main"))
+
+(defn- parse-args
+  "Returns {:cli-includes [...] :cli-cwd s|nil :cli-ns s|nil :game-dir s :positional [...]} or nil.
+   `:positional` is everything after <game-dir>; the caller decides whether the
+   first positional is a namespace override (no config) or just a -main arg
+   (config has :entry)."
+  [args]
+  (loop [includes []
+         cwd      nil
+         ns       nil
+         remaining args]
+    (cond
+      (= "--include" (first remaining))
+      (let [p (second remaining)]
+        (if (nil? p) nil (recur (conj includes p) cwd ns (drop 2 remaining))))
+
+      (= "--cwd" (first remaining))
+      (let [p (second remaining)]
+        (if (nil? p) nil (recur includes p ns (drop 2 remaining))))
+
+      (= "--ns" (first remaining))
+      (let [p (second remaining)]
+        (if (nil? p) nil (recur includes cwd p (drop 2 remaining))))
+
+      (nil? (first remaining))
+      nil
+
+      :else
+      {:cli-includes includes
+       :cli-cwd      cwd
+       :cli-ns       ns
+       :game-dir     (first remaining)
+       :positional   (vec (rest remaining))})))
+
+(defn- read-config
+  "Read jank-engine.edn from game-dir if present. Returns the parsed map or nil.
+   A malformed config will throw — that's intentional, fail loudly so the
+   consumer knows their config is broken."
+  [game-dir]
+  (let [path (str game-dir "/jank-engine.edn")]
+    (when (= 1 (cpp/runtime_file_exists path))
+      (read-string (slurp path)))))
+
+(defn- absolute? [path]
+  (and (string? path) (pos? (count path)) (= "/" (subs path 0 1))))
+
+(defn- resolve-rel
+  "Resolve a path relative to base. If path is already absolute (starts with /), return as-is."
+  [base path]
+  (let [s (if (string? path) path (str path))]
+    (if (absolute? s)
+      s
+      (str base "/" s))))
+
+(defn- as-string [x]
+  (cond
+    (string? x) x
+    (symbol? x) (str x)
+    (keyword? x) (name x)
+    :else (str x)))
+
+(defn -main [& args]
+  (let [parsed (parse-args args)]
+    (if (nil? parsed)
+      (print-usage)
+      (let [{:keys [cli-includes cli-cwd cli-ns game-dir positional]} parsed
+            cfg          (read-config game-dir)
+            cfg-entry    (when-let [e (:entry cfg)] (as-string e))
+            ;; Decide module-name + game-args.
+            ;; - If --ns given on CLI, that wins; positional are all game-args.
+            ;; - Else if config has :entry, positional are all game-args.
+            ;; - Else first positional is the namespace, rest are game-args.
+            [module-name game-args]
+            (cond
+              (some? cli-ns) [cli-ns positional]
+              (some? cfg-entry) [cfg-entry positional]
+              (seq positional) [(first positional) (vec (rest positional))]
+              :else [nil []])
+
+            ;; Resolve includes: config :includes (relative) ++ CLI --include (literal).
+            cfg-includes (mapv #(resolve-rel game-dir %) (or (:includes cfg) []))
+            includes     (concat cfg-includes cli-includes)
+            ;; cwd: CLI overrides config; config relative to game-dir; default = game-dir.
+            cwd-target   (or cli-cwd
+                             (when-let [c (:cwd cfg)] (resolve-rel game-dir (as-string c)))
+                             game-dir)
+            ;; module paths: config :paths (relative) OR fallback to [game-dir].
+            cfg-paths    (mapv #(resolve-rel game-dir %) (or (:paths cfg) []))
+            paths        (if (seq cfg-paths) cfg-paths [game-dir])]
+        (cond
+          (nil? module-name)
+          (do (println "ERROR: no namespace given on CLI and no :entry in jank-engine.edn")
+              (print-usage))
+
+          :else
+          (do
+            ;; Auto-register engine headers bundled next to the binary so
+            ;; consumer cpp/raw blocks resolve glm/glfw/ozz/engine/etc. with
+            ;; zero knowledge of where headers live. Path resolves relative
+            ;; to the running binary, so the bundle is fully relocatable.
+            (cpp/runtime_register_bundled_includes)
+            ;; Apply user-supplied includes from config + CLI.
+            (doseq [p includes]
+              (cpp/runtime_add_include_path p))
+            ;; Auto-add <game-dir>/include if it exists and not already covered.
+            (let [auto-inc (str game-dir "/include")]
+              (when (and (= 1 (cpp/runtime_dir_exists auto-inc))
+                         (not (some #(= % auto-inc) includes)))
+                (cpp/runtime_add_include_path auto-inc)))
+            ;; Chdir.
+            (cpp/runtime_chdir cwd-target)
+            ;; Add all module-loader paths.
+            (doseq [p paths]
+              (cpp/runtime_add_path p))
+            ;; Require + invoke.
+            (require (symbol module-name))
+            (let [main-var (resolve (symbol module-name "-main"))]
+              (if main-var
+                (apply (deref main-var) game-args)
+                (println "ERROR: no -main in" module-name)))))))))

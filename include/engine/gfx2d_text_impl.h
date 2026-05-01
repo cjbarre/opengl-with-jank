@@ -6,6 +6,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
+#include <cstddef>
+
+#include <jank/aot/resource.hpp>
 
 // Font rendering state
 struct FontData {
@@ -26,20 +29,11 @@ inline FontData*& get_g_font() {
 #define g_font (get_g_font())
 
 namespace etext {
-inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
-    // Read font file
-    FILE* f = fopen(font_path, "rb");
-    if (!f) return false;
+// Bake a font from an in-memory TTF buffer. Caller retains ownership of the buffer.
+inline bool init_font_from_buffer(const unsigned char* font_buffer, std::size_t font_buffer_size,
+                                  float font_size, GLuint shader) {
+    (void)font_buffer_size; // stbtt reads as much as it needs
 
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    unsigned char* font_buffer = (unsigned char*)malloc(size);
-    fread(font_buffer, 1, size, f);
-    fclose(f);
-
-    // Bake font atlas
     int atlas_w = 512;
     int atlas_h = 512;
     unsigned char* atlas_bitmap = (unsigned char*)malloc(atlas_w * atlas_h);
@@ -54,9 +48,6 @@ inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader)
                          atlas_bitmap, atlas_w, atlas_h,
                          32, 96, g_font->char_data);
 
-    free(font_buffer);
-
-    // Create OpenGL texture
     glGenTextures(1, &g_font->texture_id);
     glBindTexture(GL_TEXTURE_2D, g_font->texture_id);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RED, atlas_w, atlas_h, 0,
@@ -66,7 +57,6 @@ inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader)
 
     free(atlas_bitmap);
 
-    // Create VAO/VBO for dynamic text quads
     glGenVertexArrays(1, &g_font->vao);
     glGenBuffers(1, &g_font->vbo);
 
@@ -74,10 +64,8 @@ inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader)
     glBindBuffer(GL_ARRAY_BUFFER, g_font->vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4 * 128, nullptr, GL_DYNAMIC_DRAW);
 
-    // Position (vec2)
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-    // TexCoord (vec2)
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
@@ -85,6 +73,37 @@ inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader)
     glBindVertexArray(0);
 
     return true;
+}
+
+inline bool init_font_cpp(const char* font_path, float font_size, GLuint shader) {
+    FILE* f = fopen(font_path, "rb");
+    if (!f) return false;
+
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    unsigned char* font_buffer = (unsigned char*)malloc(size);
+    fread(font_buffer, 1, size, f);
+    fclose(f);
+
+    bool ok = init_font_from_buffer(font_buffer, (std::size_t)size, font_size, shader);
+    free(font_buffer);
+    return ok;
+}
+
+inline bool init_font_from_resource(const char* resource_name, float font_size, GLuint shader) {
+    auto opt = jank::aot::find_resource(jtl::immutable_string{ resource_name });
+    if (!opt.is_some()) {
+        fprintf(stderr, "Font resource not found: %s\n", resource_name);
+        return false;
+    }
+    auto view = opt.unwrap();
+    return init_font_from_buffer(
+        reinterpret_cast<const unsigned char*>(view.data()),
+        view.size(),
+        font_size,
+        shader);
 }
 
 inline void render_text_cpp(const char* text, float x, float y, float r, float g, float b, int screen_w, int screen_h) {
@@ -96,7 +115,6 @@ inline void render_text_cpp(const char* text, float x, float y, float r, float g
 
     glUseProgram(g_font->shader);
 
-    // Orthographic projection
     glm::mat4 projection = glm::ortho(0.0f, (float)screen_w, (float)screen_h, 0.0f);
     glUniformMatrix4fv(glGetUniformLocation(g_font->shader, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
     glUniform3f(glGetUniformLocation(g_font->shader, "uTextColor"), r, g, b);
@@ -107,7 +125,6 @@ inline void render_text_cpp(const char* text, float x, float y, float r, float g
 
     glBindVertexArray(g_font->vao);
 
-    // Build vertex data for all characters
     std::vector<float> vertices;
     float cursor_x = x;
     float cursor_y = y;
@@ -128,7 +145,6 @@ inline void render_text_cpp(const char* text, float x, float y, float r, float g
         float s1 = bc->x1 / (float)g_font->atlas_width;
         float t1 = bc->y1 / (float)g_font->atlas_height;
 
-        // Two triangles per character
         float quad[] = {
             x0, y0, s0, t0,
             x1, y0, s1, t0,

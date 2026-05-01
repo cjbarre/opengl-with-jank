@@ -11,6 +11,17 @@
     :as args}]
   (core/load-shader-program-with-geometry args))
 
+(defn load-shader-program-from-resource
+  "Build a shader program from sources stored in the engine resource registry."
+  [{:keys [_vertex-resource _geometry-resource _fragment-resource] :as args}]
+  (core/load-shader-program-from-resource args))
+
+(defn default-basic-program        [] (core/default-basic-program))
+(defn default-line-program         [] (core/default-line-program))
+(defn default-text-program         [] (core/default-text-program))
+(defn default-graphics2d-program   [] (core/default-graphics2d-program))
+(defn default-skinned-program      [] (core/default-skinned-program))
+
 (defn create-vertex-array-object
   []
   (core/create-vertex-array-object))

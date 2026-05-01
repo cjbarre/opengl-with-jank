@@ -1,6 +1,7 @@
 (ns engine.gfx2d.text.core
   (:require [engine.io.interface :as io]
-            [engine.shaders.interface :as shaders]))
+            [engine.shaders.interface :as shaders]
+            [engine.resources.interface]))
 
 (cpp/raw "#ifdef __APPLE__
 #define GL_SILENCE_DEPRECATION
@@ -28,10 +29,20 @@ extern \"C\" {
 (cpp/raw "#include \"engine/gfx2d_text_impl.h\"")
 
 (defn init-font
-  "Initialize font rendering. Call once at startup.
+  "Initialize font rendering from a TTF on disk. Call once at startup.
    Returns true on success."
   [font-path font-size shader]
   (cpp/etext.init_font_cpp font-path (cpp/float. font-size) shader))
+
+(defn init-font-from-resource
+  "Initialize font rendering from a TTF stored in the engine resource registry."
+  [resource-name font-size shader]
+  (cpp/etext.init_font_from_resource resource-name (cpp/float. font-size) shader))
+
+(defn default-font
+  "Initialize the engine's bundled JetBrains Mono font at the given size."
+  [font-size shader]
+  (init-font-from-resource "fonts/JetBrainsMono-Regular.ttf" font-size shader))
 
 (defn render-text
   "Render text at screen position (pixels from top-left).
