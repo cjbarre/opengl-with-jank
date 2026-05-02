@@ -39,7 +39,7 @@ extern \"C\" {
   [resource-name font-size shader]
   (cpp/etext.init_font_from_resource resource-name (cpp/float. font-size) shader))
 
-(defn default-font
+(defn font
   "Initialize the engine's bundled JetBrains Mono font at the given size."
   [font-size shader]
   (init-font-from-resource "fonts/JetBrainsMono-Regular.ttf" font-size shader))

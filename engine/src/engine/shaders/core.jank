@@ -122,37 +122,37 @@
            _ (cpp/wrap_glDeleteShader fs)]
           program)))
 
-(defn default-basic-program
-  "Engine-shipped basic vertex+fragment program (used for solid/textured geometry)."
+(defn basic
+  "Solid/textured geometry — vertex+fragment."
   []
   (load-shader-program-from-resource
     {:vertex-resource "shaders/basic_vertex.glsl"
      :fragment-resource "shaders/basic_fragment.glsl"}))
 
-(defn default-line-program
-  "Engine-shipped line-rendering program (vertex + geometry + fragment)."
+(defn line
+  "Line rendering — vertex+geometry+fragment."
   []
   (load-shader-program-from-resource
     {:vertex-resource "shaders/line_vertex.glsl"
      :geometry-resource "shaders/line_geometry.glsl"
      :fragment-resource "shaders/line_fragment.glsl"}))
 
-(defn default-text-program
-  "Engine-shipped text-rendering program (used by engine.gfx2d.text)."
+(defn text
+  "Text rendering (used by engine.gfx2d.text)."
   []
   (load-shader-program-from-resource
     {:vertex-resource "shaders/text_vertex.glsl"
      :fragment-resource "shaders/text_fragment.glsl"}))
 
-(defn default-graphics2d-program
-  "Engine-shipped 2D graphics program (used by engine.gfx2d.graphics)."
+(defn graphics2d
+  "2D primitives (used by engine.gfx2d.graphics)."
   []
   (load-shader-program-from-resource
     {:vertex-resource "shaders/graphics2d_vertex.glsl"
      :fragment-resource "shaders/graphics2d_fragment.glsl"}))
 
-(defn default-skinned-program
-  "Engine-shipped skinned-mesh program (used by engine.gfx3d.animation)."
+(defn skinned
+  "Skinned mesh (used by engine.gfx3d.animation)."
   []
   (load-shader-program-from-resource
     {:vertex-resource "shaders/skinned_vertex.glsl"

@@ -16,11 +16,13 @@
   [{:keys [_vertex-resource _geometry-resource _fragment-resource] :as args}]
   (core/load-shader-program-from-resource args))
 
-(defn default-basic-program        [] (core/default-basic-program))
-(defn default-line-program         [] (core/default-line-program))
-(defn default-text-program         [] (core/default-text-program))
-(defn default-graphics2d-program   [] (core/default-graphics2d-program))
-(defn default-skinned-program      [] (core/default-skinned-program))
+;; Engine-shipped programs - sources baked into the binary's resource registry.
+;; Each call compiles and links a fresh GL program; not memoized.
+(defn basic       [] (core/basic))
+(defn line        [] (core/line))
+(defn text        [] (core/text))
+(defn graphics2d  [] (core/graphics2d))
+(defn skinned     [] (core/skinned))
 
 (defn create-vertex-array-object
   []

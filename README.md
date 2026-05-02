@@ -91,8 +91,7 @@ End users need XCode Command Line Tools (`xcode-select --install`).
 ## Platform support
 
 **macOS (Apple Silicon)** — primary platform, fully supported.
-**Linux** — cross-compile scripts (`engine/scripts/build-linux*`) exist but currently reference pre-split paths.
-**Windows** — platform abstraction stubs only.
+**Linux / Windows** — platform abstraction stubs exist; no working build path yet. (To produce a Linux `jank-engine`, run `./scripts/build-engine` on a Linux machine once the platform helpers are filled in.)
 
 ## Points of interest
 

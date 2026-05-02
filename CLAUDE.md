@@ -146,16 +146,16 @@ Engine-shipped assets (shaders, fonts) live in `engine/assets/` and are baked in
 To consume engine-shipped shaders/fonts from a game:
 
 ```clojure
-(shaders/default-basic-program)        ; basic vertex+fragment
-(shaders/default-line-program)         ; vertex+geometry+fragment
-(shaders/default-text-program)
-(shaders/default-graphics2d-program)
-(shaders/default-skinned-program)
+(shaders/basic)        ; basic vertex+fragment
+(shaders/line)         ; vertex+geometry+fragment
+(shaders/text)
+(shaders/graphics2d)
+(shaders/skinned)
 
-(text/default-font 20.0 text-shader)
+(text/font 20.0 text-shader)
 ```
 
-Don't call `(shaders/load-shader-program {:vertex-shader-path "..."})` from a game — it `fopen`s relative to CWD and engine assets aren't on disk in the game's CWD. The `default-*` helpers route through the registry.
+Don't call `(shaders/load-shader-program {:vertex-shader-path "..."})` from a game — it `fopen`s relative to CWD and engine assets aren't on disk in the game's CWD. The named helpers above route through the registry. Each call compiles+links a fresh GL program (not memoized) — call once at init and hold the returned ID.
 
 ## Native dependencies
 
@@ -205,13 +205,13 @@ To add a platform: implement `engine/scripts/platform/{name}.sh`, update `detect
 
 Build with `engine/scripts/build-gla2ozz`, `engine/scripts/build-ozz2gltf`, `engine/scripts/build-ozz-tools.sh`.
 
-## Cross-compile + packaging (status)
+## Distribution
 
-These scripts exist in `engine/scripts/` but were last touched before the engine/+game/ split. Help text and some paths reference the old layout — verify before relying on them:
+The engine produces a single distributable artifact: `engine/dist/jank-engine/` (~324 MB). It contains the binary, bundled native dylibs, the embedded clang toolchain for runtime JIT, jank stdlib, and headers — everything needed to run any game directory containing a `jank-engine.edn`.
 
-- `build-linux`, `build-linux-server` — SSH to a Linux VM, build there
-- `package-client`, `package-client-linux`, `bundle-standalone` — `.app` and tarball bundles
-- `build-dist` — distribution archive
+There is no per-game packaging step. To distribute a game, ship the `dist/jank-engine/` tree alongside the game directory; users invoke `./jank-engine_run /path/to/game`. End users need XCode Command Line Tools (`xcode-select --install`).
+
+Linux and `.app` packaging scripts that existed for the old per-game-AOT model have been removed. Future Linux support means running `./scripts/build-engine` on a Linux box; future `.app` packaging would be a fresh small wrapper around `dist/jank-engine/`.
 
 ## Common gotchas
 

@@ -510,8 +510,8 @@
         line-vbo (cpp/* line-vbo-ptr)
 
         ;; Load text shader
-        text-shader (shaders/default-text-program)
-        _ (text/default-font 20.0 text-shader)
+        text-shader (shaders/text)
+        _ (text/font 20.0 text-shader)
 
         ;; Load animations
         state (atom (load-animations))

@@ -15,10 +15,10 @@
   [resource-name font-size shader]
   (core/init-font-from-resource resource-name font-size shader))
 
-(defn default-font
+(defn font
   "Initialize the engine's bundled JetBrains Mono font at the given size."
   [font-size shader]
-  (core/default-font font-size shader))
+  (core/font font-size shader))
 
 (defn render-text
   "Render text at screen position (pixels from top-left).

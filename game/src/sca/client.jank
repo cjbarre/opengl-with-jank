@@ -712,20 +712,20 @@
                 gl/GLFW_CURSOR_DISABLED)
 
          ;; Load shaders
-         shader (shaders/default-basic-program)
+         shader (shaders/basic)
          _ (cpp/wrap_glUseProgram shader)
          _ (cpp/wrap_glUniform1i (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
          ;; Line shader for skeleton rendering (with geometry shader for thick lines)
-         line-shader (shaders/default-line-program)
+         line-shader (shaders/line)
          line-vbo-ptr (cpp/new cpp/GLuint)
          line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
          line-vbo (cpp/* line-vbo-ptr)
 
-         text-shader (shaders/default-text-program)
-         _ (text/default-font 24.0 text-shader)
+         text-shader (shaders/text)
+         _ (text/font 24.0 text-shader)
 
-         graphics2d-shader (shaders/default-graphics2d-program)
+         graphics2d-shader (shaders/graphics2d)
          gfx2d (gfx2d/init-graphics2d graphics2d-shader)
 
          ;; Load level
