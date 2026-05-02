@@ -1,505 +1,222 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code working in this repository.
+
+## Layout
+
+```
+opengl-with-jank/
+├── engine/               # Reusable jank+OpenGL runtime
+│   ├── deps.edn          ; {:paths ["src"]}
+│   ├── src/engine/       ; 16 jank namespaces
+│   ├── include/          ; engine *_impl.h + bundled third-party (cgltf, enet, stb_*, gl_*, ozz_mesh, animation_types)
+│   ├── assets/           ; shaders/, fonts/ — embedded into the engine binary
+│   ├── scripts/          ; setup, build-engine, asset pipeline, platform/
+│   ├── third_party/      ; ozz-animation submodule, tinygltf
+│   ├── libs/             ; glm submodule + per-platform native libs (macos-arm64/, linux-arm64/, …)
+│   ├── tools/            ; gla2ozz, ozz2gltf, ozz-retarget (C++ asset pipeline)
+│   ├── docs/
+│   └── build/  dist/  target/   ; gitignored
+│
+├── game/                 # Strafe Combat Academy
+│   ├── deps.edn          ; {:paths ["src"]}
+│   ├── jank-engine.edn   ; {:entry sca.core :paths ["src"] :includes ["include"]}
+│   ├── src/sca/          ; client, server, editor/, viewer, networking/, …
+│   ├── include/sca/      ; game *_impl.h
+│   └── models/  textures/  course.edn  output.map
+│
+├── CLAUDE.md  README.md  CPP_INTEROP_DOCUMENTATION.md
+└── .gitmodules
+```
+
+The two trees are independent: no symlinks between them, no cross-references. The engine knows nothing about the game; the game references the engine only by invoking the `jank-engine` binary.
 
 ## Commands
 
-### Running the Application
 ```bash
-./bin/run              # runs the default example (demo)
-./bin/run demo         # runs examples.demo.core
-./bin/run my-game      # runs examples.my-game.core
+cd engine
+./scripts/setup           # build native deps + libengine_assets
+./scripts/build-engine    # produces dist/jank-engine/jank-engine_run
+
+cd ../game
+../engine/dist/jank-engine/jank-engine_run . server          # host
+../engine/dist/jank-engine/jank-engine_run . client [ip]     # join
+../engine/dist/jank-engine/jank-engine_run . editor          # course designer
+../engine/dist/jank-engine/jank-engine_run . viewer          # animation viewer
+../engine/dist/jank-engine/jank-engine_run . net-test server # ENet smoke
 ```
 
-The `run` script compiles and executes a Jank game with OpenGL/GLFW support:
-- Accepts game name as argument (defaults to `demo`)
-- Uses platform abstraction layer for library paths
-- Includes headers from libs and `include/`
-- Uses Clojure classpath for module resolution
+`jank-engine_run` arguments:
+- arg 1: game directory (contains `jank-engine.edn`)
+- arg 2+: passed to the entry namespace's `-main`
 
-### AOT Compilation (Standalone Executable)
-```bash
-./bin/compile              # compiles demo to standalone executable
-./bin/compile demo         # same as above
-./bin/compile my-game      # compiles examples.my-game.core
+## Runtime model
 
-# Run the compiled executable
-./dist/demo_run            # launcher script with library paths
-```
+`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace plus all native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, libc++, embedded clang for JIT). At startup it:
 
-The `compile` script produces a self-contained distribution (~324MB):
-```
-dist/
-├── bin/demo                    # 62MB Mach-O executable
-├── lib/demo/                   # ~155MB bundled dylibs
-├── lib/jank/0.1/               # ~113MB jank runtime resources
-│   ├── bin/clang++             # Clang for JIT compilation
-│   ├── include/                # Headers (libc++, jank)
-│   ├── lib/clang/22/           # Clang resource directory
-│   └── src/                    # jank stdlib
-└── demo_run                    # Launcher script
-```
+1. Resolves `<bin>/../include` via `_NSGetExecutablePath` and adds it to `Cpp::AddIncludePath` so consumer `cpp/raw` blocks find glm/GLFW/ozz/engine `*_impl.h`.
+2. Reads `<game-dir>/jank-engine.edn` (`:entry`, `:paths`, `:includes`).
+3. `chdir`s into the game directory so asset paths resolve relative to it.
+4. Adds the game's `:paths` to the jank module loader and its `:includes` to clang.
+5. `(require ...)` the entry namespace and invokes its `-main`.
 
-**End-user requirement:** XCode Command Line Tools must be installed (`xcode-select --install`)
+Engine assets (shaders/fonts) are embedded into `libengine_assets.dylib` at engine-build time and registered into jank's static `aot::resource` registry by a top-level form in `engine.resources.core`. Consumers access them through engine helpers (see "Resource registry" below) — the game CWD does **not** need to contain a `shaders/` or `fonts/` directory.
 
-### Initial Setup
+## Engine modules (`engine.*`)
 
-After cloning, run the setup script to build dependencies:
+| Namespace | Purpose |
+|---|---|
+| `engine.macros` | `clet` macro for C-style error handling |
+| `engine.io` | File reads |
+| `engine.math` | GLM wrappers (`gimmie`, `*->`) |
+| `engine.shaders` | Shader/program compilation, VAOs, default-* helpers |
+| `engine.gl` | Low-level OpenGL state + constants |
+| `engine.gc` | BDWGC incremental control for frame budgets |
+| `engine.events` | Atom-based event store |
+| `engine.networking` | ENet UDP client/server, packet send/recv, polling |
+| `engine.resources` | Static resource registry init |
+| `engine.runtime` | The runtime binary's `-main` (binary entry) |
+| `engine.gfx2d.graphics` | 2D primitives (lines, arcs, filled) |
+| `engine.gfx2d.text` | STB TrueType font rendering |
+| `engine.gfx3d.geometry` | Vertex data, VBO/EBO setup |
+| `engine.gfx3d.textures` | STB Image |
+| `engine.gfx3d.gltf` | cgltf parsing (+ `.headless` for server) |
+| `engine.gfx3d.animation` | ozz integration, skinning |
+| `engine.gfx3d.collision` | Raycast ground detection |
+| `engine.gfx3d.lines` | Debug line rendering |
+| `engine.behavior-tree` | Vector DSL for AI/game logic |
 
-```bash
-git clone --recursive ...
-./bin/setup
-```
+Each module uses an interface/core split: `interface.jank` (public API) and `core.jank` (impl).
 
-### Development Dependencies
-- **Jank**: The main language/runtime (latest `main` branch)
-- **GLFW**: For window management and OpenGL context
-- **Clojure**: For classpath and dependency management
-- **STB Image**: C library for texture loading (included in `include/stb_image.h`)
-- **ozz-animation**: Skeletal animation (submodule, built by `./setup`)
-- **enet**: UDP networking for multiplayer
+## Adding a new game
 
-## Cross-Platform Support
+1. Create a new directory next to `game/` with this minimum:
+   ```
+   my-game/
+   ├── jank-engine.edn   ; {:entry my-game.core :paths ["src"] :includes ["include"]}
+   └── src/my-game/core.jank
+   ```
+2. In `core.jank`, define `(ns my-game.core)` and a `-main` function (zero-arity OK).
+3. Run with `<engine-dist>/jank-engine_run /path/to/my-game [args...]`.
 
-### Platform Abstraction Layer
+The game gets all engine namespaces by `(:require [engine.shaders.interface :as shaders] ...)` etc. — no engine paths or build flags to know about.
 
-All build scripts use a platform abstraction layer in `scripts/platform/`:
+## C++ interop conventions
 
-```
-scripts/
-├── platform/
-│   ├── common.sh     # Platform detection, loads platform-specific file
-│   ├── macos.sh      # Full macOS implementation
-│   ├── linux.sh      # Stub (not yet supported)
-│   └── windows.sh    # Stub (not yet supported)
-├── setup             # Build dependencies
-├── run               # Run in JIT mode
-├── compile           # AOT compile to executable
-├── compile-server    # Compile headless server
-├── package-client    # Create .app bundle
-└── build-dist        # Full distribution build
-```
+The codebase uses Jank's C++ interop heavily for OpenGL, GLFW, glm, ozz, ENet:
 
-`bin/` contains symlinks (`run`, `compile`, `setup`, `build-dist`) pointing to `scripts/` for convenience.
+- `cpp/raw "..."` — embed C/C++ code (function defs, `#include` lines)
+- `cpp/foo` — call C/C++ function `foo`
+- `cpp/box` / `cpp/unbox` — manage C++ pointers from jank
+- `cpp/&` — address-of
+- `cpp/cast` with type DSL — e.g. `(cpp/cast (:* void) data)`
+- Type DSL: `(:* T)` pointer, `(std.vector float)` template, `(#cpp (:unsigned int))` value-init
+- `#cpp` reader tag — access C++ values, e.g. `#cpp SEEK_END`
 
-Scripts source the abstraction with:
-```bash
-source "$SCRIPT_DIR/platform/common.sh"
-require_platform_support  # Fails if platform unsupported
-load_jank_paths            # Loads JANK_DIR, JANK_LLVM paths
-LIBS_DIR="$(get_libs_dir)" # Platform-specific libs directory
-```
+### cpp/raw name collisions
 
-### Key Platform Functions
+C++ functions defined in `cpp/raw` blocks must not share names with jank `defn`s in the same namespace **after hyphen-to-underscore munging**. Use `_impl` or `_helper` suffixes for the C++ side.
 
-| Function | Description |
-|----------|-------------|
-| `get_lib_extension()` | `dylib` (macOS), `so` (Linux), `dll` (Windows) |
-| `get_lib_prefix()` | `lib` (macOS/Linux), empty (Windows) |
-| `format_lib_name name` | Formats library name for platform |
-| `get_libs_dir()` | Returns `libs/macos-arm64/`, etc. |
-| `get_homebrew_prefix()` | `/opt/homebrew` (arm64), `/usr/local` (x86) |
-| `fix_lib_install_name lib` | Fixes library ID to use @rpath |
-| `add_rpath rpath executable` | Adds rpath to executable |
-| `delete_rpath rpath executable` | Removes rpath from executable |
-| `change_lib_path binary old new` | Changes library reference |
-| `bundle_system_lib lib dest` | Copies and fixes system library |
-| `code_sign_adhoc path` | Ad-hoc signs binary |
-| `create_app_bundle path name` | Creates .app bundle structure |
-| `generate_launcher_script path exec libs` | Creates launcher script |
+### `extern "C"` is unreliable in AOT mode
 
-### Library Directory Structure
+Use `static` linkage in `cpp/raw` blocks for helpers consumed only by that translation unit. `extern "C"` symbols defined in jank source are not always visible to the AOT linker.
 
-Platform-specific libraries are organized under `libs/{platform}/`:
+### Static-init-order in AOT
 
-```
-libs/
-├── macos-arm64/           # macOS Apple Silicon libraries
-│   ├── glfw/
-│   ├── ozz-animation/
-│   ├── stb/
-│   ├── enet/
-│   ├── cgltf/
-│   └── opengl/
-├── linux-x86_64/          # Linux libraries (placeholder)
-├── windows-x86_64/        # Windows libraries (placeholder)
-├── glm/                   # Header-only (shared across platforms)
-└── include/               # Shared headers (placeholder)
-```
+Don't use `__attribute__((constructor))` in `cpp/raw` blocks if the constructor depends on jank runtime globals (e.g. the resource registry). dyld may run your constructor before jank's globals are constructed → `std::overflow_error: __next_prime overflow` or similar. Instead, expose a normal `static` function and call it from a top-level `(cpp/...)` form in your namespace — it runs as part of namespace init, after the runtime is up.
 
-### Adding a New Platform
+## `clet` macro
 
-1. Create `scripts/platform/{platform}.sh` implementing all functions
-2. Update `detect_platform()` in `scripts/platform/common.sh` to detect the platform
-3. Create `libs/{platform}/` and build/copy libraries
-4. Test with `./bin/setup && ./bin/run`
+Custom macro for early-return on failure:
 
-## Architecture
-
-### Project Structure
-This is a **Jank + OpenGL** game engine with example games:
-
-```
-src/
-├── engine/                 # Reusable engine code
-│   ├── macros.jank         # C-style error handling macro (clet)
-│   ├── io/                 # File I/O utilities
-│   ├── math/               # GLM math helpers and macros
-│   ├── shaders/            # Shader compilation and program management
-│   ├── gl/                 # Low-level OpenGL state wrappers + constants
-│   ├── gc/                 # Garbage collection control (BDWGC)
-│   ├── events/             # Event store for game state
-│   ├── networking/         # ENet UDP multiplayer
-│   ├── gfx2d/              # 2D rendering
-│   │   ├── graphics/       # 2D primitives (lines, arcs)
-│   │   └── text/           # Font rendering (STB TrueType)
-│   └── gfx3d/              # 3D rendering
-│       ├── geometry/       # Vertex data and buffer management
-│       ├── textures/       # Texture loading (STB Image)
-│       ├── gltf/           # glTF model loading (+ headless for server)
-│       ├── animation/      # ozz-animation integration, skinning
-│       ├── collision/      # Raycast ground detection
-│       └── lines/          # Debug line rendering
-└── examples/               # Example games
-    └── demo/               # Multiplayer demo game
-        ├── core.jank       # Standalone entry point
-        ├── client.jank     # Networked client
-        ├── server.jank     # Authoritative server
-        └── ...
-```
-
-### Creating a New Game
-1. Create directory: `mkdir -p src/examples/my-game`
-2. Create `src/examples/my-game/core.jank` with namespace `examples.my-game.core`
-3. Implement `-main` function (zero-arity supported)
-4. Run with: `./run my-game`
-
-### Core Architecture Components
-
-#### 1. Engine Modules (`engine.*`)
-- **engine.macros**: `clet` macro for C-style error handling
-- **engine.io**: File reading utilities
-- **engine.math**: GLM wrappers (`gimmie`, `*->` macros)
-- **engine.shaders**: Shader compilation, VAO management
-- **engine.gl**: Low-level OpenGL state (viewport, blend, enable/disable) + constants
-- **engine.gc**: Garbage collection control (incremental GC for frame budgets)
-- **engine.events**: Event sourcing for game state
-- **engine.networking**: ENet UDP client/server, packet send/receive, event polling
-- **engine.gfx2d.graphics**: 2D primitive rendering (lines, arcs, filled shapes)
-- **engine.gfx2d.text**: Font rendering with STB TrueType
-- **engine.gfx3d.geometry**: Basic shapes (rectangles, cubes)
-- **engine.gfx3d.textures**: STB Image integration
-- **engine.gfx3d.gltf**: glTF model parsing and loading (+ headless variant for server)
-- **engine.gfx3d.animation**: ozz-animation integration, skeletal rendering, GPU skinning
-- **engine.gfx3d.collision**: Raycast ground detection against collision meshes
-- **engine.gfx3d.lines**: Debug line rendering
-
-#### 2. C++ Interop Pattern
-The codebase extensively uses **Jank's C++ interop** (`cpp/` forms) for direct OpenGL API calls:
-- `cpp/raw` for embedding C/C++ code and function definitions
-- `cpp/` prefixed calls for OpenGL functions (e.g., `cpp/glUseProgram`)
-- `cpp/box`/`cpp/unbox` for managing C++ pointers in Jank
-- `cpp/&` for address-of operations
-- `cpp/cast` with DSL type forms for type conversions (e.g., `(cpp/cast (:* void) data)`)
-- C++ type DSL: `(:* Type)` for pointers, `(std.vector float)` for templates, `(#cpp (:unsigned int))` for value init
-- `#cpp` reader tag for accessing C++ values (e.g., `#cpp SEEK_END`)
-
-**Important:** C++ functions defined in `cpp/raw` blocks must not share names with jank `defn` functions in the same namespace (after hyphen-to-underscore munging). Use `_impl` or `_helper` suffixes for the C++ functions to avoid collisions.
-
-#### 3. Error Handling with `clet`
-Custom macro `clet` provides C-style error checking:
 ```clojure
 (clet [result (some-operation)
        :when (failed? result)
-       :error (handle-error)])
+       :error (handle-error)
+       next-step (something-else result)]
+  (use-it next-step))
 ```
 
-#### 4. Namespace Organization
-- **Interface/Core Split**: Each engine module has `interface.jank` (public API) and `core.jank` (implementation)
-- **Pure Functions**: Most functions are stateless transformations
-- **Resource Management**: Explicit OpenGL resource creation/binding
+`:when` + `:error` form a guard pair: if `:when` is truthy, evaluate `:error` and short-circuit. Defined in `engine/src/engine/macros.jank`.
 
-### Key Technical Details
+## Resource registry
 
-#### Shader System (`engine.shaders`)
-- Compiles GLSL shaders from file paths
-- Links shader programs with error checking
-- Manages VAO creation and binding
-- Uses C wrapper functions for OpenGL extensions
+Engine-shipped assets (shaders, fonts) live in `engine/assets/` and are baked into `libengine_assets.dylib` by `engine/scripts/embed-assets.clj`. The dylib has a `engine_register_resources()` function called from a top-level form in `engine.resources.core`, which populates jank's `aot::find_resource` registry.
 
-#### Geometry System (`engine.gfx3d.geometry`)
-- Defines vertex data as C arrays using `cpp/raw`
-- Creates and configures OpenGL buffers (VBO/EBO)
-- Sets up vertex attribute pointers for position, color, and texture coordinates
-- Returns structured data with buffer IDs and metadata
-
-#### Texture System (`engine.gfx3d.textures`)
-- Loads image files using STB Image library
-- Handles both RGB and RGBA formats
-- Manages OpenGL texture creation and configuration
-- Binds textures to shader uniforms
-
-#### glTF System (`engine.gfx3d.gltf`)
-- Parses glTF files using cgltf
-- Loads meshes with positions, normals, UVs
-- Supports PBR materials and textures
-- Configurable `base-path` for asset loading
-
-#### I/O System (`engine.io`)
-- File reading utilities for shaders and textures
-- Memory management for loaded data
-- Cross-platform file path handling
-
-#### Event System (`engine.events`)
-- Atom-based event store
-- Event filtering by tags/types
-- Compare-and-swap (CAS) support
-
-### Dependencies and Libraries
-
-#### Required Libraries
-- **GLFW 3.x**: Window/context management (dylib in `libs/{platform}/glfw/`)
-- **OpenGL 3.3+**: Core graphics API (stub dylib in `libs/{platform}/opengl/`)
-- **GLM**: Math library for vectors/matrices (header-only in `libs/glm/`)
-- **STB Image**: Image loading (`include/stb_image.h`, dylib in `libs/{platform}/stb/`)
-- **cgltf**: glTF parser (`include/cgltf.h`, dylib in `libs/{platform}/cgltf/`)
-- **ozz-animation**: Skeletal animation (submodule in `third_party/`, dylib in `libs/{platform}/ozz-animation/`)
-- **enet**: UDP networking library (dylib in `libs/{platform}/enet/`)
-
-#### Build System
-- Uses Jank compiler with custom flags for includes and linking
-- Platform abstraction layer (`platform/`) for cross-platform support
-- Clojure for dependency resolution (`deps.edn` with paths only)
-- Shell scripts with error handling and platform detection
-
-### Development Notes
-
-#### Working with Shaders
-- Vertex shaders: `shaders/basic_vertex.glsl`
-- Fragment shaders: `shaders/basic_fragment.glsl`
-- GLSL version 330 core profile
-- Attributes: position (location 0), color (location 1), texture coords (location 2)
-
-#### Memory Management
-- Manual memory management for C interop (malloc/free)
-- OpenGL resource cleanup handled explicitly
-- Pointer boxing/unboxing for Jank<->C++ integration
-
-#### Texture Assets
-- Textures stored in `textures/` directory
-- Models and their textures in `models/` directory
-- Supports common formats (JPG, PNG)
-- Alpha channel handling for RGBA textures
-
-## AOT Compilation Details
-
-### Overview
-
-Jank supports ahead-of-time (AOT) compilation to produce standalone executables. This project uses AOT compilation to create distributable game binaries that don't require the Jank runtime to be installed.
-
-### Library Setup
-
-AOT compilation requires dynamic libraries for external dependencies. These are organized under `libs/{platform}/` (see [Cross-Platform Support](#cross-platform-support) for structure).
-
-For macOS (arm64), libraries are in `libs/macos-arm64/`:
-
-```
-libs/macos-arm64/
-├── glfw/
-│   ├── include/          # GLFW headers
-│   └── lib/
-│       └── libglfw.3.dylib
-├── ozz-animation/
-│   ├── include/          # ozz headers
-│   └── lib/
-│       ├── libozz_animation_r.dylib
-│       ├── libozz_base_r.dylib
-│       └── libozz_geometry_r.dylib
-├── stb/
-│   └── lib/
-│       └── libstb_all.dylib
-├── enet/
-│   └── lib/
-│       └── libenet.dylib
-├── cgltf/
-│   └── lib/
-│       └── libcgltf.dylib
-└── opengl/
-    └── lib/
-        └── libOpenGL.dylib    # Stub library linking to OpenGL.framework
-```
-
-### Library Install Names
-
-macOS dynamic libraries have "install names" that get baked into executables at link time. For proper runtime loading with `@rpath`, libraries must have install names like `@rpath/libfoo.dylib`:
-
-```bash
-# Check a library's install name (use platform functions instead when possible)
-otool -D libs/macos-arm64/stb/lib/libstb_all.dylib
-
-# Fix install name using platform function
-source platform/common.sh
-fix_lib_install_name libs/macos-arm64/stb/lib/libstb_all.dylib
-```
-
-### Building Custom Libraries
-
-#### STB (header-only to dylib)
-
-```bash
-# Create implementation file
-cat > stb_impl.c << 'EOF'
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-EOF
-
-# Compile to dylib (macOS)
-clang -dynamiclib -o libs/macos-arm64/stb/lib/libstb_all.dylib stb_impl.c \
-  -Iinclude -install_name "@rpath/libstb_all.dylib"
-```
-
-#### cgltf (header-only to dylib)
-
-```bash
-cat > cgltf_impl.c << 'EOF'
-#define CGLTF_IMPLEMENTATION
-#include "cgltf.h"
-EOF
-
-# Compile to dylib (macOS)
-clang -dynamiclib -o libs/macos-arm64/cgltf/lib/libcgltf.dylib cgltf_impl.c \
-  -Iinclude -install_name "@rpath/libcgltf.dylib"
-```
-
-#### ozz-animation (from submodule)
-
-ozz-animation is built automatically by `./setup`. If you need to rebuild manually:
-
-```bash
-cd third_party/ozz-animation/build
-make -j8
-# Copy to platform-specific location
-cp src/base/libozz_base_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
-cp src/animation/runtime/libozz_animation_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
-cp src/geometry/runtime/libozz_geometry_r.dylib ../../../libs/macos-arm64/ozz-animation/lib/
-```
-
-### Compile Script Workflow
-
-The `./compile` script:
-
-1. Sets `LIBRARY_PATH` so the linker finds libraries
-2. Invokes `jank compile` with:
-   - Include paths (`-I`)
-   - Library paths (`-L`)
-   - Libraries to link (`-l`)
-   - Module path from Clojure
-3. Creates self-contained distribution structure:
-   - Moves executable to `dist/bin/`
-   - Bundles dylibs into `dist/lib/{output}/`
-   - Bundles jank runtime resources into `dist/lib/jank/0.1/`
-   - Creates launcher script
-4. Fixes rpaths so all libraries are found relative to executable
-
-### Distribution
-
-To distribute a compiled game:
-
-```bash
-# Copy the entire dist/ directory:
-dist/
-├── bin/demo                # The executable
-├── lib/demo/               # Game dylibs
-├── lib/jank/0.1/           # Jank runtime (clang, headers, stdlib)
-├── demo_run                # Launcher script
-# Plus your game assets (copy to dist/):
-├── shaders/                # GLSL shaders (loaded at runtime)
-├── textures/               # Texture assets
-└── models/                 # 3D models
-```
-
-**End-user requirements:**
-- macOS (arm64)
-- XCode Command Line Tools (`xcode-select --install`)
-
-The launcher script sets `DYLD_LIBRARY_PATH` to find the bundled libraries.
-
-### Jank AOT Requirements
-
-AOT compilation works with standard jank built from latest `main`. The required fixes (user library passing via `-l` flags, macOS `lib{name}.dylib` naming) have been merged upstream.
-
-### Troubleshooting
-
-**"Library not loaded" errors:**
-- Check library install names: `otool -D libfoo.dylib`
-- Verify rpath in executable: `otool -l dist/bin/demo | grep -A2 LC_RPATH`
-- Use launcher script or set `DYLD_LIBRARY_PATH`
-
-**"Unable to find a suitable Clang 22 binary" or clang symbol errors:**
-- Ensure `dist/lib/jank/0.1/bin/clang++` exists and is executable
-- Verify clang can find dylibs: `otool -L dist/lib/jank/0.1/bin/clang-22`
-- Check that clang rpath points to dylib directory
-
-**"Unable to find 'xcrun' binary" errors:**
-- End user needs XCode Command Line Tools: `xcode-select --install`
-
-**Undefined symbols during linking:**
-- Ensure library is in `-L` path
-- Ensure `-l` flag uses correct name (without `lib` prefix and `.dylib` suffix)
-- Check if library exports the symbol: `nm -gU libfoo.dylib | grep symbol_name`
-
-**Large distribution size (~324MB):**
-- Normal - includes bundled clang toolchain for JIT compilation at runtime
-- Executable itself is ~62MB (LLVM/Clang embedded in jank runtime)
-- Additional ~113MB for clang resource directory and headers
-
-## Headless Server Build
-
-### Overview
-
-For dedicated server deployment, use `./compile-server` which builds a headless binary without graphics dependencies (GLFW, OpenGL, STB textures, ozz-animation).
-
-### Server Compilation
-
-```bash
-./compile-server              # compiles examples.demo.server
-./compile-server demo         # same as above
-./compile-server my-game      # compiles examples.my-game.server
-
-# Run the compiled server
-./dist/demo-server_run
-```
-
-**Output structure (same as client, with fewer dylibs):**
-```
-dist/
-├── bin/demo-server           # 62MB headless server executable
-├── lib/demo-server/          # Server dylibs (enet, cgltf, LLVM/clang)
-├── lib/jank/0.1/             # Jank runtime (shared with client)
-└── demo-server_run           # Launcher script
-```
-
-### Server Dependencies
-
-The server only requires:
-- **enet** - UDP networking
-- **cgltf** - glTF loading for collision meshes
-- **GLM** - Math library (header-only)
-
-It does NOT require:
-- GLFW (windowing)
-- OpenGL (rendering)
-- STB (texture loading)
-- ozz-animation (skeletal animation)
-
-### Headless glTF Loader
-
-The server uses `engine.gfx3d.gltf.headless` instead of the full glTF loader:
+To consume engine-shipped shaders/fonts from a game:
 
 ```clojure
-(require '[engine.gfx3d.gltf.headless :as gltf])
+(shaders/default-basic-program)        ; basic vertex+fragment
+(shaders/default-line-program)         ; vertex+geometry+fragment
+(shaders/default-text-program)
+(shaders/default-graphics2d-program)
+(shaders/default-skinned-program)
 
-;; Load only collision mesh data (no GPU operations)
-(gltf/load-collision {:path "models/level.gltf"})
-;; => [{:name "collision-mesh" :positions [...] :indices [...]}]
+(text/default-font 20.0 text-shader)
 ```
+
+Don't call `(shaders/load-shader-program {:vertex-shader-path "..."})` from a game — it `fopen`s relative to CWD and engine assets aren't on disk in the game's CWD. The `default-*` helpers route through the registry.
+
+## Native dependencies
+
+Tracked under `engine/libs/{platform}/{libname}/lib/` and `engine/libs/{platform}/{libname}/include/`:
+
+| Lib | Purpose |
+|---|---|
+| GLFW | Windowing |
+| OpenGL (stub) | Linker stub on macOS; `OpenGL.framework` at runtime |
+| GLM | Math (header-only, in `engine/libs/glm/`) |
+| STB | Image + TrueType (header-only, compiled to dylib by `setup`) |
+| cgltf | glTF parsing (header-only, compiled to dylib by `setup`) |
+| ozz-animation | Skeletal animation (built from submodule by `setup`) |
+| ENet | UDP networking (header-only, compiled to dylib by `setup`) |
+| `libengine_assets` | Embedded shaders/fonts (generated by `setup` from `engine/assets/`) |
+
+`libengine_assets.dylib` is **gitignored** — it gets regenerated whenever `engine/assets/` changes.
+
+## Platform abstraction
+
+`engine/scripts/platform/`:
+
+- `common.sh` — detect OS/arch, load platform-specific file, exposes `PROJECT_DIR`, `PLATFORM`, `LIBS_DIR`, etc.
+- `macos.sh` — full macOS implementation
+- `linux.sh`, `windows.sh` — stubs
+
+Sourced by all build scripts:
+
+```bash
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+load_jank_paths
+LIBS_DIR="$(get_libs_dir)"
+```
+
+Helpers: `get_lib_extension`, `format_lib_name`, `fix_lib_install_name`, `add_rpath`, `change_lib_path`, `bundle_system_lib`, `code_sign_adhoc`, `create_app_bundle`, `generate_launcher_script`.
+
+To add a platform: implement `engine/scripts/platform/{name}.sh`, update `detect_platform()` in `common.sh`, populate `engine/libs/{platform}/`.
+
+## Asset pipeline tools
+
+`engine/tools/`:
+
+- **gla2ozz** — Convert Quake 3 / JKA `.gla` skeletal animations to ozz format.
+- **ozz2gltf** — Export ozz skeletons / animations to glTF for visualization.
+- **ozz-retarget** — Retarget animations between skeleton rigs.
+
+Build with `engine/scripts/build-gla2ozz`, `engine/scripts/build-ozz2gltf`, `engine/scripts/build-ozz-tools.sh`.
+
+## Cross-compile + packaging (status)
+
+These scripts exist in `engine/scripts/` but were last touched before the engine/+game/ split. Help text and some paths reference the old layout — verify before relying on them:
+
+- `build-linux`, `build-linux-server` — SSH to a Linux VM, build there
+- `package-client`, `package-client-linux`, `bundle-standalone` — `.app` and tarball bundles
+- `build-dist` — distribution archive
+
+## Common gotchas
+
+- **Untyped float literals in `cpp/...` calls fail JIT compile.** Wrap each literal: `(cpp/glm.vec3 (cpp/float 3.0) (cpp/float 2.0) (cpp/float 3.0))`.
+- **`try`/`catch` in jank takes a C++ exception type, not `:default`.** No catch-all keyword exists.
+- **JVM-isms aren't available.** No `.startsWith` etc. — use `(subs s 0 n)` and friends.
+- **Module-not-found from JIT.** Either the namespace isn't on `:paths` in `jank-engine.edn`, or its file path doesn't match the namespace (hyphens → underscores in path segments).
+- **Header not found in consumer `cpp/raw`.** The game's `:includes` should list directories containing the headers; engine third-party (glm, GLFW, ozz, engine `*_impl.h`) is auto-added by the binary at startup.

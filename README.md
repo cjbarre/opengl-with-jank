@@ -1,169 +1,104 @@
 # OpenGL with Jank
 
-A 3D game engine and multiplayer demo built with [Jank](https://jank-lang.org/) (a Clojure dialect) and OpenGL. Features networked client-server gameplay, skeletal animation, and Quake-style movement physics.
+A jank+OpenGL game engine and a game built on it ("Strafe Combat Academy"). Written in [Jank](https://jank-lang.org/) (a Clojure-on-LLVM dialect with C++ interop) with networked multiplayer, skeletal animation, and Quake-style movement.
 
-> **Note:** Requires Jank built from latest `main`. Both JIT mode (`./bin/run`) and AOT compilation (`./bin/compile`) work with standard Jank.
+> Requires Jank built from latest `main`.
 
-## Quick Start
+## Quick start
 
 ```bash
 git clone --recursive <repo-url>
-./bin/setup            # Build dependencies (ozz-animation, OpenGL stub)
-./bin/run demo server  # Start server on port 7777
-./bin/run demo client  # Connect to server (in another terminal)
+cd opengl-with-jank/engine
+./scripts/setup           # build native deps + libengine_assets
+./scripts/build-engine    # build the jank-engine runtime binary
+
+cd ../game
+../engine/dist/jank-engine/jank-engine_run . server   # host on port 7777
+../engine/dist/jank-engine/jank-engine_run . client   # join (in another terminal)
 ```
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `./bin/run demo` | Run demo (shows usage) |
-| `./bin/run demo server` | Start multiplayer server on port 7777 |
-| `./bin/run demo client` | Connect to localhost:7777 |
-| `./bin/run demo client <ip>` | Connect to specific server |
-| `./bin/run my-game` | Run a different example |
-| `./bin/compile` | AOT compile to standalone executable |
-| `./bin/compile-server` | Compile headless dedicated server |
-| `./bin/build-dist` | Build distributable .app bundle (macOS) |
-| `./bin/package-client` | Create macOS .app bundle |
-| `./bin/build-linux` | Cross-compile client for Linux (via SSH) |
-| `./bin/build-linux-server` | Cross-compile server for Linux |
-| `./bin/build-gla2ozz` | Build GLA→ozz animation converter |
-| `./bin/build-ozz2gltf` | Build ozz→glTF skeleton exporter |
-
-## Project Structure
+## Repo layout
 
 ```
-src/
-├── engine/                  # Reusable game engine
-│   ├── gfx2d/               # 2D graphics and text rendering
-│   ├── gfx3d/               # 3D rendering subsystems
-│   │   ├── animation/       # ozz-animation integration, skinning
-│   │   ├── collision/       # Raycast ground detection
-│   │   ├── geometry/        # Shapes, VBO/EBO management
-│   │   ├── gltf/            # glTF loading (+ headless for server)
-│   │   ├── lines/           # Debug line rendering
-│   │   └── textures/        # Texture loading (STB)
-│   ├── behavior-tree/       # AI/game logic DSL
-│   ├── events/              # Event sourcing
-│   ├── gl/                  # Low-level OpenGL wrappers
-│   ├── io/                  # File I/O utilities
-│   ├── math/                # GLM helpers
-│   ├── networking/          # ENet UDP multiplayer
-│   ├── shaders/             # Shader compilation
-│   └── macros.jank          # clet macro for C-style error handling
-└── examples/
-    └── demo/                # Multiplayer demo game
-        ├── core.jank        # Standalone entry point
-        ├── client.jank      # Networked client with prediction
-        ├── server.jank      # Authoritative server (60 tick)
-        ├── shared.jank      # Shared physics (Quake-style)
-        ├── camera.jank      # Third-person camera
-        ├── animation/       # Animation state machine
-        ├── networking/      # Prediction, interpolation, snapshots
-        └── strafehelper/    # CGaz-style velocity HUD
-
-bin/                     # User commands (symlinks to scripts/)
-scripts/                 # Build scripts
-├── platform/            # Cross-platform abstraction
-│   ├── common.sh        # Platform detection
-│   ├── macos.sh         # macOS implementation
-│   ├── linux.sh         # Linux stub (not yet supported)
-│   └── windows.sh       # Windows stub (not yet supported)
-├── run, compile, setup  # Main scripts
-└── ...
-
-libs/
-├── macos-arm64/         # Platform-specific libraries
-│   ├── glfw/, ozz-animation/, stb/, enet/, cgltf/, opengl/
-├── linux-x86_64/        # Placeholder
-├── windows-x86_64/      # Placeholder
-└── glm/                 # Header-only math library
+opengl-with-jank/
+├── engine/      # Reusable jank+OpenGL runtime
+│   ├── src/engine/         16 jank namespaces (gfx2d, gfx3d, networking, …)
+│   ├── include/            engine *_impl.h + bundled third-party headers
+│   ├── assets/             shaders/, fonts/ — embedded in the engine binary
+│   ├── scripts/            setup, build-engine, asset pipeline, platform/
+│   ├── third_party/        ozz-animation, tinygltf
+│   ├── libs/               glm + per-platform native libs
+│   └── tools/              gla2ozz, ozz2gltf, ozz-retarget
+└── game/        # Strafe Combat Academy
+    ├── src/sca/            game namespaces
+    ├── include/sca/        game-side *_impl.h
+    ├── models/             glTF assets
+    ├── textures/
+    └── jank-engine.edn     entry namespace + classpath config
 ```
 
-## Dependencies
+The two trees are independent — no symlinks between them. The engine knows nothing about the game; the game references the engine only by invoking the `jank-engine` binary.
 
-- **Jank** - Clojure dialect with C++ interop
-- **GLFW** - Window/input management
-- **OpenGL 3.3+** - Graphics API
-- **GLM** - Math library (header-only)
-- **STB** - Image loading
-- **cgltf** - glTF model parsing
-- **ozz-animation** - Skeletal animation
-- **enet** - UDP networking
+## How it works
+
+`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace plus all native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, libc++, clang JIT). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, and `(require ...)` the `:entry` namespace — JIT-compiled by the embedded clang. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
+
+## Modes
+
+The bundled game (`game/`) dispatches on its first arg:
+
+| Mode | Description |
+|------|-------------|
+| `client [host]` | Join a server (default `localhost`) |
+| `server` | Host on port 7777 |
+| `editor` | Course designer (build, save `.map`) |
+| `viewer` | Animation viewer for the JKA player skeleton |
+| `net-test {server\|client}` | ENet smoke test |
+
+Run with `jank-engine_run . <mode>` from inside `game/`.
 
 ## Features
 
-**Networking** - Server-authoritative architecture with client-side prediction and snapshot interpolation for smooth multiplayer gameplay.
+- **Networking** — Server-authoritative architecture with client-side prediction and snapshot interpolation. ENet UDP transport.
+- **Animation** — ozz-animation runtime with GPU skinning, skeletal line rendering, behavior-tree state machine over 50+ states.
+- **Physics** — Quake-style movement (friction, accel, air control, force-jump). Slope normals.
+- **Collision** — Raycast against glTF collision meshes.
+- **Behavior trees** — Vector DSL for game logic.
+- **Course editor** — Place / resize brushes, save/load `.edn` and JKA-compatible `.map`.
+- **Debug overlays** — F3 (FPS, position, velocity), F4 CGaz strafehelper.
 
-**Animation** - ozz-animation integration with GPU skinning, skeletal line rendering, and behavior-tree-driven state machine supporting 50+ animation states.
+## Dependencies
 
-**Physics** - Quake-style movement with friction, acceleration, air control, and force jump mechanics.
+Jank, GLFW, OpenGL 3.3+, GLM (header-only), STB, cgltf, ozz-animation, ENet.
 
-**Collision** - Raycast ground detection against glTF collision meshes.
+## Distribution
 
-**Behavior Trees** - Vector DSL for AI and game logic with sequence, fallback, condition, and action nodes.
+`./scripts/build-engine` produces `engine/dist/jank-engine/`:
 
-**Debug Tools** - F3 overlay (FPS, position, velocity, speed) and F4 CGaz-style strafehelper HUD.
-
-## AOT Compilation
-
-Build a standalone executable with bundled libraries:
-
-```bash
-./bin/compile            # Creates dist/bin/demo + dist/lib/
-./dist/demo_run          # Run the compiled executable
+```
+dist/jank-engine/
+├── bin/jank-engine          executable
+├── lib/jank-engine/         bundled dylibs (incl. libengine_assets)
+├── lib/jank/0.1/            jank runtime: clang, libc++, headers, stdlib
+├── include/                 third-party headers (glm, GLFW, ozz, engine *_impl.h)
+└── jank-engine_run          launcher (sets DYLD_LIBRARY_PATH)
 ```
 
-Build a distributable macOS .app:
+Total ~324 MB (most of it the bundled clang toolchain for runtime JIT).
 
-```bash
-./bin/build-dist         # Creates dist/Demo.zip
-```
+End users need XCode Command Line Tools (`xcode-select --install`).
 
-**Note:** End users need XCode Command Line Tools (`xcode-select --install`).
+## Platform support
 
-## Creating a New Game
+**macOS (Apple Silicon)** — primary platform, fully supported.
+**Linux** — cross-compile scripts (`engine/scripts/build-linux*`) exist but currently reference pre-split paths.
+**Windows** — platform abstraction stubs only.
 
-1. `mkdir -p src/examples/my-game`
-2. Create `src/examples/my-game/core.jank` with namespace `examples.my-game.core`
-3. Implement a `-main` function
-4. `./bin/run my-game`
+## Points of interest
 
-## Animation Tools
-
-Custom C++ tools in `tools/` for animation pipeline work:
-
-- **gla2ozz** - Convert Quake 3/JKA GLA skeletal animations to ozz format
-- **ozz2gltf** - Export ozz skeletons and animations to glTF for visualization
-- **ozz-retarget** - Retarget animations between different skeleton rigs
-
-Build with `./bin/build-gla2ozz`, `./bin/build-ozz2gltf`, etc.
-
-## Points of Interest
-
-### [clet macro](src/engine/macros.jank)
-
-A macro for C-style error handling that flattens nested conditionals:
-
-```clojure
-(clet [result (some-operation)
-       :when (failed? result)
-       :error (handle-error)])
-```
-
-### [C++ Interop Guide](CPP_INTEROP_DOCUMENTATION.md)
-
-AI-generated guide to Jank's C++ interop patterns. May have inaccuracies but useful as a starting point.
-
-## Platform Support
-
-**macOS (Apple Silicon)** - Primary development platform with full support.
-
-**Linux** - Cross-compilation via SSH to a Linux VM (`./bin/build-linux`, `./bin/build-linux-server`). Produces standalone distributions with bundled glibc.
-
-**Windows** - Build system stubs exist but not yet implemented.
+- **[clet macro](engine/src/engine/macros.jank)** — C-style error handling that flattens nested conditionals.
+- **[C++ interop notes](CPP_INTEROP_DOCUMENTATION.md)** — patterns and gotchas for `cpp/raw` blocks.
 
 ## License
 
-This project is for learning purposes. Use as you see fit.
+For learning purposes. Use as you see fit.
