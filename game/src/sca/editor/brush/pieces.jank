@@ -1,0 +1,301 @@
+(ns sca.editor.brush.pieces)
+
+;; Piece catalog: Lego-block types to brush definitions.
+;; Users work with grid coordinates. Each piece knows how to become brushes.
+;;
+;; Coordinate system: Y-up (engine-native).
+;; Grid coords are multiplied by grid-size to get world units.
+
+(defn- grid->world
+  "Convert grid position + size to world-unit origin and dimensions."
+  [grid-size [gx gy gz] [sx sy sz]]
+  {:origin [(* gx grid-size) (* gy grid-size) (* gz grid-size)]
+   :width (* sx grid-size)
+   :height (* sy grid-size)
+   :depth (* sz grid-size)})
+
+(defn- make-box-brush
+  "Create a 6-plane axis-aligned box brush.
+   Origin is the min corner (not center). Extends in +x, +y, +z."
+  [[ox oy oz] width height depth texture]
+  (let [x1 (float ox)       y1 (float oy)       z1 (float oz)
+        x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+        tex (or texture "textures/base")]
+    {:planes
+     [;; Bottom face (Y-) - normal points down
+      {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Top face (Y+) - normal points up
+      {:p1 [x1 y2 z2] :p2 [x1 y2 z1] :p3 [x2 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Front face (Z-) - normal points toward -Z
+      {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Back face (Z+) - normal points toward +Z
+      {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Left face (X-) - normal points toward -X
+      {:p1 [x1 y1 z2] :p2 [x1 y1 z1] :p3 [x1 y2 z1]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+      ;; Right face (X+) - normal points toward +X
+      {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]
+       :texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}]}))
+
+(defn- make-rotated-box-brush
+  "Create a brush from 8 arbitrary 3D corners.
+   b0..b3: bottom corners (CCW from above), t0..t3: top corners (each above corresponding b_i)."
+  [b0 b1 b2 b3 t0 t1 t2 t3 tex]
+  (let [dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        f (fn [v] (mapv float v))]
+    {:planes
+     [(merge {:p1 (f b0) :p2 (f b1) :p3 (f b2)} dt)
+      (merge {:p1 (f t1) :p2 (f t0) :p3 (f t3)} dt)
+      (merge {:p1 (f b0) :p2 (f t0) :p3 (f t1)} dt)
+      (merge {:p1 (f b1) :p2 (f t1) :p3 (f t2)} dt)
+      (merge {:p1 (f b2) :p2 (f t2) :p3 (f t3)} dt)
+      (merge {:p1 (f b3) :p2 (f t3) :p3 (f t0)} dt)]}))
+
+(defn- rotate-around
+  "Rotate point [x y z] around an axis through center by angle (radians).
+   axis: :x or :z."
+  [[x y z] [cx cy cz] axis angle]
+  (let [c (cpp/cos (cpp/float angle))
+        s (cpp/sin (cpp/float angle))
+        dx (- x cx) dy (- y cy) dz (- z cz)]
+    (case axis
+      :x [(+ cx dx)
+          (+ cy (- (* (double c) dy) (* (double s) dz)))
+          (+ cz (+ (* (double s) dy) (* (double c) dz)))]
+      :z [(+ cx (- (* (double c) dx) (* (double s) dy)))
+          (+ cy (+ (* (double s) dx) (* (double c) dy)))
+          (+ cz dz)])))
+
+(defn- make-tilted-box-brush
+  "Create a tilted box brush. tilt-deg is rotation around the axis perpendicular to facing.
+   When tilt-deg is 0/nil, equivalent to make-box-brush."
+  [origin width height depth tilt-deg facing tex]
+  (if (or (nil? tilt-deg) (zero? tilt-deg))
+    (make-box-brush origin width height depth tex)
+    (let [[ox oy oz] origin
+          x1 (float ox) y1 (float oy) z1 (float oz)
+          x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+          center [(/ (+ x1 x2) 2.0) (/ (+ y1 y2) 2.0) (/ (+ z1 z2) 2.0)]
+          ;; Rotation axis: north/south face Z so tilt around X; east/west face X so tilt around Z
+          axis (case (or facing :north) (:north :south) :x (:east :west) :z)
+          sign (case (or facing :north) (:north :east) 1.0 (:south :west) -1.0)
+          angle (* (double sign) (* (double tilt-deg) (/ 3.14159265 180.0)))
+          ;; Corners go SW->NW->NE->SE around the bottom (matches make-box-brush winding)
+          b0 [x1 y1 z1] b1 [x1 y1 z2] b2 [x2 y1 z2] b3 [x2 y1 z1]
+          t0 [x1 y2 z1] t1 [x1 y2 z2] t2 [x2 y2 z2] t3 [x2 y2 z1]]
+      (make-rotated-box-brush
+       (rotate-around b0 center axis angle)
+       (rotate-around b1 center axis angle)
+       (rotate-around b2 center axis angle)
+       (rotate-around b3 center axis angle)
+       (rotate-around t0 center axis angle)
+       (rotate-around t1 center axis angle)
+       (rotate-around t2 center axis angle)
+       (rotate-around t3 center axis angle)
+       tex))))
+
+(defmulti piece->brushes
+  "Convert a placed piece to a vector of brushes."
+  (fn [_grid-size piece] (:type piece)))
+
+(defmethod piece->brushes :platform
+  [grid-size {:keys [pos size facing texture tilt-deg]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
+    [(make-tilted-box-brush origin width height depth tilt-deg (or facing :north) texture)]))
+
+(defmethod piece->brushes :wall
+  [grid-size {:keys [pos size facing texture tilt-deg]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)]
+    [(make-tilted-box-brush origin width height depth tilt-deg (or facing :north) texture)]))
+
+(defmethod piece->brushes :ramp
+  [grid-size {:keys [pos size facing texture]}]
+  (let [{:keys [origin width height depth]} (grid->world grid-size pos size)
+        [ox oy oz] origin
+        x1 (float ox) y1 (float oy) z1 (float oz)
+        x2 (float (+ ox width)) y2 (float (+ oy height)) z2 (float (+ oz depth))
+        tex (or texture "textures/base")
+        dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        ;; Wedge ramp: 6 planes with inward-pointing normals.
+        ;; All normals verified via cross(p2-p1, p3-p1).
+        ;; Floor + 2 side walls + high-end wall (clip-only) + low-end wall (clip-only) + slope.
+        ;; Axis walls (all with inward normals):
+        floor  (merge {:p1 [x1 y1 z1] :p2 [x1 y1 z2] :p3 [x2 y1 z2]} dt) ;; normal +Y
+        wall-xn (merge {:p1 [x1 y1 z1] :p2 [x1 y2 z2] :p3 [x1 y1 z2]} dt) ;; normal +X (inward)
+        wall-xp (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x2 y2 z2]} dt) ;; normal -X (inward)
+        wall-zn (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z1]} dt) ;; normal +Z (inward)
+        wall-zp (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z2]} dt)] ;; normal -Z (inward)
+    [(case (or facing :north)
+       ;; Rises toward +Z: sides are X walls, ends are Z walls
+       ;; Slope inward normal [0, -dz, dy] verified
+       :north
+       {:planes [floor
+                 wall-xn                                            ;; left side
+                 wall-xp                                            ;; right side
+                 (assoc wall-zp :clip-only true)                    ;; high-end (Z+) clip-only
+                 (assoc wall-zn :clip-only true)                    ;; low-end (Z-) clip-only
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y1 z1] :p3 [x2 y2 z2]} dt)]}
+
+       ;; Rises toward -Z: sides are X walls, ends are Z walls
+       ;; Slope inward normal [0, -dz, -dy] verified
+       :south
+       {:planes [floor
+                 wall-xn
+                 wall-xp
+                 (assoc wall-zn :clip-only true)                    ;; high-end (Z-) clip-only
+                 (assoc wall-zp :clip-only true)                    ;; low-end (Z+) clip-only
+                 (merge {:p1 [x2 y1 z2] :p2 [x1 y1 z2] :p3 [x1 y2 z1]} dt)]}
+
+       ;; Rises toward +X: sides are Z walls, ends are X walls
+       :east
+       {:planes [floor
+                 wall-zn                                            ;; front side
+                 wall-zp                                            ;; back side
+                 (assoc wall-xp :clip-only true)                    ;; high-end (X+) clip-only
+                 (assoc wall-xn :clip-only true)                    ;; low-end (X-) clip-only
+                 (merge {:p1 [x1 y1 z1] :p2 [x2 y2 z1] :p3 [x2 y2 z2]} dt)]}
+
+       ;; Rises toward -X: sides are Z walls, ends are X walls
+       :west
+       {:planes [floor
+                 wall-zn
+                 wall-zp
+                 (assoc wall-xn :clip-only true)                    ;; high-end (X-) clip-only
+                 (assoc wall-xp :clip-only true)                    ;; low-end (X+) clip-only
+                 (merge {:p1 [x2 y1 z1] :p2 [x2 y1 z2] :p3 [x1 y2 z2]} dt)]})]))
+
+(defmethod piece->brushes :stairs
+  [grid-size {:keys [pos size facing texture steps]}]
+  (let [[gx gy gz] pos
+        [sx sy sz] size
+        dir (or facing :north)
+        ;; Step direction determines which axis advances; depth dimension along that axis
+        ;; If :steps is provided, use that count. Else derive from depth.
+        depth-along-step (case dir (:north :south) sz (:east :west) sx)
+        step-count (or steps depth-along-step)
+        ;; Step depth in grid units (may be fractional if steps != depth)
+        step-depth (/ (float depth-along-step) step-count)
+        step-height (/ (float sy) step-count)
+        [advance-fn size-fn]
+        (case dir
+          :north [(fn [i h] [gx (+ gy (* i h)) (+ gz (* i step-depth))])
+                  (fn [h] [sx h step-depth])]
+          :south [(fn [i h] [gx (+ gy (* i h))
+                             (- (+ gz depth-along-step) (* (inc i) step-depth))])
+                  (fn [h] [sx h step-depth])]
+          :east  [(fn [i h] [(+ gx (* i step-depth)) (+ gy (* i h)) gz])
+                  (fn [h] [step-depth h sz])]
+          :west  [(fn [i h] [(- (+ gx depth-along-step) (* (inc i) step-depth))
+                             (+ gy (* i h)) gz])
+                  (fn [h] [step-depth h sz])])]
+    (vec (for [i (range step-count)]
+           (let [step-pos (advance-fn i step-height)
+                 step-size (size-fn step-height)
+                 {:keys [origin width height depth]} (grid->world grid-size step-pos step-size)]
+             (make-box-brush origin width height depth texture))))))
+
+
+(defn- make-trapezoid-brush
+  "Create a trapezoidal brush from 4 XZ corners + Y bounds.
+   Corners MUST be in CCW order from above: c0, c1, c2, c3.
+   Produces 6 planes with inward normals.
+   For CCW corners, each side wall c_i to c_{i+1} uses:
+     p1=c_i-bot, p2=c_i-top, p3=c_{i+1}-top
+   which always gives inward-pointing normal."
+  [[x0 z0] [x1 z1] [x2 z2] [x3 z3] yb yt tex]
+  (let [dt {:texture tex :x-offset 0 :y-offset 0 :rotation 0 :x-scale 1.0 :y-scale 1.0}
+        yb (float yb) yt (float yt)
+        x0 (float x0) z0 (float z0)
+        x1 (float x1) z1 (float z1)
+        x2 (float x2) z2 (float z2)
+        x3 (float x3) z3 (float z3)]
+    {:planes
+     [;; Bottom (normal +Y): CCW from above = correct cross product
+      (merge {:p1 [x0 yb z0] :p2 [x1 yb z1] :p3 [x2 yb z2]} dt)
+      ;; Top (normal -Y): reverse winding
+      (merge {:p1 [x1 yt z1] :p2 [x0 yt z0] :p3 [x3 yt z3]} dt)
+      ;; Side 0->1
+      (merge {:p1 [x0 yb z0] :p2 [x0 yt z0] :p3 [x1 yt z1]} dt)
+      ;; Side 1->2
+      (merge {:p1 [x1 yb z1] :p2 [x1 yt z1] :p3 [x2 yt z2]} dt)
+      ;; Side 2->3
+      (merge {:p1 [x2 yb z2] :p2 [x2 yt z2] :p3 [x3 yt z3]} dt)
+      ;; Side 3->0
+      (merge {:p1 [x3 yb z3] :p2 [x3 yt z3] :p3 [x0 yt z0]} dt)]}))
+
+(defn- ensure-ccw
+  "Ensure 4 XZ corners are in CCW order from above.
+   Cross product of (c1-c0) x (c2-c0) in XZ: if Y component < 0, reverse."
+  [c0 c1 c2 c3]
+  (let [[x0 z0] c0 [x1 z1] c1 [x2 z2] c2
+        ;; Cross product Y component of (c1-c0) x (c2-c0) in 2D = (x1-x0)*(z2-z0) - (z1-z0)*(x2-x0)
+        cross-y (- (* (- x1 x0) (- z2 z0)) (* (- z1 z0) (- x2 x0)))]
+    (if (<= cross-y 0)
+      [c0 c1 c2 c3]
+      [c3 c2 c1 c0])))
+
+(defmethod piece->brushes :curve
+  [grid-size {:keys [pos size facing texture arc-deg segments]}]
+  (let [[gx gy gz] pos
+        [sx sy sz] size
+        segments (or segments 12)
+        arc-deg (or arc-deg 90)
+        radius (float (* sz grid-size))
+        path-width (float (* sx grid-size))
+        thickness (float (* sy grid-size))
+        tex (or texture "textures/base")
+        pi (float 3.14159265)
+        arc-rad (* (float arc-deg) (/ pi 180.0))
+        ox (float (* gx grid-size))
+        oy (float (* gy grid-size))
+        oz (float (* gz grid-size))
+        [center-x center-z start-angle]
+        (case (or facing :north)
+          :north [(+ ox radius) oz              pi]
+          :east  [ox             (+ oz radius)  (/ (* 3.0 pi) 2.0)]
+          :south [(- ox radius) oz              0.0]
+          :west  [ox             (- oz radius)  (/ pi 2.0)])
+        step-angle (/ arc-rad segments)
+        r-in (- radius (/ path-width 2.0))
+        r-out (+ radius (/ path-width 2.0))]
+    (vec (for [i (range segments)]
+           (let [a1 (- start-angle (* (float i) step-angle))
+                 a2 (- start-angle (* (float (inc i)) step-angle))
+                 cos-a1 (double (cpp/cos (cpp/float a1)))
+                 sin-a1 (double (cpp/sin (cpp/float a1)))
+                 cos-a2 (double (cpp/cos (cpp/float a2)))
+                 sin-a2 (double (cpp/sin (cpp/float a2)))
+                 p-in-1  [(+ center-x (* r-in cos-a1))  (+ center-z (* r-in sin-a1))]
+                 p-out-1 [(+ center-x (* r-out cos-a1)) (+ center-z (* r-out sin-a1))]
+                 p-in-2  [(+ center-x (* r-in cos-a2))  (+ center-z (* r-in sin-a2))]
+                 p-out-2 [(+ center-x (* r-out cos-a2)) (+ center-z (* r-out sin-a2))]
+                 ;; Ensure CCW order: in1, out1, out2, in2
+                 [c0 c1 c2 c3] (ensure-ccw p-in-1 p-out-1 p-out-2 p-in-2)]
+             (make-trapezoid-brush c0 c1 c2 c3 oy (+ oy thickness) tex))))))
+
+(defmethod piece->brushes :default
+  [_grid-size piece]
+  (println "Unknown piece type:" (:type piece))
+  [])
+
+(defn pieces->brush-map
+  "Convert a piece-grid level definition to brush data structure."
+  [{:keys [grid-size name spawn pieces]
+    :or {grid-size 128 name "untitled"}}]
+  (let [all-brushes (vec (mapcat #(piece->brushes grid-size %) pieces))
+        [sx sy sz] (or spawn [0 1 0])
+        ;; Origin as vector in engine Y-up coords
+        spawn-origin [(+ (* sx grid-size) (/ grid-size 2))
+                      (+ (* sy grid-size) 16)
+                      (+ (* sz grid-size) (/ grid-size 2))]]
+    {:entities
+     [(merge {:classname "worldspawn"
+              :brushes all-brushes}
+             (when name {:properties {"message" name}}))
+      {:classname "info_player_start"
+       :properties {"origin" spawn-origin}
+       :brushes []}]}))

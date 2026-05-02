@@ -1,0 +1,52 @@
+(ns sca.editor.brush.math)
+
+(cpp/raw "#include <math.h>")
+
+;; Vector math helpers. All vectors are [x y z] triples.
+
+(defn v3-add [[ax ay az] [bx by bz]]
+  [(+ ax bx) (+ ay by) (+ az bz)])
+
+(defn v3-sub [[ax ay az] [bx by bz]]
+  [(- ax bx) (- ay by) (- az bz)])
+
+(defn v3-scale [[x y z] s]
+  [(* x s) (* y s) (* z s)])
+
+(defn v3-dot [[ax ay az] [bx by bz]]
+  (+ (* ax bx) (* ay by) (* az bz)))
+
+(defn v3-cross [[ax ay az] [bx by bz]]
+  [(- (* ay bz) (* az by))
+   (- (* az bx) (* ax bz))
+   (- (* ax by) (* ay bx))])
+
+(defn v3-length [[x y z]]
+  (cpp/sqrt (cpp/+ (cpp/* (cpp/float x) (cpp/float x))
+                   (cpp/+ (cpp/* (cpp/float y) (cpp/float y))
+                          (cpp/* (cpp/float z) (cpp/float z))))))
+
+(defn v3-normalize [v]
+  (let [len (v3-length v)]
+    (if (< len 0.000001)
+      [0.0 0.0 0.0]
+      (v3-scale v (/ 1.0 len)))))
+
+(defn v3-lerp [a b t]
+  (v3-add a (v3-scale (v3-sub b a) t)))
+
+(defn plane-from-points
+  "Compute plane normal and distance from 3 points.
+   Points are ordered clockwise when viewed from outside the brush.
+   Returns {:normal [nx ny nz] :dist d} where normal points outward."
+  [p1 p2 p3]
+  (let [edge1 (v3-sub p2 p1)
+        edge2 (v3-sub p3 p1)
+        normal (v3-normalize (v3-cross edge1 edge2))
+        dist (v3-dot normal p1)]
+    {:normal normal :dist dist}))
+
+(defn point-plane-distance
+  "Signed distance from a point to a plane (positive = front/outside)."
+  [point {:keys [normal dist]}]
+  (- (v3-dot normal point) dist))

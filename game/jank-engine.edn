@@ -1,0 +1,11 @@
+;; Strafe Combat Academy - jank-engine project config.
+;;   jank-engine .          ; run the client (default)
+;;   jank-engine . server   ; host
+;;   jank-engine . editor   ; course designer
+;;   jank-engine . viewer   ; animation viewer
+;;   jank-engine . net-test {server|client}
+{:entry sca.core
+ :paths ["src"]
+ ;; sca's own *_impl.h files (engine-internal headers like glm, glfw, ozz
+ ;; are auto-registered by the jank-engine binary itself)
+ :includes ["include"]}

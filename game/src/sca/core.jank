@@ -1,0 +1,38 @@
+(ns sca.core
+  "Strafe Combat Academy - mode dispatcher.
+
+   Invoke via the jank-engine binary:
+     jank-engine . <mode> [args...]
+
+   Modes:
+     client [host]            — join a server (default: localhost)
+     server                   — host a server on port 7777
+     editor                   — course designer
+     viewer                   — animation viewer
+     net-test {server|client} — networking smoke test"
+  (:require [sca.client :as client]
+            [sca.server :as server]
+            [sca.editor.core :as editor]
+            [sca.viewer :as viewer]
+            [sca.tests.net :as net-test]))
+
+(defn- print-usage []
+  (println "usage: jank-engine . <mode> [args...]")
+  (println "")
+  (println "  client [host]            join a server (default: localhost)")
+  (println "  server                   host a server on port 7777")
+  (println "  editor                   course designer")
+  (println "  viewer                   animation viewer")
+  (println "  net-test {server|client} network smoke test"))
+
+(defn -main
+  ([] (-main "client"))
+  ([mode & args]
+   (cond
+     (= mode "client")   (apply client/run-client args)
+     (= mode "server")   (server/run-server)
+     (= mode "editor")   (editor/-main)
+     (= mode "viewer")   (viewer/-main)
+     (= mode "net-test") (apply net-test/-main args)
+     :else (do (println "Unknown mode:" mode)
+               (print-usage)))))

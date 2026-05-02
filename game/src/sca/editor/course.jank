@@ -1,0 +1,237 @@
+(ns sca.editor.course
+  (:require [sca.editor.brush.pieces :as pieces]
+            [sca.editor.brush.mesh :as mesh]
+            [sca.editor.level :as level]
+            [engine.gfx3d.collision.interface :as collision]
+            [engine.gl.constants :as gl]))
+
+(cpp/raw "#include \"gl_wrappers.h\"")
+(cpp/raw "#include \"gl_utils.h\"")
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>")
+
+;; Colors per piece type
+(def piece-colors
+  {:platform [0.55 0.58 0.62 1.0]
+   :wall     [0.65 0.50 0.40 1.0]
+   :ramp     [0.45 0.62 0.45 1.0]
+   :stairs   [0.50 0.60 0.55 1.0]
+   :curve    [0.50 0.55 0.68 1.0]})
+
+(def default-color [0.6 0.6 0.6 1.0])
+
+(defn initial-state
+  "Create the initial editor/course state."
+  []
+  {:mode :build
+   ;; Cursor
+   :cursor-pos [5 1 5]
+   :cursor-size [4 1 4]
+   :piece-type :platform
+   :facing :north
+   ;; Per-piece signature parameters (persist across piece-type switches)
+   :piece-params {:platform {:tilt-deg 0}
+                  :wall     {:tilt-deg 0}
+                  :curve    {:arc-deg 90 :segments 12}
+                  :stairs   {:steps 4}}
+   ;; Course data
+   :grid-size 2
+   :pieces []
+   :piece-vaos []
+   :collision nil
+   ;; Camera (build mode)
+   :cam-pos [20.0 15.0 20.0]
+   ;; Player (test mode)
+   :position [10.0 4.0 10.0]
+   :velocity [0.0 0.0 0.0]
+   :grounded? false
+   :jump-z-start nil
+   :backflip-jump? false
+   :yaw -90.0
+   :pitch 0.0})
+
+(defn upload-piece
+  "Generate mesh and upload VAO for a single piece. Returns {:vao :index-count :color}."
+  [grid-size piece]
+  (let [brushes (pieces/piece->brushes grid-size piece)
+        mesh-data (mesh/brushes-to-mesh brushes)]
+    (when (seq (:positions mesh-data))
+      (let [uploaded (level/upload-mesh mesh-data)
+            color (get piece-colors (:type piece) default-color)]
+        {:vao (:vao uploaded)
+         :index-count (:index-count uploaded)
+         :color color}))))
+
+(defn rebuild-collision
+  "Rebuild collision mesh from all pieces."
+  [grid-size all-pieces]
+  (let [all-brushes (vec (mapcat #(pieces/piece->brushes grid-size %) all-pieces))
+        all-mesh (mesh/brushes-to-mesh all-brushes)]
+    (when (seq (:positions all-mesh))
+      (collision/prepare-collision-mesh
+       {:positions (:positions all-mesh)
+        :indices (:indices all-mesh)}))))
+
+(defn push-undo
+  "Save current pieces to undo history before modifying."
+  [state]
+  (update state :undo-history (fn [h] (conj (or h []) (:pieces state)))))
+
+(defn undo
+  "Restore pieces from undo history. Rebuilds all VAOs + collision."
+  [state]
+  (let [history (:undo-history state)]
+    (if (and history (seq history))
+      (let [prev-pieces (peek history)
+            new-history (pop history)
+            grid-size (:grid-size state)
+            new-vaos (vec (keep #(upload-piece grid-size %) prev-pieces))]
+        (assoc state
+               :pieces prev-pieces
+               :piece-vaos new-vaos
+               :undo-history new-history
+               :collision (rebuild-collision grid-size prev-pieces)))
+      state)))
+
+(defn place-piece
+  "Handle piece/placed event. Adds piece, uploads VAO, rebuilds collision.
+   Returns updated state."
+  [state piece]
+  (let [state (push-undo state)
+        grid-size (:grid-size state)
+        vao-data (upload-piece grid-size piece)
+        new-pieces (conj (:pieces state) piece)
+        new-vaos (if vao-data
+                   (conj (:piece-vaos state) vao-data)
+                   (:piece-vaos state))]
+    (assoc state
+           :pieces new-pieces
+           :piece-vaos new-vaos
+           :collision (rebuild-collision grid-size new-pieces))))
+
+(defn remove-piece-at
+  "Handle piece/removed event. Removes piece at grid pos, rebuilds.
+   Returns updated state."
+  [state pos]
+  (let [state (push-undo state)
+        grid-size (:grid-size state)
+        idx (first (keep-indexed
+                    (fn [i p] (when (= (:pos p) pos) i))
+                    (:pieces state)))]
+    (if idx
+      (let [new-pieces (vec (keep-indexed
+                             (fn [i p] (when (not= i idx) p))
+                             (:pieces state)))
+            ;; Rebuild all VAOs (simpler than tracking which VAO maps to which piece)
+            new-vaos (vec (keep #(upload-piece grid-size %) new-pieces))]
+        (assoc state
+               :pieces new-pieces
+               :piece-vaos new-vaos
+               :collision (rebuild-collision grid-size new-pieces)))
+      state)))
+
+(defn make-ghost-piece
+  "Build a piece map from current editor cursor state.
+   Merges in the piece's signature parameters (tilt, arc, segments, steps)."
+  [state]
+  (let [pt (:piece-type state)
+        pparams (get-in state [:piece-params pt] {})]
+    (merge {:type pt
+            :pos (:cursor-pos state)
+            :size (:cursor-size state)
+            :facing (:facing state)
+            :texture "textures/base"}
+           pparams)))
+
+(defn update-ghost
+  "Regenerate ghost preview VAO if cursor state OR piece-params changed."
+  [state]
+  (let [pt (:piece-type state)
+        pparams (get-in state [:piece-params pt] {})
+        ghost-key [pt (:cursor-pos state)
+                   (:cursor-size state) (:facing state) pparams]
+        prev-key (:ghost-key state)]
+    (if (= ghost-key prev-key)
+      state
+      (let [piece (make-ghost-piece state)
+            vao-data (upload-piece (:grid-size state) piece)]
+        (assoc state
+               :ghost-key ghost-key
+               :ghost-vao vao-data)))))
+
+(defn draw-ghost
+  "Draw the ghost piece preview with transparency."
+  [state {:keys [shader]}]
+  (when-let [{:keys [vao index-count color]} (:ghost-vao state)]
+    (let [[r g b _] color]
+      ;; Semi-transparent
+      (cpp/wrap_glUniform4f
+       (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor")
+       r g b 0.4)
+      (cpp/wrap_glBindVertexArray vao)
+      (cpp/wrap_glDrawElements
+       gl/GL_TRIANGLES
+       (cpp/int index-count)
+       gl/GL_UNSIGNED_INT
+       (cpp/voidify_int (cpp/int 0))))))
+
+(defn save-course
+  "Save course pieces to a file."
+  [state path]
+  (let [data {:grid-size (:grid-size state)
+              :pieces (:pieces state)}]
+    (spit path (pr-str data))
+    (println "Course saved to" path)))
+
+(defn load-course-file
+  "Load course pieces from a file. Returns updated state."
+  [state path]
+  (let [content (slurp path)]
+    (if content
+      (let [data (read-string content)
+            grid-size (or (:grid-size data) (:grid-size state))
+            loaded-pieces (or (:pieces data) [])
+            new-vaos (vec (keep #(upload-piece grid-size %) loaded-pieces))]
+        (println "Loaded" (count loaded-pieces) "pieces from" path)
+        (assoc state
+               :grid-size grid-size
+               :pieces loaded-pieces
+               :piece-vaos new-vaos
+               :undo-history []
+               :collision (rebuild-collision grid-size loaded-pieces)))
+      (do (println "Failed to load:" path)
+          state))))
+
+(defn draw-course
+  "Draw all piece meshes."
+  [state {:keys [shader] :as context}]
+  ;; Enable lighting
+  (cpp/wrap_glUniform1i
+   (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
+   (cpp/int 1))
+  ;; No texture
+  (cpp/wrap_glUniform1i
+   (cpp/wrap_glGetUniformLocation shader "uHasBaseColorTex")
+   (cpp/int 0))
+  ;; Identity local transform
+  (cpp/wrap_glUniformMatrix4fv
+   (cpp/wrap_glGetUniformLocation shader "local")
+   (cpp/int 1) gl/GL_FALSE
+   (cpp/glm.value_ptr (cpp/identity_matrix)))
+  ;; Draw each piece
+  (doseq [{:keys [vao index-count color]} (:piece-vaos state)]
+    (let [[r g b a] color]
+      (cpp/wrap_glUniform4f
+       (cpp/wrap_glGetUniformLocation shader "uBaseColorFactor")
+       r g b a)
+      (cpp/wrap_glBindVertexArray vao)
+      (cpp/wrap_glDrawElements
+       gl/GL_TRIANGLES
+       (cpp/int index-count)
+       gl/GL_UNSIGNED_INT
+       (cpp/voidify_int (cpp/int 0)))))
+  ;; Disable lighting
+  (cpp/wrap_glUniform1i
+   (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
+   (cpp/int 0)))

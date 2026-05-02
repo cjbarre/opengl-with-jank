@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# Load platform abstraction
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+
+LIBS_DIR="$(get_libs_dir)"
+LIB_EXT="$(get_lib_extension)"
+
+echo "=== Setting up opengl-with-jank for $PLATFORM ==="
+
+# Initialize submodules if needed
+echo "Initializing submodules..."
+cd "$PROJECT_DIR"
+git submodule update --init --recursive
+
+# Build ozz-animation
+echo "Building ozz-animation..."
+cd "$PROJECT_DIR/third_party/ozz-animation"
+mkdir -p build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
+make -j8
+
+# Copy libraries with platform-aware paths
+echo "Installing ozz-animation libraries..."
+mkdir -p "$LIBS_DIR/ozz-animation/lib"
+cp "src/base/$(format_lib_name ozz_base_r)" "$LIBS_DIR/ozz-animation/lib/"
+cp "src/animation/runtime/$(format_lib_name ozz_animation_r)" "$LIBS_DIR/ozz-animation/lib/"
+cp "src/geometry/runtime/$(format_lib_name ozz_geometry_r)" "$LIBS_DIR/ozz-animation/lib/"
+
+cd "$PROJECT_DIR"
+
+# Build OpenGL stub library (platform-specific - no-op on Linux)
+echo "Building OpenGL stub library..."
+mkdir -p "$LIBS_DIR/opengl/lib"
+create_opengl_stub "$LIBS_DIR/opengl/lib/$(format_lib_name OpenGL)"
+
+# Build header-only libraries into shared libraries
+echo "Building STB library..."
+mkdir -p "$LIBS_DIR/stb/lib"
+cat > /tmp/stb_impl.c << 'EOF'
+#define STBI_NO_THREAD_LOCALS 1
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+#define STB_TRUETYPE_IMPLEMENTATION
+#include "stb_truetype.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -I"$PROJECT_DIR/include" -lm
+    fix_lib_install_name "$LIBS_DIR/stb/lib/libstb_all.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/stb/lib/libstb_all.dylib" /tmp/stb_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libstb_all.dylib"
+fi
+
+echo "Building cgltf library..."
+mkdir -p "$LIBS_DIR/cgltf/lib"
+cat > /tmp/cgltf_impl.c << 'EOF'
+#define CGLTF_IMPLEMENTATION
+#include "cgltf.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.so" /tmp/cgltf_impl.c -I"$PROJECT_DIR/include"
+    fix_lib_install_name "$LIBS_DIR/cgltf/lib/libcgltf.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.dylib" /tmp/cgltf_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libcgltf.dylib"
+fi
+
+echo "Building enet library..."
+mkdir -p "$LIBS_DIR/enet/lib"
+cat > /tmp/enet_impl.c << 'EOF'
+#define ENET_IMPLEMENTATION
+#include "enet.h"
+EOF
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -I"$PROJECT_DIR/include"
+    fix_lib_install_name "$LIBS_DIR/enet/lib/libenet.so"
+else
+    clang -dynamiclib -O2 -o "$LIBS_DIR/enet/lib/libenet.dylib" /tmp/enet_impl.c \
+        -I"$PROJECT_DIR/include" -install_name "@rpath/libenet.dylib"
+fi
+
+# Build GLFW from source on Linux (macOS uses pre-built from Homebrew)
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    echo "Building GLFW..."
+    cd "$PROJECT_DIR/third_party"
+    if [[ ! -d glfw ]]; then
+        git clone --depth 1 --branch 3.4 https://github.com/glfw/glfw.git
+    fi
+    cd glfw
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+          -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
+    cmake --build build -j$(nproc)
+    mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include"
+    cp build/src/libglfw.so.3 "$LIBS_DIR/glfw/lib/"
+    ln -sf libglfw.so.3 "$LIBS_DIR/glfw/lib/libglfw.so"
+    cp -R include/GLFW "$LIBS_DIR/glfw/include/"
+    fix_lib_install_name "$LIBS_DIR/glfw/lib/libglfw.so.3"
+fi
+
+cd "$PROJECT_DIR"
+
+# Build engine-assets dylib (embeds shaders + font into a registered resource bundle)
+echo "Generating engine assets..."
+mkdir -p "$PROJECT_DIR/build"
+clojure -M "$PROJECT_DIR/scripts/embed-assets.clj" \
+    "$PROJECT_DIR/build/engine_assets.cpp" \
+    --system-include "$PROJECT_DIR/include" \
+    --system-include "$PROJECT_DIR/libs/glm" \
+    --system-include "$LIBS_DIR/glfw/include" \
+    --system-include "$LIBS_DIR/ozz-animation/include" \
+    "shaders:$PROJECT_DIR/shaders" \
+    "fonts:$PROJECT_DIR/fonts"
+
+echo "Building engine-assets library..."
+mkdir -p "$LIBS_DIR/engine-assets/lib"
+
+# Locate jank's c_api.h. Honors $JANK_INCLUDE_DIR override; otherwise probes
+# the install layout next to the jank binary on PATH.
+if [[ -z "${JANK_INCLUDE_DIR:-}" ]]; then
+    JANK_BIN="$(command -v jank || true)"
+    if [[ -z "$JANK_BIN" ]]; then
+        echo "ERROR: 'jank' not found on PATH and JANK_INCLUDE_DIR not set" >&2
+        exit 1
+    fi
+    if command -v readlink >/dev/null 2>&1 && readlink -f / >/dev/null 2>&1; then
+        JANK_BIN="$(readlink -f "$JANK_BIN")"
+    fi
+    JANK_PREFIX_DIR="$(cd "$(dirname "$JANK_BIN")/.." && pwd)"
+    for cand in "$JANK_PREFIX_DIR/include/cpp" "$JANK_PREFIX_DIR/include"; do
+        if [[ -f "$cand/jank/c_api.h" ]]; then
+            JANK_INCLUDE_DIR="$cand"
+            break
+        fi
+    done
+    if [[ -z "${JANK_INCLUDE_DIR:-}" ]]; then
+        echo "ERROR: could not locate jank/c_api.h near $JANK_BIN" >&2
+        echo "       set JANK_INCLUDE_DIR to the directory containing jank/c_api.h" >&2
+        exit 1
+    fi
+    echo "  using jank headers from: $JANK_INCLUDE_DIR"
+fi
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    g++ -shared -fPIC -O2 \
+        -I"$JANK_INCLUDE_DIR" \
+        -o "$LIBS_DIR/engine-assets/lib/libengine_assets.so" \
+        "$PROJECT_DIR/build/engine_assets.cpp"
+    fix_lib_install_name "$LIBS_DIR/engine-assets/lib/libengine_assets.so"
+else
+    clang -dynamiclib -O2 \
+        -I"$JANK_INCLUDE_DIR" \
+        -undefined dynamic_lookup \
+        -o "$LIBS_DIR/engine-assets/lib/libengine_assets.dylib" \
+        "$PROJECT_DIR/build/engine_assets.cpp" \
+        -install_name "@rpath/libengine_assets.dylib"
+fi
+
+echo ""
+echo "=== Setup complete for $PLATFORM ==="
+echo "Build engine binary with: ./scripts/build-engine"

@@ -15,6 +15,9 @@ dist-*/
 # Pre-compiled libraries (built locally)
 libs/*/lib/
 
+# Generated engine-assets dylib (built by scripts/setup from engine/assets/)
+**/engine-assets/lib/
+
 # Test compilation output
 test_compile/
 

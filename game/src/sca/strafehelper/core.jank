@@ -1,0 +1,193 @@
+(ns sca.strafehelper.core
+  (:require [engine.gfx2d.graphics.interface :as gfx2d]
+            [engine.gfx2d.text.interface :as text]))
+
+;; C++ math implementation to avoid jank numeric conversion issues
+(cpp/raw "#include <math.h>")
+(cpp/raw "#include \"sca/strafehelper_impl.h\"")
+
+;; Math constants
+(def PI 3.14159)
+(def TWO_PI 6.28318)
+(def HALF_PI 1.5708)
+(def QUARTER_PI 0.785398)
+
+;; Use C++ implementation for normalize-angle
+(defn normalize-angle
+  "Normalize angle to -PI to PI range."
+  [a]
+  (cpp/strafe.normalize_angle (cpp/float a)))
+
+(defn calc-velocity-angle
+  "Calculate the velocity angle in XZ plane (radians)."
+  [vx vz]
+  (let [vx (cpp/float vx)
+        vz (cpp/float vz)]
+    (if (and (cpp/< (cpp/fabs vx) (cpp/float 0.001))
+             (cpp/< (cpp/fabs vz) (cpp/float 0.001)))
+      (cpp/float 0.0)
+      (cpp/float (cpp/atan2 vz vx)))))
+
+(defn calc-speed
+  "Calculate horizontal speed."
+  [vx vz]
+  (let [vx (cpp/float vx)
+        vz (cpp/float vz)]
+    (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx vx) (cpp/* vz vz))))))
+
+(defn calc-optimal-angle
+  "Calculate optimal strafe angle for maximum acceleration.
+   Returns angle in radians (0 to PI/2).
+   When speed > max_speed, optimal angle = acos(max_speed / speed).
+   When speed <= max_speed, any angle works (return PI/4 as default)."
+  [speed max-speed]
+  (let [speed (cpp/float speed)
+        max-speed (cpp/float max-speed)]
+    (if (or (cpp/<= speed max-speed)
+            (cpp/< speed (cpp/float 0.001)))
+      (cpp/float QUARTER_PI)
+      (let [ratio (cpp// max-speed speed)
+            ratio (if (cpp/> ratio (cpp/float 1.0))
+                    (cpp/float 1.0)
+                    ratio)]
+        (cpp/float (cpp/acos ratio))))))
+
+(defn calc-min-accel-angle
+  "Calculate minimum angle where you still gain speed."
+  [speed max-speed]
+  (let [speed (cpp/float speed)
+        max-speed (cpp/float max-speed)]
+    (cond
+      (cpp/<= speed (cpp/float 0.001)) (cpp/float 0.0)
+      (cpp/<= speed max-speed) (cpp/float 0.0)
+      :else (cpp/float (cpp/acos (cpp// max-speed speed))))))
+
+;; Colors for the strafehelper
+(def color-background [0.2 0.2 0.2 0.4])
+(def color-accel-zone [0.2 0.8 0.2 0.6])
+(def color-decel-zone [0.8 0.2 0.2 0.4])
+(def color-velocity [1.0 1.0 1.0 1.0])
+(def color-optimal [1.0 1.0 0.0 0.9])
+(def color-view [0.5 0.8 1.0 0.8])
+
+;; Strafehelper configuration
+(def config
+  {:center-x 640.0
+   :center-y 550.0
+   :radius 80.0
+   :arc-thickness 8.0
+   :line-thickness 2.0
+   :segments 64
+   :max-speed 8.0})
+
+
+(defn render-strafehelper
+  "Render the CGaz-style strafehelper.
+   gfx2d: graphics2d map from init-graphics2d (contains render closures)
+   velocity: [vx vy vz] player velocity
+   yaw: player yaw in degrees
+   grounded: true if player is on ground
+   screen-width, screen-height: window dimensions"
+  [gfx2d velocity yaw grounded screen-width screen-height]
+  (let [[vx vy vz] velocity
+        cx (:center-x config)
+        cy (:center-y config)
+        radius (:radius config)
+        arc-thick (:arc-thickness config)
+        line-thick (:line-thickness config)
+        segs (:segments config)
+        max-speed (:max-speed config)
+
+        ;; Calculate angles
+        speed (calc-speed vx vz)
+        vel-angle (calc-velocity-angle vx vz)
+        yaw-rad (normalize-angle (cpp/* (cpp/float yaw) (cpp/float 0.0174532925199433)))
+        optimal-angle (calc-optimal-angle speed max-speed)
+        min-accel (calc-min-accel-angle speed max-speed)
+
+        ;; Calculate velocity angle RELATIVE to view direction
+        ;; This is what matters for strafing - the angle between where you look and where you move
+        rel-vel-angle (normalize-angle (- vel-angle yaw-rad))
+
+        ;; Arc is fixed on screen, pointing up (-PI/2)
+        ;; Velocity line shows angle relative to your view
+        half-arc 1.5708 ;; PI/2 = 90 degrees each side
+        center-angle -1.5708 ;; Up on screen
+
+        ;; Background arc - fixed, centered pointing up
+        bg-start (- center-angle half-arc)
+        bg-end (+ center-angle half-arc)
+
+        ;; Velocity direction on the arc (relative to view)
+        screen-vel-angle (+ center-angle rel-vel-angle)]
+
+    ((:begin-2d gfx2d) screen-width screen-height)
+
+    ;; Draw background arc
+    ((:set-color gfx2d) color-background)
+    ((:render-arc-outline gfx2d) cx cy radius bg-start bg-end segs arc-thick)
+
+    ;; Draw acceleration zones - FIXED on screen
+    ;; Green zones show where velocity should be for acceleration
+    ;; They're near center but offset to the sides
+    (when (> speed 0.1)
+      (let [;; Zones are from just past center out to the optimal angle
+            ;; Left zone: for W+D strafing
+            left-zone-start (- center-angle optimal-angle)
+            left-zone-end (- center-angle 0.1)
+            ;; Right zone: for W+A strafing
+            right-zone-start (+ center-angle 0.1)
+            right-zone-end (+ center-angle optimal-angle)]
+
+        ;; Left zone
+        ((:set-color gfx2d) color-accel-zone)
+        ((:render-arc-outline gfx2d) cx cy radius left-zone-start left-zone-end (/ segs 4) arc-thick)
+
+        ;; Right zone
+        ((:render-arc-outline gfx2d) cx cy radius right-zone-start right-zone-end (/ segs 4) arc-thick)
+
+        ;; Optimal angle markers
+        ((:set-color gfx2d) color-optimal)
+        (let [opt-left (- center-angle optimal-angle)
+              opt-right (+ center-angle optimal-angle)
+              marker-len 15.0]
+          ((:render-line gfx2d)
+           (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-left))))
+           (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-left))))
+           (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-left))))
+           (+ cy (* (+ radius marker-len) (cpp/sin (cpp/float opt-left))))
+           line-thick)
+          ((:render-line gfx2d)
+           (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-right))))
+           (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-right))))
+           (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-right))))
+           (+ cy (* (+ radius marker-len) (cpp/sin (cpp/float opt-right))))
+           line-thick))))
+
+    ;; Draw velocity direction line (where you're moving relative to view)
+    ((:set-color gfx2d) color-velocity)
+    ((:render-line gfx2d)
+     cx cy
+     (+ cx (* (+ radius 20) (cpp/cos (cpp/float screen-vel-angle))))
+     (+ cy (* (+ radius 20) (cpp/sin (cpp/float screen-vel-angle))))
+     (+ line-thick 1.0))
+
+    ;; Draw center marker (where you're looking - always points up)
+    ((:set-color gfx2d) color-view)
+    ((:render-line gfx2d)
+     (+ cx (* (- radius 5) (cpp/cos (cpp/float center-angle))))
+     (+ cy (* (- radius 5) (cpp/sin (cpp/float center-angle))))
+     (+ cx (* (+ radius 10) (cpp/cos (cpp/float center-angle))))
+     (+ cy (* (+ radius 10) (cpp/sin (cpp/float center-angle))))
+     line-thick)
+
+    ((:end-2d gfx2d))
+
+    ;; Render speed text below the arc (scaled to feel like Quake ups)
+    (let [display-speed (* speed 50.0)  ;; Scale factor: 8.0 max -> 400 ups
+          speed-str (str (int display-speed) " ups")]
+      (text/render-text speed-str
+                        (- cx 30.0)
+                        (+ cy radius 30.0)
+                        [1.0 1.0 1.0]
+                        screen-width screen-height))))

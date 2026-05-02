@@ -1,0 +1,534 @@
+(ns sca.viewer
+  "Player Skeleton Viewer - Displays all converted animations
+   with category-based navigation (TAB cycles categories, 1-9 selects within)"
+  (:require [engine.shaders.interface :as shaders]
+            [engine.math.interface :as math]
+            [engine.gfx3d.animation.interface :as anim]
+            [engine.gfx2d.text.interface :as text]
+            [engine.io.interface :as io]
+            [engine.gl.constants :as gl]))
+
+(cpp/raw "#include \"gl_wrappers.h\"
+#include <GLFW/glfw3.h>
+#include <cstdio>
+#include <vector>
+#include <iostream>")
+(cpp/raw "#include \"sca/viewer_impl.h\"")
+
+(cpp/raw "#include <glm/glm.hpp>
+          #include <glm/gtc/matrix_transform.hpp>
+          #include <glm/gtc/type_ptr.hpp>
+          #include \"gl_utils.h\"")
+
+(cpp/raw "#include \"animation_types.h\"")
+
+;; pskel functions (framebuffer_size_callback, compile_shader_inline, create_line_shader,
+;; create_line_vao, update_line_vbo, starts_with, print_bone_lines) in sca/viewer_impl.h
+
+;; Simple line shader for skeleton visualization
+(def line-vertex-shader
+  "#version 330 core
+   layout (location = 0) in vec3 aPos;
+   uniform mat4 model;
+   uniform mat4 view;
+   uniform mat4 projection;
+   void main() {
+       gl_Position = projection * view * model * vec4(aPos, 1.0);
+   }")
+
+(def line-fragment-shader
+  "#version 330 core
+   out vec4 FragColor;
+   uniform vec3 lineColor;
+   void main() {
+       FragColor = vec4(lineColor, 1.0);
+   }")
+
+(defn setup-window
+  [{:keys [width height name]}]
+  (let [_ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MAJOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_CONTEXT_VERSION_MINOR 3)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_PROFILE gl/GLFW_OPENGL_CORE_PROFILE)
+        _ (cpp/glfwWindowHint gl/GLFW_OPENGL_FORWARD_COMPAT gl/GL_TRUE)
+        window (cpp/glfwCreateWindow width height name cpp/nullptr cpp/nullptr)]
+    (when (cpp/! window)
+      (println "Window creation failed")
+      (cpp/exit 0))
+    (cpp/glfwMakeContextCurrent window)
+    (when (cpp/! (cpp/pskel.init_glew))
+      (println "GLEW initialization failed")
+      (cpp/exit 1))
+    (cpp/glfwSwapInterval 1)
+    (cpp/glfwSetFramebufferSizeCallback window cpp/pskel.framebuffer_size_callback)
+    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    (cpp/box window)))
+
+;; ============================================================================
+;; Animation Loading
+;; ============================================================================
+
+(def PAGE_SIZE 9)
+
+;; debug_compare_anim_vs_rest in sca/viewer_impl.h
+
+(defn load-animations
+  "Load skeleton and animations from player animations directory"
+  []
+  (println "Loading skeleton and animations...")
+  (let [base-path "models/player/animations/"
+        ctx (anim/create-context)
+
+        ;; Load skeleton
+        skeleton-info (anim/load-skeleton {:path (str base-path "humanoid.ozz")
+                                           :context ctx})
+        _ (println "  Skeleton loaded:" (:num-joints skeleton-info) "joints")
+
+        ;; List all .ozz files from directory using engine io module
+        all-anim-names (io/list-dir {:path base-path
+                                     :extension ".ozz"
+                                     :exclude #{"humanoid"}})
+        _ (println "  Found" (count all-anim-names) "animation files")
+
+        ;; All 156 movement animations organized by category
+        anim-names [;; === STANCE (2) ===
+                    "BOTH_STAND1"
+                    "BOTH_STAND2"
+
+                    ;; === WALKING (8) ===
+                    "BOTH_WALK1"
+                    "BOTH_WALK2"
+                    "BOTH_WALK_STAFF"
+                    "BOTH_WALK_DUAL"
+                    "BOTH_WALKBACK1"
+                    "BOTH_WALKBACK2"
+                    "BOTH_WALKBACK_STAFF"
+                    "BOTH_WALKBACK_DUAL"
+
+                    ;; === RUNNING (6) ===
+                    "BOTH_RUN1"
+                    "BOTH_RUN2"
+                    "BOTH_RUN_STAFF"
+                    "BOTH_RUN_DUAL"
+                    "BOTH_RUNBACK1"
+                    "BOTH_RUNBACK2"
+
+                    ;; === CROUCHING (3) ===
+                    "BOTH_CROUCH1IDLE"
+                    "BOTH_CROUCH1WALK"
+                    "BOTH_CROUCH1WALKBACK"
+
+                    ;; === JUMPING (12) ===
+                    "BOTH_JUMP1"
+                    "BOTH_JUMPBACK1"
+                    "BOTH_JUMPLEFT1"
+                    "BOTH_JUMPRIGHT1"
+                    "BOTH_INAIR1"
+                    "BOTH_INAIRBACK1"
+                    "BOTH_INAIRLEFT1"
+                    "BOTH_INAIRRIGHT1"
+                    "BOTH_LAND1"
+                    "BOTH_LANDBACK1"
+                    "BOTH_LANDLEFT1"
+                    "BOTH_LANDRIGHT1"
+
+                    ;; === FORCE JUMPS (12) ===
+                    "BOTH_FORCEJUMP1"
+                    "BOTH_FORCEJUMPBACK1"
+                    "BOTH_FORCEJUMPLEFT1"
+                    "BOTH_FORCEJUMPRIGHT1"
+                    "BOTH_FORCEINAIR1"
+                    "BOTH_FORCEINAIRBACK1"
+                    "BOTH_FORCEINAIRLEFT1"
+                    "BOTH_FORCEINAIRRIGHT1"
+                    "BOTH_FORCELAND1"
+                    "BOTH_FORCELANDBACK1"
+                    "BOTH_FORCELANDLEFT1"
+                    "BOTH_FORCELANDRIGHT1"
+
+                    ;; === ROLLS (4) ===
+                    "BOTH_ROLL_F"
+                    "BOTH_ROLL_B"
+                    "BOTH_ROLL_L"
+                    "BOTH_ROLL_R"
+
+                    ;; === FLIPS (4) ===
+                    "BOTH_FLIP_F"
+                    "BOTH_FLIP_B"
+                    "BOTH_FLIP_L"
+                    "BOTH_FLIP_R"
+
+                    ;; === WALL MOVES (9) ===
+                    "BOTH_WALL_RUN_LEFT"
+                    "BOTH_WALL_RUN_RIGHT"
+                    "BOTH_WALL_RUN_LEFT_STOP"
+                    "BOTH_WALL_RUN_RIGHT_STOP"
+                    "BOTH_WALL_RUN_LEFT_FLIP"
+                    "BOTH_WALL_RUN_RIGHT_FLIP"
+                    "BOTH_WALL_FLIP_LEFT"
+                    "BOTH_WALL_FLIP_RIGHT"
+                    "BOTH_WALL_FLIP_BACK1"
+
+                    ;; === SWIMMING (2) ===
+                    "BOTH_SWIM_IDLE1"
+                    "BOTH_SWIMFORWARD"
+
+                    ;; === KNOCKDOWN (5) ===
+                    "BOTH_KNOCKDOWN1"
+                    "BOTH_KNOCKDOWN2"
+                    "BOTH_KNOCKDOWN3"
+                    "BOTH_KNOCKDOWN4"
+                    "BOTH_KNOCKDOWN5"
+
+                    ;; === GETUP (5) ===
+                    "BOTH_GETUP1"
+                    "BOTH_GETUP2"
+                    "BOTH_GETUP3"
+                    "BOTH_GETUP4"
+                    "BOTH_GETUP5"
+
+                    ;; === RECOVERY ROLLS (8) ===
+                    "BOTH_GETUP_BROLL_F"
+                    "BOTH_GETUP_BROLL_B"
+                    "BOTH_GETUP_BROLL_L"
+                    "BOTH_GETUP_BROLL_R"
+                    "BOTH_GETUP_FROLL_F"
+                    "BOTH_GETUP_FROLL_B"
+                    "BOTH_GETUP_FROLL_L"
+                    "BOTH_GETUP_FROLL_R"
+
+                    ;; === SABER STANCES (4) ===
+                    "BOTH_SABERFAST_STANCE"
+                    "BOTH_SABERSLOW_STANCE"
+                    "BOTH_SABERDUAL_STANCE"
+                    "BOTH_SABERSTAFF_STANCE"
+
+                    ;; === STYLE 1 - FAST (8) ===
+                    "BOTH_A1_T__B_"
+                    "BOTH_A1__L__R"
+                    "BOTH_A1__R__L"
+                    "BOTH_A1_TL_BR"
+                    "BOTH_A1_TR_BL"
+                    "BOTH_A1_BL_TR"
+                    "BOTH_A1_BR_TL"
+                    "BOTH_A1_SPECIAL"
+
+                    ;; === STYLE 2 - MEDIUM (9) ===
+                    "BOTH_A2_T__B_"
+                    "BOTH_A2__L__R"
+                    "BOTH_A2__R__L"
+                    "BOTH_A2_TL_BR"
+                    "BOTH_A2_TR_BL"
+                    "BOTH_A2_BL_TR"
+                    "BOTH_A2_BR_TL"
+                    "BOTH_A2_SPECIAL"
+                    "BOTH_A2_STABBACK1"
+
+                    ;; === STYLE 3 - STRONG (8) ===
+                    "BOTH_A3_T__B_"
+                    "BOTH_A3__L__R"
+                    "BOTH_A3__R__L"
+                    "BOTH_A3_TL_BR"
+                    "BOTH_A3_TR_BL"
+                    "BOTH_A3_BL_TR"
+                    "BOTH_A3_BR_TL"
+                    "BOTH_A3_SPECIAL"
+
+                    ;; === STYLE 6 - DUAL (10) ===
+                    "BOTH_A6_T__B_"
+                    "BOTH_A6__L__R"
+                    "BOTH_A6__R__L"
+                    "BOTH_A6_TL_BR"
+                    "BOTH_A6_TR_BL"
+                    "BOTH_A6_BL_TR"
+                    "BOTH_A6_BR_TL"
+                    "BOTH_A6_FB"
+                    "BOTH_A6_LR"
+                    "BOTH_A6_SABERPROTECT"
+
+                    ;; === STYLE 7 - STAFF (9) ===
+                    "BOTH_A7_T__B_"
+                    "BOTH_A7__L__R"
+                    "BOTH_A7__R__L"
+                    "BOTH_A7_TL_BR"
+                    "BOTH_A7_TR_BL"
+                    "BOTH_A7_BL_TR"
+                    "BOTH_A7_BR_TL"
+                    "BOTH_A7_HILT"
+                    "BOTH_A7_SOULCAL"
+
+                    ;; === KICKS (11) ===
+                    "BOTH_A7_KICK_F"
+                    "BOTH_A7_KICK_B"
+                    "BOTH_A7_KICK_L"
+                    "BOTH_A7_KICK_R"
+                    "BOTH_A7_KICK_RL"
+                    "BOTH_A7_KICK_BF"
+                    "BOTH_A7_KICK_S"
+                    "BOTH_A7_KICK_F_AIR"
+                    "BOTH_A7_KICK_B_AIR"
+                    "BOTH_A7_KICK_L_AIR"
+                    "BOTH_A7_KICK_R_AIR"
+
+                    ;; === SABER THROW (3) ===
+                    "BOTH_SABERTHROW1START"
+                    "BOTH_SABERTHROW1STOP"
+                    "BOTH_SABERPULL"
+
+                    ;; === MELEE ATTACKS (5) ===
+                    "BOTH_ATTACK2"
+                    "BOTH_ATTACK3"
+                    "BOTH_ATTACK4"
+                    "BOTH_ATTACK10"
+                    "BOTH_ATTACK_BACK"
+
+                    ;; === ACROBATICS (9) ===
+                    "BOTH_BUTTERFLY_FL1"
+                    "BOTH_BUTTERFLY_FR1"
+                    "BOTH_BUTTERFLY_LEFT"
+                    "BOTH_BUTTERFLY_RIGHT"
+                    "BOTH_CARTWHEEL_LEFT"
+                    "BOTH_CARTWHEEL_RIGHT"
+                    "BOTH_ARIAL_F1"
+                    "BOTH_ARIAL_LEFT"
+                    "BOTH_ARIAL_RIGHT"]
+        _ (println "  Loading" (count anim-names) "movement animations...")
+
+        ;; Load animations
+        anim-infos (loop [names anim-names
+                         idx 0
+                         result []]
+                     (if (empty? names)
+                       result
+                       (let [anim-name (first names)
+                             path (str base-path anim-name ".ozz")
+                             info (anim/load-animation {:path path :context ctx})]
+                         (recur (rest names)
+                                (inc idx)
+                                (conj result {:name anim-name
+                                              :idx idx
+                                              :duration (double (:duration info))})))))
+        _ (println "  Ready!")]
+    {:context ctx
+     :animations anim-infos
+     :current-anim 0
+     :anim-time 0.0
+     :num-joints (:num-joints skeleton-info)
+     :use-rest-pose false}))  ;; Use animations
+
+;; ============================================================================
+;; Time Update (matches demo pattern)
+;; ============================================================================
+
+(defn update-time
+  [{:keys [delta-time last-frame]}]
+  (let [current-frame (cpp/glfwGetTime)
+        delta-time (math/*-> :float delta-time)
+        last-frame (math/*-> :float last-frame)]
+    (cpp/= delta-time (cpp/- current-frame last-frame))
+    (cpp/= last-frame current-frame)))
+
+;; ============================================================================
+;; Input Processing (matches demo cond-> pattern)
+;; ============================================================================
+
+(defn process-input
+  [{:keys [window state]}]
+  (let [window (cpp/unbox (:* GLFWwindow) window)
+        anim-count (count (:animations @state))]
+    (cond-> {:command/name :viewer/input}
+      ;; ESC to exit
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_ESCAPE) gl/GLFW_PRESS)
+      (assoc :exit true)
+
+      ;; LEFT arrow - previous animation
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_LEFT) gl/GLFW_PRESS)
+      (assoc :prev-anim true)
+
+      ;; RIGHT arrow - next animation
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_RIGHT) gl/GLFW_PRESS)
+      (assoc :next-anim true)
+
+      ;; Number keys 1-9, 0 direct select
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_1) gl/GLFW_PRESS) (assoc :select-anim 0)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_2) gl/GLFW_PRESS) (assoc :select-anim 1)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_3) gl/GLFW_PRESS) (assoc :select-anim 2)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_4) gl/GLFW_PRESS) (assoc :select-anim 3)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_5) gl/GLFW_PRESS) (assoc :select-anim 4)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_6) gl/GLFW_PRESS) (assoc :select-anim 5)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_7) gl/GLFW_PRESS) (assoc :select-anim 6)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_8) gl/GLFW_PRESS) (assoc :select-anim 7)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_9) gl/GLFW_PRESS) (assoc :select-anim 8)
+      (= (cpp/glfwGetKey window gl/GLFW_KEY_0) gl/GLFW_PRESS) (assoc :select-anim 9))))
+
+;; ============================================================================
+;; Command Handling
+;; ============================================================================
+
+(defn handle-command
+  [{:keys [command window state key-state]}]
+  (let [window-ptr (cpp/unbox (:* GLFWwindow) window)
+        anim-count (count (:animations @state))
+        prev-key-state @key-state]
+
+    ;; Handle exit
+    (when (:exit command)
+      (cpp/glfwSetWindowShouldClose window-ptr 1))
+
+    ;; Handle prev/next with debouncing
+    (when (and (:prev-anim command) (not (:prev-anim prev-key-state)))
+      (swap! state update :current-anim #(mod (dec (+ % anim-count)) anim-count))
+      (swap! state assoc :anim-time 0.0))
+
+    (when (and (:next-anim command) (not (:next-anim prev-key-state)))
+      (swap! state update :current-anim #(mod (inc %) anim-count))
+      (swap! state assoc :anim-time 0.0))
+
+    ;; Handle number key selection with debouncing
+    (when-let [sel (:select-anim command)]
+      (when (and (< sel anim-count) (not (:select-anim prev-key-state)))
+        (swap! state assoc :current-anim sel :anim-time 0.0)))
+
+    ;; Update key state for debouncing
+    (reset! key-state {:prev-anim (:prev-anim command)
+                       :next-anim (:next-anim command)
+                       :select-anim (:select-anim command)})))
+
+;; ============================================================================
+;; Animation Update
+;; ============================================================================
+
+(defn update-animation
+  [{:keys [state delta-time]}]
+  (let [dt (double (math/*-> :float delta-time))
+        {:keys [context animations current-anim anim-time debug-printed]} @state]
+    (when (seq animations)
+      (let [anim-info (nth animations current-anim)
+            duration (double (:duration anim-info 1.0))
+            new-time (mod (+ anim-time dt) (max duration 0.001))
+            time-ratio (/ new-time (max duration 0.001))]
+        (swap! state assoc :anim-time new-time)
+        (anim/sample {:context context
+                      :animation-index (:idx anim-info)
+                      :time-ratio time-ratio})
+        ;; Debug: print positions once after first sample
+        (when (not debug-printed)
+          (println "DEBUG: Playing animation:" (:name anim-info))
+          ;; Compare animation vs rest pose matrices
+          (let [ctx (cpp/unbox (:* AnimationContext) context)]
+            (cpp/pskel.debug_compare_anim_vs_rest ctx))
+          (swap! state assoc :debug-printed true))))))
+
+;; ============================================================================
+;; Rendering
+;; ============================================================================
+
+(defn render
+  [{:keys [state line-shader line-vao line-vbo text-shader]}]
+  (let [_ (cpp/wrap_glClearColor 0.1 0.1 0.15 1.0)
+        _ (cpp/wrap_glClear gl/GL_COLOR_DEPTH_BUFFER_BITS)
+        {:keys [context animations current-anim use-rest-pose lines-printed]} @state
+        ;; Build skeleton lines - use REST POSE for debugging
+        lines-data (if use-rest-pose
+                     (anim/build-skeleton-lines-rest-pose {:context context :max-lines 128})
+                     (anim/build-skeleton-lines {:context context :max-lines 128}))
+        line-count (int (:line-count lines-data))
+        verts-box (:vertices lines-data)
+        verts-ptr (cpp/.data (cpp/unbox (:* (std.vector float)) verts-box))
+
+        ;; Debug: print ALL bone lines (once)
+        _ (when (and (not lines-printed) (pos? line-count))
+            (cpp/pskel.print_bone_lines verts-ptr line-count (cpp/int 100))
+            (swap! state assoc :lines-printed true))
+
+        ;; Update VBO
+        _ (cpp/pskel.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
+
+        ;; Setup matrices
+        model (cpp/glm.mat4 (cpp/float 1.0))
+        view (cpp/glm.lookAt (cpp/glm.vec3 (cpp/float 3.0) (cpp/float 2.0) (cpp/float 3.0))
+                              (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0))
+                              (cpp/glm.vec3 (cpp/float 0.0) (cpp/float 1.0) (cpp/float 0.0)))
+        projection (cpp/glm.perspective (cpp/glm.radians (cpp/float 45.0))
+                                         (cpp/float (/ 1280.0 720.0))
+                                         (cpp/float 0.1)
+                                         (cpp/float 100.0))
+
+        ;; Draw skeleton
+        _ (cpp/wrap_glUseProgram line-shader)
+
+        ;; Set uniforms
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "model")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr model))
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "view")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr view))
+        _ (cpp/wrap_glUniformMatrix4fv (cpp/glGetUniformLocation line-shader "projection")
+                                           1 gl/GL_FALSE (cpp/glm.value_ptr projection))
+        _ (cpp/wrap_glUniform3f (cpp/glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
+
+        _ (cpp/wrap_glBindVertexArray line-vao)
+        _ (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2)))
+        _ (cpp/wrap_glBindVertexArray 0)]
+
+    ;; Render HUD
+    (when (seq animations)
+      (let [anim-info (nth animations current-anim)]
+        (text/render-text (str "Animation: " (:name anim-info))
+                          10.0 30.0 [1.0 1.0 1.0] 1280 720)
+        (text/render-text (str "[" (inc current-anim) "/" (count animations) "]")
+                          10.0 55.0 [0.7 0.7 0.7] 1280 720)
+        (text/render-text "LEFT/RIGHT: change | 1-9: select | ESC: exit"
+                          10.0 80.0 [0.5 0.5 0.5] 1280 720)))))
+
+;; ============================================================================
+;; Main Loop
+;; ============================================================================
+
+(defn run-loop
+  [{:keys [window] :as context}]
+  (while (cpp/! (cpp/glfwWindowShouldClose (cpp/unbox (:* GLFWwindow) window)))
+    (update-time context)
+    (let [command (process-input context)]
+      (handle-command (assoc context :command command)))
+    (update-animation context)
+    (render context)
+    (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
+    (cpp/glfwPollEvents)))
+
+(defn -main
+  []
+  (println "=== Player Skeleton Viewer ===")
+  (println "Controls: LEFT/RIGHT arrows, 1-9 keys, ESC to exit")
+  (println "")
+
+  (let [_ (cpp/glfwInit)
+        window (setup-window {:width 1280 :height 720 :name "Player Skeleton Viewer"})
+
+        ;; Create shaders
+        line-shader (cpp/pskel.create_line_shader line-vertex-shader line-fragment-shader)
+        line-vbo-ptr (cpp/new cpp/GLuint)
+        line-vao (cpp/pskel.create_line_vao line-vbo-ptr)
+        line-vbo (cpp/* line-vbo-ptr)
+
+        ;; Load text shader
+        text-shader (shaders/default-text-program)
+        _ (text/default-font 20.0 text-shader)
+
+        ;; Load animations
+        state (atom (load-animations))
+
+        ;; Key debouncing state
+        key-state (atom {})
+
+        ;; Timing
+        delta-time (math/gimmie :boxed :float 0.0)
+        last-frame (math/gimmie :boxed :float 0.0)]
+
+    (run-loop {:window window
+               :state state
+               :key-state key-state
+               :delta-time delta-time
+               :last-frame last-frame
+               :line-shader line-shader
+               :line-vao line-vao
+               :line-vbo line-vbo
+               :text-shader text-shader})))

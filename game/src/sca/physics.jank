@@ -1,0 +1,374 @@
+(ns sca.physics
+  "Shared game logic for the demo, used by server and client.
+
+   Contains:
+   - Physics constants
+   - Physics simulation functions
+   - Entity state manipulation")
+
+(require '[engine.gfx3d.collision.interface :as collision])
+
+(cpp/raw "
+#include <math.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+")
+
+;; =============================================================================
+;; Physics Constants
+;; =============================================================================
+
+(def GRAVITY 25.6)
+(def JUMP_VELOCITY 7.2)
+(def BACKFLIP_BOOST 4.1)         ; Extra boost for backflip
+(def BACKFLIP_VELOCITY 11.3)     ; JUMP_VELOCITY + BACKFLIP_BOOST (no force jump thrust)
+(def FORCE_JUMP_STRENGTH 26.88)  ; Level 3 force jump
+(def FORCE_JUMP_HEIGHT 12.3)     ; Level 3 max height
+(def GROUND_ACCEL 10.0)
+(def AIR_ACCEL 1.0)              ; 10:1 ratio for air control
+(def FRICTION 6.0)
+(def STOP_SPEED 2.5)
+(def MAX_SPEED 8.0)
+(def GROUND_HEIGHT 0.1)
+
+;; =============================================================================
+;; Low-Level Physics Functions
+;; =============================================================================
+
+(defn pm-friction
+  "Friction - reduces horizontal velocity.
+   Returns [new-vx new-vz]."
+  [vx vz friction stopspeed dt]
+  (let [vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        speed (cpp/float (cpp/sqrt (cpp/+ (cpp/* vx-f vx-f) (cpp/* vz-f vz-f))))]
+    (if (cpp/< speed (cpp/float 0.1))
+      [0.0 0.0]
+      (let [stopspeed-f (cpp/float stopspeed)
+            control (if (cpp/< speed stopspeed-f) stopspeed-f speed)
+            drop (cpp/* control (cpp/* (cpp/float friction) (cpp/float dt)))
+            newspeed-raw (cpp/- speed drop)
+            newspeed (if (cpp/< newspeed-raw (cpp/float 0.0)) (cpp/float 0.0) newspeed-raw)
+            scale (cpp// newspeed speed)]
+        [(double (cpp/* vx-f scale))
+         (double (cpp/* vz-f scale))]))))
+
+(defn pm-accelerate
+  "Acceleration toward wish direction.
+   Returns [new-vx new-vz]."
+  [vx vz dx dz wishspeed accel dt]
+  (let [dx-f (cpp/float dx)
+        dz-f (cpp/float dz)
+        vx-f (cpp/float vx)
+        vz-f (cpp/float vz)
+        wish-len (cpp/float (cpp/sqrt (cpp/+ (cpp/* dx-f dx-f) (cpp/* dz-f dz-f))))]
+    (if (cpp/< wish-len (cpp/float 0.001))
+      [(double vx-f) (double vz-f)]
+      (let [dx-norm (cpp// dx-f wish-len)
+            dz-norm (cpp// dz-f wish-len)
+            currentspeed (cpp/+ (cpp/* vx-f dx-norm) (cpp/* vz-f dz-norm))
+            addspeed (cpp/- (cpp/float wishspeed) currentspeed)]
+        (if (cpp/<= addspeed (cpp/float 0.0))
+          [(double vx-f) (double vz-f)]
+          (let [accelspeed (cpp/* (cpp/float accel)
+                                  (cpp/* (cpp/float dt) (cpp/float wishspeed)))
+                accelspeed (if (cpp/> accelspeed addspeed) addspeed accelspeed)]
+            [(double (cpp/+ vx-f (cpp/* accelspeed dx-norm)))
+             (double (cpp/+ vz-f (cpp/* accelspeed dz-norm)))]))))))
+
+;; =============================================================================
+;; Wish Direction Calculation
+;; =============================================================================
+
+(defn calc-wish-direction
+  "Calculate wish direction from input and yaw angle.
+   Returns [wish-x wish-z]."
+  [{:keys [forward backward left right yaw]}]
+  (let [yaw-radians (cpp/glm.radians (cpp/float yaw))
+        front-x (double (cpp/cos yaw-radians))
+        front-z (double (cpp/sin yaw-radians))
+        right-x (double (cpp/sin yaw-radians))
+        right-z (double (cpp/- (cpp/float 0.0) (cpp/cos yaw-radians)))
+
+        wish-x (cond-> 0.0
+                 forward (+ front-x)
+                 backward (- front-x)
+                 left (+ right-x)
+                 right (- right-x))
+        wish-z (cond-> 0.0
+                 forward (+ front-z)
+                 backward (- front-z)
+                 left (+ right-z)
+                 right (- right-z))]
+    [wish-x wish-z]))
+
+;; =============================================================================
+;; Physics Simulation
+;; =============================================================================
+
+(defn simulate-physics
+  "Run one physics tick for an entity.
+
+   entity-state: Map with :position, :velocity, :grounded?, :jump-z-start, :backflip-jump?
+   input: Map with :forward, :backward, :left, :right, :jump-held, :yaw, :pitch
+   delta-time: Time step in seconds
+   collision-mesh: Optional collision mesh for ground detection
+
+   Returns updated entity state."
+  [entity-state input delta-time collision-mesh]
+  (let [{:keys [position velocity grounded? jump-z-start]} entity-state
+        ;; Default backflip-jump? to false if not present (nil would break logic)
+        backflip-jump? (if (contains? entity-state :backflip-jump?)
+                         (:backflip-jump? entity-state)
+                         false)
+        {:keys [forward backward left right jump-held pitch yaw]} input
+        [px py pz] position
+        [vx vy vz] velocity
+
+        ;; Ground detection via raycast (with surface normal)
+        ground-hit (when collision-mesh
+                     (collision/raycast-ground-full collision-mesh [px py pz]))
+        ground-y (when ground-hit (:y ground-hit))
+        ground-normal (when ground-hit (:normal ground-hit))
+        ;; Walkable surface: normal Y >= 0.7 (~45 degrees, MIN_WALK_NORMAL)
+        ground-walkable (and ground-normal (>= (second ground-normal) 0.7))
+        is-grounded (and ground-y ground-walkable (<= py (+ ground-y 0.2)))
+
+        ;; Clear backflip flag on landing (only when actually landing, not just near ground)
+        ;; Must be falling (vy <= 0) and grounded to count as landing
+        actually-landed (and is-grounded (<= vy 0))
+        backflip-jump? (if actually-landed false backflip-jump?)
+
+        ;; Calculate wish direction from input
+        [wish-x wish-z] (calc-wish-direction input)
+
+        ;; Apply friction (only when grounded)
+        [vx vz] (if is-grounded
+                  (pm-friction vx vz FRICTION STOP_SPEED delta-time)
+                  [vx vz])
+
+        ;; Accelerate (different rates for ground vs air)
+        accel (if is-grounded GROUND_ACCEL AIR_ACCEL)
+        [vx vz] (pm-accelerate vx vz wish-x wish-z MAX_SPEED accel delta-time)
+
+        ;; Clear jump-z-start when not holding jump
+        jump-z-start (if (not jump-held) nil jump-z-start)
+
+        ;; Backflip detection (backward + jump + grounded + no strafe)
+        ;; Backflip gets boosted velocity but NO force jump thrust
+        is-backflip (and is-grounded jump-held (nil? jump-z-start)
+                         backward (not forward) (not left) (not right))
+
+        ;; Initial jump (grounded + button pressed + not already jumping)
+        ;; Use BACKFLIP_VELOCITY for backflips, JUMP_VELOCITY for normal jumps
+        [vy is-grounded jump-z-start backflip-jump?]
+        (if (and is-grounded jump-held (nil? jump-z-start))
+          (if is-backflip
+            [BACKFLIP_VELOCITY false py true]   ; Backflip: boosted velocity, flag set
+            [JUMP_VELOCITY false py false])     ; Normal: regular velocity
+          [vy is-grounded jump-z-start backflip-jump?])
+
+        ;; Force Jump thrust (Metroid-style)
+        ;; Skip force jump thrust if this is a backflip jump
+        vy (if (and (not is-grounded)
+                    (not backflip-jump?)  ; Backflips don't get force jump
+                    jump-held
+                    jump-z-start
+                    (> vy 0))
+             (let [cur-height (- py jump-z-start)]
+               (if (< cur-height FORCE_JUMP_HEIGHT)
+                 (+ (/ (* (/ (- FORCE_JUMP_HEIGHT cur-height) FORCE_JUMP_HEIGHT)
+                          FORCE_JUMP_STRENGTH)
+                       10.0)
+                    JUMP_VELOCITY)
+                 (min vy JUMP_VELOCITY)))
+             vy)
+
+        ;; Apply gravity (always when airborne)
+        vy (if (not is-grounded)
+             (- vy (* GRAVITY delta-time))
+             vy)
+
+        ;; Clip velocity on slope IMPACT only (PM_SlideMove behavior)
+        ;; Only fires on landing frame (was airborne, now grounded)
+        ;; Removes perpendicular component: up-slopes lose speed, down-slopes gain
+        ;; While running on slope: speed preserved (PM_WalkMove behavior)
+        just-landed (and is-grounded (not grounded?))
+        [vx vy vz] (if (and just-landed ground-normal
+                            (< (second ground-normal) 0.99))
+                      (let [[nx ny nz] ground-normal
+                            backoff (+ (* vx nx) (* vy ny) (* vz nz))]
+                        [(- vx (* nx backoff))
+                         (- vy (* ny backoff))
+                         (- vz (* nz backoff))])
+                      [vx vy vz])
+
+        ;; Integrate velocity to position
+        new-px (+ px (* vx delta-time))
+        new-py (+ py (* vy delta-time))
+        new-pz (+ pz (* vz delta-time))
+
+        ;; Horizontal collision - block movement toward walls
+        ;; Cast rays at both foot and waist height
+        ;; Only block if waist ray hits (real wall), not just foot (ramp edge)
+        foot-y (+ py 0.15)
+        waist-y (+ py 0.5)
+        wall-buffer 0.3
+        ;; X-axis wall check (waist-level ray for walls)
+        x-blocked (and collision-mesh
+                       (> (cpp/fabs (cpp/float (- new-px px))) 0.001)
+                       (let [dir-x (if (> new-px px) 1.0 -1.0)
+                             dist (collision/raycast-horizontal
+                                   collision-mesh
+                                   [px waist-y pz]
+                                   [dir-x 0.0 0.0]
+                                   2.0)]
+                         (and dist (< dist wall-buffer))))
+        new-px (if x-blocked px new-px)
+        vx (if x-blocked 0.0 vx)
+
+        ;; Z-axis wall check
+        z-blocked (and collision-mesh
+                       (> (cpp/fabs (cpp/float (- new-pz pz))) 0.001)
+                       (let [dir-z (if (> new-pz pz) 1.0 -1.0)
+                             dist (collision/raycast-horizontal
+                                   collision-mesh
+                                   [new-px waist-y pz]
+                                   [0.0 0.0 dir-z]
+                                   2.0)]
+                         (and dist (< dist wall-buffer))))
+        new-pz (if z-blocked pz new-pz)
+        vz (if z-blocked 0.0 vz)
+
+        ;; Clamp to ground (raycast collision)
+        ;; Raycast at both old and new XZ to detect ledge transitions
+        ground-hit-old (when collision-mesh
+                         (collision/raycast-ground-full collision-mesh [px new-py pz]))
+        ground-hit-new (when collision-mesh
+                         (collision/raycast-ground-full collision-mesh [new-px new-py new-pz]))
+        ;; Only use walkable surfaces for ground clamping
+        ground-y-old (when (and ground-hit-old (>= (second (:normal ground-hit-old)) 0.7))
+                       (:y ground-hit-old))
+        ground-y-new (when (and ground-hit-new (>= (second (:normal ground-hit-new)) 0.7))
+                       (:y ground-hit-new))
+        ;; Use new ground only if it's not much higher than old ground
+        ;; (prevents suction onto wall tops when crossing edges)
+        max-step 1.0
+        ground-y-at-new-pos (cond
+                              ;; No ground at new pos
+                              (not ground-y-new) nil
+                              ;; No ground at old pos - only use new if near player
+                              (not ground-y-old) (when (< (- ground-y-new py) max-step)
+                                                   ground-y-new)
+                              ;; New ground is within step height of old - use new
+                              (< (- ground-y-new ground-y-old) max-step) ground-y-new
+                              ;; New ground is way higher (wall top) - use old
+                              :else ground-y-old)
+        [new-py vy is-grounded backflip-jump?]
+        (if (and ground-y-at-new-pos
+                 (< new-py ground-y-at-new-pos)
+                 ;; Don't snap when actively jumping (vy > JUMP_VELOCITY threshold)
+                 ;; Small positive vy from slope projection is OK to snap
+                 (< vy JUMP_VELOCITY))
+          [ground-y-at-new-pos 0.0 true false]
+          [new-py vy is-grounded backflip-jump?])]
+
+    ;; Return updated entity state
+    {:position [new-px new-py new-pz]
+     :velocity [vx vy vz]
+     :grounded? is-grounded
+     :jump-z-start jump-z-start
+     :backflip-jump? backflip-jump?
+     :pitch pitch
+     :yaw yaw}))
+
+;; =============================================================================
+;; Entity State Conversion
+;; =============================================================================
+
+(defn entity->physics-state
+  "Extract physics state from a full game entity."
+  [entity]
+  {:position (:transform/position entity)
+   :velocity (:physics/velocity entity [0.0 0.0 0.0])
+   :grounded? (:physics/grounded entity true)
+   :jump-z-start (:physics/jump-z-start entity)
+   :backflip-jump? (:physics/backflip-jump entity false)
+   :pitch (:transform/pitch entity 0.0)
+   :yaw (:transform/yaw entity 0.0)})
+
+(defn compute-animation-state
+  "Compute animation index and time based on physics state.
+   Returns [animation-index animation-time].
+   - In air: crouch (index 1), held at 30%
+   - On ground moving: run (index 0), time progresses with speed
+   - On ground idle: run at frame 0"
+  [physics-state current-anim-time run-duration delta-time]
+  (let [{:keys [velocity grounded?]} physics-state
+        [vx _vy vz] velocity
+        horiz-speed (cpp/sqrt (cpp/+ (cpp/* (cpp/float vx) (cpp/float vx))
+                                     (cpp/* (cpp/float vz) (cpp/float vz))))
+        is-moving (> horiz-speed 0.5)]
+    (cond
+      ;; In air - crouch animation at 30%
+      (not grounded?)
+      [1 (* 0.3 run-duration)]
+
+      ;; On ground and moving - run animation
+      is-moving
+      (let [new-time (mod (+ current-anim-time (* delta-time (/ horiz-speed 8.0))) run-duration)]
+        [0 new-time])
+
+      ;; On ground idle - run at frame 0
+      :else
+      [0 0.0])))
+
+(defn physics-state->entity-updates
+  "Convert physics state to entity update map."
+  [physics-state]
+  {:transform/position (:position physics-state)
+   :physics/velocity (:velocity physics-state)
+   :physics/grounded (:grounded? physics-state)
+   :physics/jump-z-start (:jump-z-start physics-state)
+   :physics/backflip-jump (:backflip-jump? physics-state)
+   :transform/pitch (:pitch physics-state)
+   :transform/yaw (:yaw physics-state)})
+
+(defn command->input
+  "Convert a network command to input format."
+  [command]
+  {:forward (:forward command false)
+   :backward (:backward command false)
+   :left (:left command false)
+   :right (:right command false)
+   :jump-held (:jump-held command false)
+   :pitch (:pitch command 0.0)
+   :yaw (:yaw command 0.0)})
+
+;; =============================================================================
+;; Network Entity State
+;; =============================================================================
+
+(defn physics-state->network-state
+  "Convert physics state to network transmission format."
+  [physics-state entity-id]
+  {:id entity-id
+   :position (:position physics-state)
+   :velocity (:velocity physics-state)
+   :pitch (:pitch physics-state)
+   :yaw (:yaw physics-state)
+   :grounded? (:grounded? physics-state)
+   :backflip-jump? (:backflip-jump? physics-state false)
+   :animation-index (:animation-index physics-state 0)
+   :animation-time (:animation-time physics-state 0.0)})
+
+(defn network-state->physics-state
+  "Convert network state to physics state format."
+  [network-state]
+  {:position (:position network-state)
+   :velocity (:velocity network-state)
+   :grounded? (:grounded? network-state)
+   :jump-z-start nil  ; Not transmitted, reconstructed locally
+   :backflip-jump? (:backflip-jump? network-state false)
+   :pitch (:pitch network-state)
+   :yaw (:yaw network-state)})

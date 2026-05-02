@@ -1,0 +1,249 @@
+(ns sca.server
+  "Authoritative game server for the demo.
+
+   Responsibilities:
+   - Receive input commands from clients
+   - Run physics simulation (authoritative)
+   - Broadcast game state snapshots to clients
+   - Handle client connect/disconnect"
+  (:require [engine.networking.protocol :as net]
+            [sca.networking.snapshot :as snapshot]
+            [sca.physics :as shared]
+            [engine.gfx3d.gltf.headless :as gltf]
+            [engine.gfx3d.collision.interface :as collision]))
+
+(cpp/raw "#include <thread>
+          #include <chrono>")
+
+;; =============================================================================
+;; Constants
+;; =============================================================================
+
+(def SERVER_PORT 7777)
+(def MAX_CLIENTS 32)
+(def TICK_RATE 60)                    ; Physics ticks per second
+(def TICK_INTERVAL_MS 16.0)           ; ~60 FPS = 16.67ms per tick (float for math)
+(def SNAPSHOT_RATE 60)                ; Snapshots per second (maximum - one per tick)
+(def TICKS_PER_SNAPSHOT 1)            ; 60/60 = 1 tick per snapshot
+
+(def PLAYER_ID #uuid "9064c2d4-b202-4acf-a0de-eca1e8358a8d")
+(def LEVEL_ID #uuid "bbf1bbe7-a35d-4be1-ba62-6fe382a53345")
+
+(def SPAWN_POSITION [0.0 50.0 0.0])
+
+;; =============================================================================
+;; Server State
+;; =============================================================================
+
+(defn make-server-state
+  "Create initial server state."
+  []
+  {:tick 0
+   :server-time 0.0                   ; Server time in ms (float for interpolation math)
+   :snapshot-sequence 0
+   :clients {}                        ; connection-id -> {:player-id, :last-command-seq}
+   :entities {}                       ; entity-id -> entity
+   :level-collision nil
+   :last-processed-commands {}})      ; player-id -> last-command-sequence
+
+(defn spawn-player
+  "Spawn a player entity for a new client."
+  [state player-id spawn-position]
+  (assoc-in state [:entities player-id]
+            {:id player-id
+             :transform/position spawn-position
+             :transform/pitch 0.0
+             :transform/yaw -90.0
+             :physics/velocity [0.0 0.0 0.0]
+             :physics/grounded true
+             :physics/jump-z-start nil
+             :physics/backflip-jump false
+             :tags #{:networked :player}
+             :animation/current-index 0
+             :animation/time 0.0}))
+
+(defn remove-player
+  "Remove a player entity."
+  [state player-id]
+  (update state :entities dissoc player-id))
+
+;; =============================================================================
+;; Command Processing
+;; =============================================================================
+
+(def RUN_ANIMATION_DURATION 0.8)  ; Duration of run animation in seconds
+
+(defn process-client-command
+  "Process a command from a client."
+  [state connection-id command collision-mesh]
+  (let [client (get-in state [:clients connection-id])
+        player-id (:player-id client)]
+    (if-let [entity (get-in state [:entities player-id])]
+      (let [;; Extract physics state
+            physics-state (shared/entity->physics-state entity)
+            ;; Convert command to input
+            input (shared/command->input command)
+            delta-time (get command :delta-time 0.016)
+            ;; Run physics
+            new-physics (shared/simulate-physics physics-state input delta-time collision-mesh)
+            ;; Update entity
+            updates (shared/physics-state->entity-updates new-physics)
+            ;; Compute animation state based on physics
+            current-anim-time (or (:animation/time entity) 0.0)
+            [anim-index anim-time] (shared/compute-animation-state
+                                    new-physics current-anim-time RUN_ANIMATION_DURATION delta-time)
+            updates-with-anim (assoc updates
+                                     :animation/current-index anim-index
+                                     :animation/time anim-time)
+            cmd-seq (get command :sequence 0)]
+        (-> state
+            (update-in [:entities player-id] merge updates-with-anim)
+            (assoc-in [:last-processed-commands player-id] cmd-seq)))
+      state)))
+
+;; =============================================================================
+;; Event Handling
+;; =============================================================================
+
+(defn handle-client-connect
+  "Handle new client connection."
+  [state network connection-id]
+  (let [player-id (random-uuid)
+        spawn-pos SPAWN_POSITION]
+    (println (str "Client " connection-id " connected, spawning player " player-id))
+
+    ;; Send welcome message with player ID
+    (let [welcome-msg (snapshot/make-welcome-event player-id (:server-time state))]
+      (net/send! network {:to connection-id
+                          :message welcome-msg
+                          :reliable true}))
+
+    ;; Broadcast spawn event to all clients
+    (net/broadcast! network {:message (snapshot/make-player-spawned-event player-id connection-id)
+                             :reliable true})
+
+    (-> state
+        (assoc-in [:clients connection-id] {:player-id player-id
+                                            :last-command-seq 0})
+        (spawn-player player-id spawn-pos))))
+
+(defn handle-client-disconnect
+  "Handle client disconnection."
+  [state network connection-id]
+  (let [client (get-in state [:clients connection-id])
+        player-id (:player-id client)]
+    (println (str "Client " connection-id " disconnected"))
+
+    (when player-id
+      ;; Broadcast disconnect event
+      (net/broadcast! network {:message (snapshot/make-player-disconnected-event player-id connection-id)
+                               :reliable true}))
+
+    (-> state
+        (update :clients dissoc connection-id)
+        (remove-player player-id))))
+
+(defn handle-network-event
+  "Handle a network event."
+  [state network event collision-mesh]
+  (case (:type event)
+    :connect
+    (handle-client-connect state network (:connection-id event))
+
+    :disconnect
+    (handle-client-disconnect state network (:connection-id event))
+
+    :message
+    (let [msg (:message event)
+          conn-id (:connection-id event)]
+      (case (:type msg)
+        :command
+        (process-client-command state conn-id (:command msg) collision-mesh)
+
+        ;; Unknown message type
+        state))
+
+    ;; Unknown event type
+    state))
+
+;; =============================================================================
+;; Snapshot Broadcasting
+;; =============================================================================
+
+(defn broadcast-snapshot
+  "Build and broadcast a snapshot to all clients."
+  [state network]
+  (let [snap (snapshot/build-snapshot state
+                                      (:server-time state)
+                                      (:snapshot-sequence state)
+                                      (:last-processed-commands state))]
+    ;; Broadcast unreliably (snapshots are sent frequently)
+    (net/broadcast! network {:message snap :reliable false})
+    (update state :snapshot-sequence inc)))
+
+;; =============================================================================
+;; Main Server Loop
+;; =============================================================================
+
+(defn sleep-ms
+  "Sleep for the given number of milliseconds."
+  [ms]
+  (cpp/std.this_thread.sleep_for
+   (cpp/std.chrono.milliseconds (cpp/int ms))))
+
+(defn load-level-collision
+  "Load level collision mesh."
+  []
+  (when-let [col (first (gltf/load-collision {:path "models/hills.gltf"}))]
+    (collision/prepare-collision-mesh col)))
+
+(defn run-server
+  "Run the game server.
+   Uses tick-based timing: each iteration is one tick at ~60Hz.
+   Server time = tick * TICK_INTERVAL_MS"
+  []
+  (println "Starting demo server on port" SERVER_PORT "...")
+
+  (let [network (net/start-server {:port SERVER_PORT :max-clients MAX_CLIENTS})]
+    (if (nil? network)
+      (println "ERROR: Failed to start server")
+
+      (do
+        (println "Loading level collision...")
+        (let [collision-mesh (load-level-collision)
+              ;; Use atom for state to avoid recur issues
+              state-atom (atom (make-server-state))
+              snapshot-counter-atom (atom 0)]
+          (println "Server ready. Waiting for clients...")
+          (println "Running at" TICK_RATE "ticks/sec, snapshots every" TICKS_PER_SNAPSHOT "ticks")
+
+          ;; Simple tick-based loop
+          (while true
+            ;; Process network events
+            (let [events (net/poll-events! network 0)]
+              (doseq [event events]
+                (swap! state-atom handle-network-event network event collision-mesh)))
+
+            ;; Advance tick
+            (swap! state-atom (fn [s]
+                                (-> s
+                                    (update :tick inc)
+                                    (update :server-time + TICK_INTERVAL_MS))))
+
+            ;; Increment snapshot counter
+            (swap! snapshot-counter-atom inc)
+
+            ;; Broadcast snapshot every 3 ticks
+            (when (>= @snapshot-counter-atom TICKS_PER_SNAPSHOT)
+              (swap! state-atom broadcast-snapshot network)
+              (reset! snapshot-counter-atom 0))
+
+            (sleep-ms 16)))
+
+        (net/stop network)
+        (println "Server stopped.")))))
+
+(defn -main
+  "Server entry point for standalone server builds."
+  []
+  (run-server))
