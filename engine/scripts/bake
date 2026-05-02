@@ -9,6 +9,10 @@ set -euo pipefail
 # no XCode CLI tools, no jank installed, no headers. Bundles its own libc++,
 # clang, and an xcrun shim that satisfies jank's startup probe.
 #
+# Full design, jank-source citations, failure modes, and verification recipe:
+#   engine/docs/bake-distribution.md
+# Read that before changing anything here or upgrading the jank submodule.
+#
 # Usage:
 #   bake <game-dir> [-o <output-dir>]
 #

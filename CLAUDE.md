@@ -224,6 +224,8 @@ There are two artifacts, for two different audiences:
 
 The shim mechanic: jank's runtime context constructor calls `xcrun --show-sdk-path` once at startup and stashes the result for later clang invocations. With AOT'd code, those later invocations never happen, so any non-empty path satisfies the probe. The bundled launcher prepends `<bundle>/shim/` to PATH so our 3-line `echo "/dev/null"` script wins over the system stub.
 
+Full design + jank-source citations + failure modes + verification recipe in [`engine/docs/bake-distribution.md`](engine/docs/bake-distribution.md). Read that before changing anything in `bake` or upgrading the jank submodule.
+
 `bake` requires the game's `jank-engine.edn` to declare:
 - `:entry` — the namespace whose `-main` to invoke
 - `:name` (optional) — output binary name (defaults to first segment of `:entry`)

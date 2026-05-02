@@ -114,6 +114,8 @@ Iterate on game source without rebuilding the engine. Requires XCode Command Lin
 
 To distribute: ship the `dist/<name>/` directory; users run `./<name>_run`.
 
+How and why the no-prereq trick works is documented in detail in [engine/docs/bake-distribution.md](engine/docs/bake-distribution.md), including the specific jank-source paths the shim depends on (so future-us can spot if upstream changes break it).
+
 ## Platform support
 
 **macOS (Apple Silicon)** — primary platform, fully supported.

@@ -1,6 +1,9 @@
 #!/bin/sh
 # Bundled xcrun shim for baked-game distributions on macOS.
 #
+# Full design + jank-source citations + failure modes:
+#   engine/docs/bake-distribution.md
+#
 # At startup, jank's runtime context constructor calls xcrun --show-sdk-path,
 # captures the result, and stashes it as -isysroot for the embedded clang. The
 # path itself is never opened at startup because the precompiled header is
