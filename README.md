@@ -15,6 +15,11 @@ cd opengl-with-jank/engine
 cd ../game
 ../engine/dist/jank-engine/jank-engine_run . server   # host on port 7777
 ../engine/dist/jank-engine/jank-engine_run . client   # join (in another terminal)
+
+# To produce a self-contained game bundle for shipping:
+cd ../engine
+./scripts/bake ../game                    # output: game/dist/sca/
+../game/dist/sca/sca_run server           # runs without XCode CLI tools
 ```
 
 ## Repo layout
@@ -73,7 +78,11 @@ Jank, GLFW, OpenGL 3.3+, GLM (header-only), STB, cgltf, ozz-animation, ENet.
 
 ## Distribution
 
-`./scripts/build-engine` produces `engine/dist/jank-engine/`:
+Two paths depending on audience.
+
+### Dev iteration: `jank-engine_run`
+
+`./scripts/build-engine` produces `engine/dist/jank-engine/` (~324 MB) — a reusable runtime that JIT-loads any game directory:
 
 ```
 dist/jank-engine/
@@ -81,12 +90,29 @@ dist/jank-engine/
 ├── lib/jank-engine/         bundled dylibs (incl. libengine_assets)
 ├── lib/jank/0.1/            jank runtime: clang, libc++, headers, stdlib
 ├── include/                 third-party headers (glm, GLFW, ozz, engine *_impl.h)
-└── jank-engine_run          launcher (sets DYLD_LIBRARY_PATH)
+└── jank-engine_run          launcher
 ```
 
-Total ~324 MB (most of it the bundled clang toolchain for runtime JIT).
+Iterate on game source without rebuilding the engine. Requires XCode Command Line Tools on the running machine (jank's JIT calls clang).
 
-End users need XCode Command Line Tools (`xcode-select --install`).
+### Shipping a game: `bake`
+
+`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` (~365 MB) — engine + a specific game's source, AOT-compiled into one binary:
+
+```
+<game-dir>/dist/<name>/
+├── bin/<name>               AOT executable (engine + game baked together)
+├── lib/<name>/              bundled dylibs
+├── lib/jank/0.1/            jank runtime resources
+├── include/                 bundled headers
+├── shim/xcrun               bypasses XCode CLI tools requirement
+├── models/  textures/       game assets (per :assets in jank-engine.edn)
+└── <name>_run               launcher
+```
+
+**End users need nothing.** No XCode CLI tools, no jank, no clang. The bundle includes a tiny `xcrun` shim that satisfies jank's startup probe without invoking the system stub that would otherwise prompt to install CLI tools.
+
+To distribute: ship the `dist/<name>/` directory; users run `./<name>_run`.
 
 ## Platform support
 

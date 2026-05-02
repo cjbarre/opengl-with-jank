@@ -1,0 +1,302 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Bake a game into a standalone, self-contained binary.
+#
+# Unlike build-engine (which produces the jank-engine runtime that JIT-loads
+# consumer source), bake AOT-compiles the engine + the game's source together
+# into a single binary. The result needs nothing on the end user's machine -
+# no XCode CLI tools, no jank installed, no headers. Bundles its own libc++,
+# clang, and an xcrun shim that satisfies jank's startup probe.
+#
+# Usage:
+#   bake <game-dir> [-o <output-dir>]
+#
+# <game-dir> must contain a jank-engine.edn with at least:
+#   {:entry my-game.core
+#    :paths ["src"]
+#    :includes ["include"]      ; optional - dirs of *_impl.h
+#    :name "my-game"            ; optional - defaults to first segment of :entry
+#    :assets ["models" "ui"]}   ; optional - dirs copied into the bundle
+#
+# Default output: <game-dir>/dist/<name>
+
+# Resolve symlinks to find actual script location
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ "$SCRIPT_PATH" != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+source "$SCRIPT_DIR/platform/common.sh"
+require_platform_support
+load_jank_paths
+
+# =============================================================================
+# Argument parsing
+# =============================================================================
+GAME_DIR=""
+OUT_DIR_OVERRIDE=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output) OUT_DIR_OVERRIDE="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '3,17p' "$0" | sed 's|^# \?||'
+            exit 0
+            ;;
+        -*) echo "Unknown flag: $1" >&2; exit 1 ;;
+        *)
+            if [[ -z "$GAME_DIR" ]]; then
+                GAME_DIR="$1"
+            else
+                echo "Unexpected arg: $1" >&2; exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$GAME_DIR" ]]; then
+    echo "usage: bake <game-dir> [-o <output-dir>]" >&2
+    exit 1
+fi
+
+GAME_DIR="$(cd "$GAME_DIR" && pwd)"
+EDN="$GAME_DIR/jank-engine.edn"
+
+if [[ ! -f "$EDN" ]]; then
+    echo "ERROR: $EDN not found" >&2
+    exit 1
+fi
+
+# =============================================================================
+# Parse jank-engine.edn into shell variables via clojure
+# =============================================================================
+EDN_VARS="$(mktemp)"
+trap 'rm -f "$EDN_VARS"' EXIT
+
+clojure -M -e "
+(let [cfg (read-string (slurp \"$EDN\"))
+      entry (str (:entry cfg))
+      name (or (:name cfg)
+               (first (clojure.string/split entry #\"\\.\")))
+      paths (:paths cfg [])
+      includes (:includes cfg [])
+      assets (:assets cfg [])
+      esc #(str \"'\" % \"'\")
+      arr #(str \"(\" (clojure.string/join \" \" (map esc %)) \")\")]
+  (println (str \"ENTRY=\" (esc entry)))
+  (println (str \"NAME=\" (esc name)))
+  (println (str \"PATHS=\" (arr paths)))
+  (println (str \"INCLUDES=\" (arr includes)))
+  (println (str \"ASSETS=\" (arr assets))))" > "$EDN_VARS"
+
+# shellcheck disable=SC1090
+source "$EDN_VARS"
+
+if [[ -z "${ENTRY:-}" || -z "${NAME:-}" ]]; then
+    echo "ERROR: failed to parse $EDN" >&2
+    exit 1
+fi
+
+OUT_DIR="${OUT_DIR_OVERRIDE:-$GAME_DIR/dist/$NAME}"
+OUT_DIR="$(mkdir -p "$OUT_DIR" && cd "$OUT_DIR" && pwd)"
+
+# =============================================================================
+# Platform setup (mirrors build-engine)
+# =============================================================================
+LIBS_DIR="$(get_libs_dir)"
+LIB_EXT="$(get_lib_extension)"
+BREW_PREFIX="$(get_homebrew_prefix)"
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    OPENGL_LIB_FLAG="-lGL"
+    RPATH_PREFIX='$ORIGIN'
+    GLFW_LIB="-lglfw"
+else
+    OPENGL_LIB_FLAG="-lOpenGL"
+    RPATH_PREFIX="@executable_path"
+    GLFW_LIB="-lglfw.3"
+fi
+
+if [[ ! -f "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" ]]; then
+    echo "ERROR: libengine_assets.$LIB_EXT not found." >&2
+    echo "       Run ./scripts/setup first." >&2
+    exit 1
+fi
+
+# =============================================================================
+# Compile: AOT-bake engine + game source into one binary
+# =============================================================================
+echo "============================================================================="
+echo "Baking $NAME ($ENTRY) -> $OUT_DIR"
+echo "============================================================================="
+
+mkdir -p "$OUT_DIR/bin" "$OUT_DIR/lib/$NAME" "$OUT_DIR/lib/jank/0.1/bin" \
+         "$OUT_DIR/lib/jank/0.1/include" "$OUT_DIR/lib/jank/0.1/lib" \
+         "$OUT_DIR/lib/jank/0.1/src" "$OUT_DIR/shim" "$OUT_DIR/include"
+
+# Build the module-path: engine src + each :paths entry, resolved against game dir
+MODULE_PATH="$PROJECT_DIR/src"
+for p in "${PATHS[@]}"; do
+    MODULE_PATH="$MODULE_PATH:$GAME_DIR/$p"
+done
+
+# Build -I flags: engine includes + game :includes
+INCLUDE_FLAGS=( -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" \
+                -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" )
+for inc in "${INCLUDES[@]}"; do
+    INCLUDE_FLAGS+=( -I"$GAME_DIR/$inc" )
+done
+
+export LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$LIBS_DIR/opengl/lib:$LIBS_DIR/engine-assets/lib:${LIBRARY_PATH:-}"
+
+cd "$PROJECT_DIR"
+jank \
+  "${INCLUDE_FLAGS[@]}" \
+  -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" \
+  -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" \
+  -L"$LIBS_DIR/engine-assets/lib" \
+  $GLFW_LIB \
+  -lozz_animation_r -lozz_base_r -lozz_geometry_r \
+  -lstb_all -lenet -lcgltf -lengine_assets \
+  $OPENGL_LIB_FLAG \
+  --module-path "$MODULE_PATH" \
+  compile "$ENTRY" -o "$OUT_DIR/bin/$NAME"
+
+# =============================================================================
+# Bundle native deps (mirrors build-engine)
+# =============================================================================
+BUNDLE_DIR="$OUT_DIR/lib/$NAME"
+
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    cp "$LIBS_DIR/glfw/lib/libglfw.so.3" "$BUNDLE_DIR/"
+else
+    cp "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "$BUNDLE_DIR/"
+fi
+cp "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/stb/lib/libstb_all.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/enet/lib/libenet.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/cgltf/lib/libcgltf.$LIB_EXT" "$BUNDLE_DIR/"
+cp "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" "$BUNDLE_DIR/"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    cp "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "$BUNDLE_DIR/"
+fi
+
+# Jank/LLVM runtime libraries (still needed at startup even though no JIT runs:
+# jit::processor is constructed eagerly and links libLLVM/libclang-cpp).
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    cp "$JANK_LLVM/lib/libLLVM.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libLLVM"*".so"* "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libclang-cpp"*".so"* "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libc++.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libunwind.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    cp "$JANK_LLVM/lib/libc++abi.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+else
+    cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
+    cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
+    cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+fi
+
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    bundle_system_lib "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "$BUNDLE_DIR"
+    bundle_system_lib "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "$BUNDLE_DIR"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    bundle_system_lib "/usr/lib/libcrypto.so.3" "$BUNDLE_DIR" 2>/dev/null || true
+    bundle_system_lib "/usr/lib/libzstd.so.1" "$BUNDLE_DIR" 2>/dev/null || true
+fi
+
+# Bundled clang for jank's startup find_clang() probe (not actually invoked at
+# runtime by a baked game - all source is AOT'd - but the constructor needs to
+# locate one).
+cp "$JANK_LLVM/bin/clang-22" "$OUT_DIR/lib/jank/0.1/bin/"
+ln -sf clang-22 "$OUT_DIR/lib/jank/0.1/bin/clang++"
+ln -sf clang-22 "$OUT_DIR/lib/jank/0.1/bin/clang"
+add_rpath "${RPATH_PREFIX}/../../../$NAME" "$OUT_DIR/lib/jank/0.1/bin/clang-22"
+
+cp -R "$JANK_LLVM/lib/clang/22" "$OUT_DIR/lib/jank/0.1/lib/clang/"
+cp -R "$JANK_LLVM/include/c++" "$OUT_DIR/lib/jank/0.1/include/"
+cp -R "$JANK_DIR/include/cpp/jank" "$OUT_DIR/lib/jank/0.1/include/"
+cp -R "$JANK_DIR/src/jank/"* "$OUT_DIR/lib/jank/0.1/src/"
+
+# Headers (cpp/raw blocks were AOT-compiled, so these are mostly defensive -
+# only matter if jank's runtime ever spawns clang. Cheap to include.)
+cp -R "$PROJECT_DIR/include/"* "$OUT_DIR/include/"
+cp -R "$PROJECT_DIR/libs/glm/glm" "$OUT_DIR/include/"
+[[ -d "$LIBS_DIR/glfw/include/GLFW" ]] && cp -R "$LIBS_DIR/glfw/include/GLFW" "$OUT_DIR/include/"
+[[ -d "$LIBS_DIR/ozz-animation/include/ozz" ]] && cp -R "$LIBS_DIR/ozz-animation/include/ozz" "$OUT_DIR/include/"
+
+# Fix rpaths in the executable
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    change_lib_path "$OUT_DIR/bin/$NAME" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
+    change_lib_path "$OUT_DIR/bin/$NAME" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
+    change_lib_path "$OUT_DIR/bin/$NAME" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
+fi
+
+delete_rpath "$JANK_LLVM/bin/../lib" "$OUT_DIR/bin/$NAME"
+add_rpath "${RPATH_PREFIX}/../lib/$NAME" "$OUT_DIR/bin/$NAME"
+
+# =============================================================================
+# Bundle xcrun shim and game assets
+# =============================================================================
+cp "$SCRIPT_DIR/xcrun-stub" "$OUT_DIR/shim/xcrun"
+chmod +x "$OUT_DIR/shim/xcrun"
+
+for asset in "${ASSETS[@]}"; do
+    if [[ -d "$GAME_DIR/$asset" ]]; then
+        cp -R "$GAME_DIR/$asset" "$OUT_DIR/$asset"
+    else
+        echo "WARNING: asset dir not found: $GAME_DIR/$asset" >&2
+    fi
+done
+
+# =============================================================================
+# Launcher: cd into the bundle (so asset paths resolve), append shim to PATH,
+# point DYLD_LIBRARY_PATH at the bundled dylibs, exec the binary.
+# =============================================================================
+LAUNCHER="$OUT_DIR/${NAME}_run"
+cat > "$LAUNCHER" <<LAUNCHER_EOF
+#!/usr/bin/env bash
+# Resolve own directory without depending on \`dirname\` / \`realpath\` being on
+# PATH (pure-bash parameter expansion).
+SELF="\${BASH_SOURCE[0]}"
+case "\$SELF" in /*) ;; *) SELF="\$PWD/\$SELF" ;; esac
+DIR="\${SELF%/*}"
+# Prepend our xcrun shim so jank's startup probe doesn't hit the system
+# /usr/bin/xcrun stub (which on machines without XCode CLI tools prompts the
+# user to install them). The baked binary never invokes clang at runtime, so
+# the bogus /dev/null SDK path the shim returns is harmless.
+export PATH="\$DIR/shim:\${PATH}"
+export DYLD_LIBRARY_PATH="\$DIR/lib/$NAME:\${DYLD_LIBRARY_PATH:-}"
+cd "\$DIR"
+exec "\$DIR/bin/$NAME" "\$@"
+LAUNCHER_EOF
+chmod +x "$LAUNCHER"
+
+# =============================================================================
+# Done
+# =============================================================================
+SIZE=$(du -sh "$OUT_DIR" | cut -f1)
+echo ""
+echo "============================================================================="
+echo "Baked: $LAUNCHER ($SIZE)"
+echo ""
+echo "Run with:  $LAUNCHER [args...]"
+echo ""
+echo "Layout:"
+echo "  $OUT_DIR/"
+echo "    bin/$NAME              # AOT binary (engine + game source)"
+echo "    lib/$NAME/             # bundled dylibs"
+echo "    lib/jank/0.1/          # jank runtime resources"
+echo "    include/               # bundled headers"
+echo "    shim/xcrun             # bypasses XCode CLI tools requirement"
+for asset in "${ASSETS[@]}"; do
+    echo "    $asset/                 # game asset dir"
+done
+echo "    ${NAME}_run            # launcher"
+echo "============================================================================="

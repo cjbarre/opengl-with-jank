@@ -1,0 +1,18 @@
+#!/bin/sh
+# Bundled xcrun shim for baked-game distributions on macOS.
+#
+# At startup, jank's runtime context constructor calls xcrun --show-sdk-path,
+# captures the result, and stashes it as -isysroot for the embedded clang. The
+# path itself is never opened at startup because the precompiled header is
+# embedded in the AOT binary — clang only needs the SDK if it's later asked to
+# compile something.
+#
+# A baked game has all engine + game source AOT'd into native code. No JIT
+# happens at runtime: no eval, no dynamic require of source files, no
+# user-supplied cpp/raw. So the SDK path is captured and never used; any
+# non-empty string here is enough to satisfy jank's startup check.
+#
+# This shim is appended to PATH (not prepended). On developer machines with
+# real XCode CLI tools installed, the real xcrun wins. On end-user machines
+# without CLI tools, this shim is the fallback that lets the binary start.
+echo "/dev/null"

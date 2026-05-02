@@ -44,11 +44,20 @@ cd ../game
 ../engine/dist/jank-engine/jank-engine_run . editor          # course designer
 ../engine/dist/jank-engine/jank-engine_run . viewer          # animation viewer
 ../engine/dist/jank-engine/jank-engine_run . net-test server # ENet smoke
+
+# Ship a standalone game (no end-user prerequisites):
+cd engine
+./scripts/bake ../game                     # default output: <game>/dist/<name>/
+./scripts/bake ../game -o /tmp/sca-dist    # custom output
 ```
 
 `jank-engine_run` arguments:
 - arg 1: game directory (contains `jank-engine.edn`)
 - arg 2+: passed to the entry namespace's `-main`
+
+`bake` arguments:
+- `<game-dir>`: same as `jank-engine_run` arg 1
+- `-o <dir>`: optional output dir (default `<game-dir>/dist/<name>`)
 
 ## Runtime model
 
@@ -207,11 +216,21 @@ Build with `engine/scripts/build-gla2ozz`, `engine/scripts/build-ozz2gltf`, `eng
 
 ## Distribution
 
-The engine produces a single distributable artifact: `engine/dist/jank-engine/` (~324 MB). It contains the binary, bundled native dylibs, the embedded clang toolchain for runtime JIT, jank stdlib, and headers — everything needed to run any game directory containing a `jank-engine.edn`.
+There are two artifacts, for two different audiences:
 
-There is no per-game packaging step. To distribute a game, ship the `dist/jank-engine/` tree alongside the game directory; users invoke `./jank-engine_run /path/to/game`. End users need XCode Command Line Tools (`xcode-select --install`).
+**`scripts/build-engine` → `engine/dist/jank-engine/`** (~324 MB) — the dev-iteration runtime. Bakes every `engine.*` namespace plus all native deps and a JIT-capable clang. Reusable across games: `jank-engine_run /path/to/any-game-dir`. Requires XCode CLI tools on the running machine because consumer source is JIT-compiled.
 
-Linux and `.app` packaging scripts that existed for the old per-game-AOT model have been removed. Future Linux support means running `./scripts/build-engine` on a Linux box; future `.app` packaging would be a fresh small wrapper around `dist/jank-engine/`.
+**`scripts/bake` → `<game-dir>/dist/<name>/`** (~365 MB) — the shipping artifact. AOT-compiles engine + a specific game's source into one binary. No JIT happens at runtime, so end users need **nothing** — no XCode CLI tools, no jank, no clang. Bundles its own libc++, clang (for jank's startup probe only), and an `xcrun` shim that satisfies jank's startup check without invoking the system stub that would otherwise prompt for CLI-tools install.
+
+The shim mechanic: jank's runtime context constructor calls `xcrun --show-sdk-path` once at startup and stashes the result for later clang invocations. With AOT'd code, those later invocations never happen, so any non-empty path satisfies the probe. The bundled launcher prepends `<bundle>/shim/` to PATH so our 3-line `echo "/dev/null"` script wins over the system stub.
+
+`bake` requires the game's `jank-engine.edn` to declare:
+- `:entry` — the namespace whose `-main` to invoke
+- `:name` (optional) — output binary name (defaults to first segment of `:entry`)
+- `:paths`, `:includes` — source and header dirs (relative to game dir)
+- `:assets` (optional) — dirs to copy into the bundle (e.g. `["models" "textures"]`)
+
+Linux build path is unbuilt; bake currently macOS-only.
 
 ## Common gotchas
 

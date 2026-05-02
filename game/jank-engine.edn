@@ -1,11 +1,18 @@
 ;; Strafe Combat Academy - jank-engine project config.
-;;   jank-engine .          ; run the client (default)
-;;   jank-engine . server   ; host
-;;   jank-engine . editor   ; course designer
-;;   jank-engine . viewer   ; animation viewer
-;;   jank-engine . net-test {server|client}
+;;
+;; Dev iteration (JIT-loads source from this directory):
+;;   jank-engine_run .          ; run the client (default)
+;;   jank-engine_run . server   ; host
+;;   jank-engine_run . editor   ; course designer
+;;   jank-engine_run . viewer   ; animation viewer
+;;   jank-engine_run . net-test {server|client}
+;;
+;; Shipping (one-shot AOT bake into a standalone bundle):
+;;   <engine>/scripts/bake .  -o /tmp/sca-dist
+;;   /tmp/sca-dist/sca_run server
 {:entry sca.core
+ :name "sca"                       ; name of the baked binary + launcher
  :paths ["src"]
- ;; sca's own *_impl.h files (engine-internal headers like glm, glfw, ozz
- ;; are auto-registered by the jank-engine binary itself)
- :includes ["include"]}
+ :includes ["include"]             ; sca's *_impl.h (engine third-party headers
+                                   ; are auto-registered by the binary itself)
+ :assets ["models" "textures"]}    ; dirs copied into the baked bundle
