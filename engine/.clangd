@@ -1,7 +1,8 @@
 CompileFlags:
   Add:
     - -Iinclude
+    - -Ilibs/glm
     - -Ilibs/macos-arm64/glfw/include
     - -Ilibs/macos-arm64/ozz-animation/include
-    - -Ilibs/glm
+    - -Ithird_party/tinygltf
     - -std=c++20
