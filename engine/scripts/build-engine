@@ -119,11 +119,25 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
         done
     done
 else
+    # macOS
     cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
     cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
-    cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
-    cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
-    cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+    # libc++ / libc++abi / libunwind layout differs between LLVM sources:
+    # - jank bundled LLVM (build-clang): everything in lib/
+    # - brew llvm: libc++ family in lib/c++/, libunwind in lib/unwind/
+    # Try both. The bundle ends up with the unversioned-prefix names
+    # that the linker writes into the binary's NEEDED list (libc++.1).
+    for pair in "libc++:lib/c++" "libc++abi:lib/c++" "libunwind:lib/unwind"; do
+        libname="${pair%%:*}"
+        subdir="${pair##*:}"
+        for src in "$JANK_LLVM/lib/${libname}.1.0.$LIB_EXT" \
+                   "$JANK_LLVM/${subdir}/${libname}.1.0.$LIB_EXT"; do
+            if [[ -f "$src" ]]; then
+                cp "$src" "$BUNDLE_DIR/${libname}.1.$LIB_EXT"
+                break
+            fi
+        done
+    done
 fi
 
 # System dependencies

@@ -45,17 +45,15 @@ jobs:
         with:
           cli: latest
 
-      - name: Capture toolchain versions for cache key
-        id: tc
-        run: |
-          {
-            echo "llvm=$(brew list --versions llvm | awk '{print $2}')"
-            echo "boost=$(brew list --versions boost | awk '{print $2}')"
-          } >> "$GITHUB_OUTPUT"
-
       # ---------------------------------------------------------------------
       # Build jank against brew's LLVM (cached)
       # ---------------------------------------------------------------------
+      # The cache key is intentionally independent of `brew list --versions`
+      # output, which churns whenever Homebrew bumps the formula's bottle
+      # (e.g. 22.1.4 → 22.1.5 within a week). Within LLVM 22.x the ABI is
+      # stable enough to keep the cached jank build valid; the version check
+      # above already aborts the job if brew jumps to 23.x. Bump CACHE_REV
+      # to invalidate manually.
       # Three things together get jank's cppinterop submodule past the
       # libc++-22 / Apple-SDK header chain that bit us last time:
       #
@@ -71,7 +69,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/jank
-          key: jank-mac14-${{ env.JANK_SHA }}-llvm-${{ steps.tc.outputs.llvm }}-boost-${{ steps.tc.outputs.boost }}-${{ env.CACHE_REV }}
+          key: jank-mac14-${{ env.JANK_SHA }}-${{ env.CACHE_REV }}
 
       - name: Clone & build jank (against brew LLVM 22)
         if: steps.cache-jank.outputs.cache-hit != 'true'
