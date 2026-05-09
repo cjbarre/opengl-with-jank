@@ -99,16 +99,23 @@ fi
 
 # Jank/LLVM runtime libraries
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    # Preserve sonames + symlinks. The runtime linker resolves the binary
-    # against versioned names (libLLVM.so.22.1) so we must bundle the file
-    # under that name plus all the symlink aliases that ship with the deb
-    # (libLLVM.so → libLLVM.so.22 → libLLVM.so.22.1).
+    # Bundle libLLVM/libclang-cpp/libc++/etc. The sources in $JANK_LLVM/lib/
+    # are typically symlinks pointing into /lib/x86_64-linux-gnu/ (apt.llvm.org
+    # layout splits dev symlinks from runtime files). `cp -dP` would preserve
+    # those symlinks but they'd dangle on any other machine. So: resolve each
+    # match to its real file, copy under the real (versioned) name, and add
+    # a same-dir symlink for any alias the source had.
     for pat in libLLVM libclang-cpp libc++ libunwind libc++abi; do
         for src in "$JANK_LLVM/lib/${pat}".so*; do
             [[ -e "$src" || -L "$src" ]] || continue
-            cp -dP --preserve=links "$src" "$BUNDLE_DIR/" 2>/dev/null \
-              || cp -P "$src" "$BUNDLE_DIR/" 2>/dev/null \
-              || cp "$src" "$BUNDLE_DIR/"
+            real="$(readlink -f "$src")"
+            [[ -f "$real" ]] || continue
+            real_name="$(basename "$real")"
+            cp -f "$real" "$BUNDLE_DIR/$real_name"
+            src_name="$(basename "$src")"
+            if [[ "$src_name" != "$real_name" ]]; then
+                ln -sf "$real_name" "$BUNDLE_DIR/$src_name"
+            fi
         done
     done
 else
