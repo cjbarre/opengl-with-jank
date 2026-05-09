@@ -2,8 +2,148 @@
 
 Build jank's custom LLVM 22 and jank compiler on native Linux x64 to compile the opengl-with-jank game (server and client distributions).
 
-> **Important**: This guide uses cjbarre's fork of jank with Windows/cross-platform improvements:
+> **Important**: The "from-source LLVM" path (Phase 1 below) uses cjbarre's fork
+> of jank with Windows/cross-platform improvements:
 > https://github.com/cjbarre/jank/tree/add-windows
+> The "system Clang 22" path uses upstream `jank-lang/jank` directly.
+
+---
+
+## System Clang 22 build (CI-friendly, recommended) — verified 2026-05-09
+
+Skips the ~30 min LLVM-from-source build by using LLVM 22 from
+[apt.llvm.org](https://apt.llvm.org/). Verified on Ubuntu 24.04
+(noble), Digital Ocean droplet, 2 vCPU / 4 GB RAM.
+
+> **Pin upstream jank to `d2111a51`** for now. That's the commit
+> immediately preceding the custom-IR merge (#735). Anything later
+> currently has the regressions catalogued in `potential-issues.md`
+> and `potential-issues-2.md`. Revisit once those are all closed
+> upstream.
+
+### What this path does differently
+
+| Aspect | From-source LLVM (Phase 1 below) | System Clang 22 (this path) |
+|---|---|---|
+| LLVM build | ~15 min on 32 cores; ~1–3 hr on small VMs | None — installed via apt |
+| Disk | ~50 GB | ~5 GB |
+| jank binary size | ~324 MB (bundles LLVM) | ~20 MB (system LLVM) |
+| `jank_local_clang` flag | `ON` | `OFF` |
+| C++ stdlib | libc++ (built into bundled LLVM) | libstdc++ from gcc-14 |
+| Bundled jank fork | `cjbarre/jank @ add-windows` | `jank-lang/jank @ d2111a51` |
+| End-user requirement | None — jank ships its clang | clang-22 must be on the box (for JIT) |
+
+The system-Clang path is what we want for CI runners and short-lived VMs.
+The from-source path is what `bake` produces for shippable end-user
+binaries (no clang on the user's machine).
+
+### Step-by-step
+
+```bash
+# 8 GB swap so the build doesn't OOM at link time on a 4 GB VM.
+# Skip on machines with ≥16 GB RAM.
+fallocate -l 8G /swapfile && chmod 600 /swapfile && \
+  mkswap /swapfile && swapon /swapfile && \
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+# apt.llvm.org repo for LLVM 22
+apt-get update -qq
+apt-get install -y -qq curl wget gnupg lsb-release software-properties-common ca-certificates
+wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | \
+  gpg --dearmor -o /usr/share/keyrings/apt-llvm-org.gpg
+echo 'deb [signed-by=/usr/share/keyrings/apt-llvm-org.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main' \
+  > /etc/apt/sources.list.d/llvm.list
+apt-get update -qq
+
+# Build prereqs
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+  clang-22 clang-tools-22 lld-22 \
+  llvm-22-dev libclang-22-dev libclang-cpp22-dev libpolly-22-dev \
+  cmake ninja-build git build-essential pkg-config \
+  libssl-dev libboost-all-dev zlib1g-dev libffi-dev libxml2-dev \
+  libtinfo-dev libzstd-dev \
+  gcc-14 g++-14 libstdc++-14-dev \
+  python3
+
+# jank pinned to d2111a51
+git clone --recursive https://github.com/jank-lang/jank ~/jank
+cd ~/jank && git checkout d2111a51 && git submodule update --init --recursive
+cd compiler+runtime
+export CC=clang-22 CXX=clang++-22
+
+./bin/configure -G Ninja \
+  -Djank_local_clang=OFF \
+  -Dllvm_dir=/usr/lib/llvm-22 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_EXE_LINKER_FLAGS=-lzstd
+
+cmake --build build -j 2     # match -j to vCPUs; the 4 GB / 2 vCPU box can do -j 2 safely
+./build/jank check-health     # all ✅
+```
+
+### Gotchas (each one cost a build attempt the first time)
+
+1. **`std::chrono::parse` not in libstdc++ 13.** Ubuntu 24.04's default
+   stdlib is gcc-13's libstdc++, which lacks the C++20 chrono parser jank
+   uses for `#inst` literals. Install `gcc-14 g++-14 libstdc++-14-dev` —
+   clang-22 auto-selects the newest GCC toolchain on the system, so no
+   extra flag is needed. Verify with:
+   ```
+   clang++-22 -v -E -x c++ /dev/null 2>&1 | grep 'Selected GCC'
+   # should say: Selected GCC installation: /usr/lib/gcc/x86_64-linux-gnu/14
+   ```
+
+2. **`libzstd` is needed in two places.**
+   - `libzstd-dev` installed at the system level so cmake's LLVM config
+     resolves the `zstd::libzstd_shared` IMPORTED target.
+   - `-DCMAKE_EXE_LINKER_FLAGS=-lzstd` on the configure line so the
+     final `jank` executable link gets `-lzstd`. cpptrace's vendored
+     libdwarf needs `ZSTD_decompress`; modern ld with `--as-needed`
+     won't pull it in transitively from libLLVM.so.
+
+3. **Single-threaded bootstrap stalls progress.** Around ninja step
+   14/36 the build runs `jank-phase-1 compile-module clojure.core` and
+   `jank-phase-1 compile-module jank.nrepl.server.core` inside one
+   ninja step. On 2 vCPUs that's ~5 min where the ninja counter doesn't
+   move. Not stuck — `ps aux | grep jank-phase` will show 99 % CPU and
+   growing RSS.
+
+4. **RAM headroom on small VMs.** With 4 GB, `-j 2` is the safe limit.
+   The link of `jank-phase-1` peaks ~1 GB RSS; combined with the second
+   parallel compile that's enough to start touching swap. The 8 GB
+   swap above is precautionary; in practice the build never went above
+   780 KiB swap on our run.
+
+### Smoke test
+
+```bash
+echo '(println "hello from jank" (+ 1 2 3))' > /tmp/h.jank
+~/jank/compiler+runtime/build/jank run /tmp/h.jank
+# → hello from jank 6
+```
+
+`check-health` should report:
+- `jank can jit compile c++` ✅
+- `jank can aot compile working binaries` ✅
+
+If you switch back to the from-source path, the procedure below is unchanged.
+
+### Notes for the GitHub Actions workflow
+
+When this becomes a `.github/workflows/*.yml`:
+
+- **Drop the swap step.** `ubuntu-latest` has 16 GB RAM; not needed.
+- **Use `-j 4`** to match the 4 vCPUs on the standard runner.
+- **Cache the jank build directory.** Key on (`d2111a51`, clang-22 deb
+  version, `libstdc++-14-dev` deb version). Cache hit → skip the ~25
+  min jank build entirely; the engine job becomes minutes.
+- **Pin the Clang 22 package version** in the cache key so an apt.llvm.org
+  bump doesn't silently invalidate everything but also doesn't go
+  unnoticed.
+- **`actions/checkout` jank as a separate step** at the pinned SHA,
+  rather than running the `git clone` from this doc. Lets cached
+  artifacts key cleanly on the Action's `hashFiles` of a pinned
+  `jank.sha` file in the engine repo.
 
 ---
 
