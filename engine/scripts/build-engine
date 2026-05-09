@@ -99,11 +99,18 @@ fi
 
 # Jank/LLVM runtime libraries
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    cp "$JANK_LLVM/lib/libLLVM.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libLLVM"*".so"* "$BUNDLE_DIR/"
-    cp "$JANK_LLVM/lib/libclang-cpp.so" "$BUNDLE_DIR/" 2>/dev/null || cp "$JANK_LLVM/lib/libclang-cpp"*".so"* "$BUNDLE_DIR/"
-    cp "$JANK_LLVM/lib/libc++.so"* "$BUNDLE_DIR/" 2>/dev/null || true
-    cp "$JANK_LLVM/lib/libunwind.so"* "$BUNDLE_DIR/" 2>/dev/null || true
-    cp "$JANK_LLVM/lib/libc++abi.so"* "$BUNDLE_DIR/" 2>/dev/null || true
+    # Preserve sonames + symlinks. The runtime linker resolves the binary
+    # against versioned names (libLLVM.so.22.1) so we must bundle the file
+    # under that name plus all the symlink aliases that ship with the deb
+    # (libLLVM.so → libLLVM.so.22 → libLLVM.so.22.1).
+    for pat in libLLVM libclang-cpp libc++ libunwind libc++abi; do
+        for src in "$JANK_LLVM/lib/${pat}".so*; do
+            [[ -e "$src" || -L "$src" ]] || continue
+            cp -dP --preserve=links "$src" "$BUNDLE_DIR/" 2>/dev/null \
+              || cp -P "$src" "$BUNDLE_DIR/" 2>/dev/null \
+              || cp "$src" "$BUNDLE_DIR/"
+        done
+    done
 else
     cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
     cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
@@ -129,13 +136,35 @@ ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
 
 add_rpath "${RPATH_PREFIX}/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
 
-# Clang resource directory + libc++ headers + jank stdlib
+# Clang resource directory + C++ stdlib headers + jank stdlib
 cp -R "$JANK_LLVM/lib/clang/22" "$BUILD_DIR/lib/jank/0.1/lib/clang/"
-# libc++ headers only exist under JANK_LLVM when jank was built with
-# jank_local_clang=ON. With system Clang + libstdc++ (Linux dev/CI),
-# the bundle relies on the system gcc toolchain at runtime — skip.
+
+# C++ standard library headers — needed at runtime by the JIT for any
+# game code that pulls in <vector>, <string>, etc. The bundled clang
+# scans `<bin>/../include/c++/<version>` and picks it up automatically.
 if [[ -d "$JANK_LLVM/include/c++" ]]; then
+    # macOS (and Linux jank_local_clang=ON): libc++ ships under JANK_LLVM
     cp -R "$JANK_LLVM/include/c++" "$BUILD_DIR/lib/jank/0.1/include/"
+elif [[ "$PLATFORM_OS" == "linux" ]]; then
+    # Linux jank_local_clang=OFF: pull libstdc++ headers from the gcc-14
+    # toolchain that jank was actually compiled against. Without this,
+    # the bundle would silently fall back to whatever libstdc++ the host
+    # has, which may be an older / incompatible version.
+    libstdcxx_root="$(g++-14 -E -x c++ -v - </dev/null 2>&1 \
+      | awk '/^ \/usr\/include\/c\+\+\//{print; exit}' | tr -d ' ')"
+    if [[ -n "$libstdcxx_root" && -d "$libstdcxx_root" ]]; then
+        version="$(basename "$libstdcxx_root")"
+        mkdir -p "$BUILD_DIR/lib/jank/0.1/include/c++"
+        cp -R "$libstdcxx_root" "$BUILD_DIR/lib/jank/0.1/include/c++/"
+        # Triple-specific bits (cxxabi, cpu_defines, etc.)
+        triple_dir="/usr/include/$(uname -m)-linux-gnu/c++/$version"
+        if [[ -d "$triple_dir" ]]; then
+            mkdir -p "$BUILD_DIR/lib/jank/0.1/include/$(uname -m)-linux-gnu/c++"
+            cp -R "$triple_dir" "$BUILD_DIR/lib/jank/0.1/include/$(uname -m)-linux-gnu/c++/"
+        fi
+    else
+        echo "WARN: libstdc++ headers not found via g++-14; JIT may fall back to host headers" >&2
+    fi
 fi
 cp -R "$JANK_DIR/include/cpp/jank" "$BUILD_DIR/lib/jank/0.1/include/"
 cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
