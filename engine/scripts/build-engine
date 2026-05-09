@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Verbose trace (temporary — we're debugging a silent CI failure). The
-# noise cost is acceptable in exchange for being able to see the exact
-# command that aborts. Drop this once the Linux bundling path is stable.
-set -x
 
 # Build the jank-engine runtime binary: a single self-contained executable
 # that AOT-bakes every engine.* namespace and bundles all native deps.
@@ -154,8 +150,18 @@ elif [[ "$PLATFORM_OS" == "linux" ]]; then
     # toolchain that jank was actually compiled against. Without this,
     # the bundle would silently fall back to whatever libstdc++ the host
     # has, which may be an older / incompatible version.
-    libstdcxx_root="$(g++-14 -E -x c++ -v - </dev/null 2>&1 \
-      | awk '/^ \/usr\/include\/c\+\+\//{print; exit}' | tr -d ' ')"
+    #
+    # Capture g++-14's verbose output to a variable first, then parse.
+    # Piping into `awk '... ; exit'` triggers SIGPIPE upstream which
+    # fails under pipefail+set-e.
+    gcc_v_output="$(g++-14 -E -x c++ -v - </dev/null 2>&1 || true)"
+    libstdcxx_root=""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]+(/usr/include/c\+\+/[0-9]+)[[:space:]]*$ ]]; then
+            libstdcxx_root="${BASH_REMATCH[1]}"
+            break
+        fi
+    done <<<"$gcc_v_output"
     if [[ -n "$libstdcxx_root" && -d "$libstdcxx_root" ]]; then
         version="$(basename "$libstdcxx_root")"
         mkdir -p "$BUILD_DIR/lib/jank/0.1/include/c++"
