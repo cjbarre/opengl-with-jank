@@ -29,19 +29,18 @@ jobs:
       # ---------------------------------------------------------------------
       # System dependencies via Homebrew
       # ---------------------------------------------------------------------
+      # macOS uses jank_local_clang=ON — jank builds its own LLVM 22 from
+      # source via ./bin/build-clang. First-run cost ~30 min on a 3-core
+      # runner; cached afterwards. The brew-llvm + jank_local_clang=OFF
+      # path runs into libc++ 22 / Apple SDK header-chain mismatches in
+      # the cppinterop submodule (e.g. <cstdlib> can't find libc++'s
+      # <stdlib.h>). The bundled-LLVM path is what jank devs exercise.
       - name: Install brew deps
         run: |
-          # Skip `brew update` — runners are kept reasonably current and
-          # update is the slowest part. Install what we need.
-          brew install llvm cmake ninja boost openssl@3 zstd
-          # Verify llvm is the version jank expects (22.x). If brew bumps
-          # past 23 before jank does, this will fail loudly.
-          installed_major=$("$HOMEBREW_PREFIX"/opt/llvm/bin/clang --version \
-            | head -1 | grep -oE 'version [0-9]+' | awk '{print $2}')
-          if [[ "$installed_major" != "22" ]]; then
-            echo "::error::brew llvm is version $installed_major; jank @ $JANK_SHA needs 22.x"
-            exit 1
-          fi
+          # Skip `brew update` — slowest step, runners stay fairly current.
+          # We don't install brew llvm; jank builds its own.
+          brew install cmake ninja boost openssl@3 zstd doctest
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Install Clojure CLI
         uses: DeLaGuardo/setup-clojure@12.5
@@ -52,21 +51,21 @@ jobs:
         id: tc
         run: |
           {
-            echo "llvm=$(brew list --versions llvm | awk '{print $2}')"
             echo "boost=$(brew list --versions boost | awk '{print $2}')"
+            echo "xcode=$(xcodebuild -version | head -1 | awk '{print $2}')"
           } >> "$GITHUB_OUTPUT"
 
       # ---------------------------------------------------------------------
-      # Build jank from source (cached) — system Clang from brew llvm
+      # Build jank from source (cached) — bundled LLVM via build-clang
       # ---------------------------------------------------------------------
       - name: Cache jank build
         id: cache-jank
         uses: actions/cache@v4
         with:
           path: ~/jank
-          key: jank-mac14-${{ env.JANK_SHA }}-llvm-${{ steps.tc.outputs.llvm }}-boost-${{ steps.tc.outputs.boost }}-${{ env.CACHE_REV }}
+          key: jank-mac14-${{ env.JANK_SHA }}-xcode-${{ steps.tc.outputs.xcode }}-boost-${{ steps.tc.outputs.boost }}-${{ env.CACHE_REV }}
 
-      - name: Clone & build jank
+      - name: Clone & build jank (with bundled LLVM)
         if: steps.cache-jank.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/jank-lang/jank ~/jank
@@ -74,11 +73,14 @@ jobs:
           git checkout "$JANK_SHA"
           git submodule update --init --recursive
           cd compiler+runtime
-          export CC="$HOMEBREW_PREFIX/opt/llvm/bin/clang"
-          export CXX="$HOMEBREW_PREFIX/opt/llvm/bin/clang++"
+          # Bootstrap with Apple Clang to build jank's bundled LLVM 22
+          export CC=clang CXX=clang++
+          ./bin/build-clang
+          # Now build jank against the bundled LLVM
+          export CC="$PWD/build/llvm-install/usr/local/bin/clang"
+          export CXX="$PWD/build/llvm-install/usr/local/bin/clang++"
           ./bin/configure -G Ninja \
-            -Djank_local_clang=OFF \
-            -Dllvm_dir="$HOMEBREW_PREFIX/opt/llvm" \
+            -Djank_local_clang=ON \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build -j "$(sysctl -n hw.ncpu)"
 
@@ -93,16 +95,14 @@ jobs:
       # ---------------------------------------------------------------------
       # Build the engine
       # ---------------------------------------------------------------------
+      # JANK_LLVM auto-resolves to ~/jank/compiler+runtime/build/llvm-install/usr/local
+      # via common.sh's fallback chain (jank-bundled present → use it).
       - name: Engine setup (native deps + embedded assets)
         working-directory: engine
-        env:
-          JANK_LLVM: /opt/homebrew/opt/llvm
         run: ./scripts/setup
 
       - name: Build engine binary
         working-directory: engine
-        env:
-          JANK_LLVM: /opt/homebrew/opt/llvm
         run: ./scripts/build-engine
 
       # ---------------------------------------------------------------------
