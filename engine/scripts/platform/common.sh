@@ -129,10 +129,16 @@ load_jank_paths() {
     # Try environment variable first
     if [[ -n "${JANK_DIR:-}" ]]; then
         JANK_DIR="$JANK_DIR"
-    # Try to find jank in PATH and derive location
+    # Try to find jank in PATH and derive location (follow symlinks)
     elif command -v jank &>/dev/null; then
         local jank_path
         jank_path="$(command -v jank)"
+        # Resolve symlinks so a /usr/local/bin/jank → …/build/jank link still works
+        if command -v readlink &>/dev/null; then
+            local resolved
+            resolved="$(readlink -f "$jank_path" 2>/dev/null || echo "$jank_path")"
+            jank_path="$resolved"
+        fi
         # Heuristic: jank binary is in build/ dir, compiler+runtime is parent
         if [[ "$jank_path" == */build/jank ]]; then
             JANK_DIR="${jank_path%/build/jank}"
@@ -149,7 +155,18 @@ load_jank_paths() {
         exit 1
     fi
 
-    JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
+    # JANK_LLVM points at the LLVM install. With jank_local_clang=ON it lives
+    # inside the jank build dir; with jank_local_clang=OFF (system Clang),
+    # let the caller override or fall back to the system LLVM root.
+    if [[ -n "${JANK_LLVM:-}" ]]; then
+        JANK_LLVM="$JANK_LLVM"
+    elif [[ -d "$JANK_DIR/build/llvm-install/usr/local" ]]; then
+        JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
+    elif [[ -d "/usr/lib/llvm-22" ]]; then
+        JANK_LLVM="/usr/lib/llvm-22"
+    else
+        JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
+    fi
 
     export JANK_DIR JANK_LLVM
 }

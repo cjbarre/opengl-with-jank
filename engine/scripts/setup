@@ -29,8 +29,10 @@ echo "Building ozz-animation..."
 cd "$PROJECT_DIR/third_party/ozz-animation"
 mkdir -p build
 cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON
-make -j8
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
+  -Dozz_build_samples=OFF -Dozz_build_howtos=OFF -Dozz_build_tools=OFF \
+  -Dozz_build_tests=OFF
+make -j"${OZZ_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 
 # Copy libraries with platform-aware paths
 echo "Installing ozz-animation libraries..."
@@ -38,6 +40,10 @@ mkdir -p "$LIBS_DIR/ozz-animation/lib"
 cp "src/base/$(format_lib_name ozz_base_r)" "$LIBS_DIR/ozz-animation/lib/"
 cp "src/animation/runtime/$(format_lib_name ozz_animation_r)" "$LIBS_DIR/ozz-animation/lib/"
 cp "src/geometry/runtime/$(format_lib_name ozz_geometry_r)" "$LIBS_DIR/ozz-animation/lib/"
+
+# Copy ozz headers (macOS vendors these; Linux/Windows copy from submodule)
+mkdir -p "$LIBS_DIR/ozz-animation/include"
+cp -R "$PROJECT_DIR/third_party/ozz-animation/include/ozz" "$LIBS_DIR/ozz-animation/include/"
 
 cd "$PROJECT_DIR"
 
@@ -104,7 +110,8 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
     fi
     cd glfw
     cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
-          -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF
+          -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF \
+          -DGLFW_BUILD_WAYLAND=OFF -DGLFW_BUILD_X11=ON
     cmake --build build -j$(nproc)
     mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include"
     cp build/src/libglfw.so.3 "$LIBS_DIR/glfw/lib/"
@@ -124,8 +131,8 @@ clojure -M "$PROJECT_DIR/scripts/embed-assets.clj" \
     --system-include "$PROJECT_DIR/libs/glm" \
     --system-include "$LIBS_DIR/glfw/include" \
     --system-include "$LIBS_DIR/ozz-animation/include" \
-    "shaders:$PROJECT_DIR/shaders" \
-    "fonts:$PROJECT_DIR/fonts"
+    "shaders:$PROJECT_DIR/assets/shaders" \
+    "fonts:$PROJECT_DIR/assets/fonts"
 
 echo "Building engine-assets library..."
 mkdir -p "$LIBS_DIR/engine-assets/lib"

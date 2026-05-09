@@ -24,7 +24,7 @@ LIB_EXT="$(get_lib_extension)"
 BREW_PREFIX="$(get_homebrew_prefix)"
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    OPENGL_LIB_FLAG="-lGL"
+    OPENGL_LIB_FLAG="-lGL -lGLEW"
     RPATH_PREFIX='$ORIGIN'
 else
     OPENGL_LIB_FLAG="-lOpenGL"
@@ -131,7 +131,12 @@ add_rpath "${RPATH_PREFIX}/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-
 
 # Clang resource directory + libc++ headers + jank stdlib
 cp -R "$JANK_LLVM/lib/clang/22" "$BUILD_DIR/lib/jank/0.1/lib/clang/"
-cp -R "$JANK_LLVM/include/c++" "$BUILD_DIR/lib/jank/0.1/include/"
+# libc++ headers only exist under JANK_LLVM when jank was built with
+# jank_local_clang=ON. With system Clang + libstdc++ (Linux dev/CI),
+# the bundle relies on the system gcc toolchain at runtime — skip.
+if [[ -d "$JANK_LLVM/include/c++" ]]; then
+    cp -R "$JANK_LLVM/include/c++" "$BUILD_DIR/lib/jank/0.1/include/"
+fi
 cp -R "$JANK_DIR/include/cpp/jank" "$BUILD_DIR/lib/jank/0.1/include/"
 cp -R "$JANK_DIR/src/jank/"* "$BUILD_DIR/lib/jank/0.1/src/"
 

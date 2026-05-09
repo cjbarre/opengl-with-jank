@@ -117,12 +117,48 @@ code_sign_adhoc() {
 
 create_opengl_stub() {
     local output_path="$1"
-    # No stub needed on Linux - OpenGL links directly via -lGL
-    # Create parent directory if needed
-    mkdir -p "$(dirname "$output_path")"
-    # Touch a placeholder file so callers don't error
+    local lib_dir
+    lib_dir="$(dirname "$output_path")"
+    mkdir -p "$lib_dir"
+
+    # jank's -l flag only searches -L paths (no system-default fallback), so
+    # we expose the system libGL inside our libs/<platform>/opengl/lib/ as a
+    # symlink. The build-engine script passes -L .../opengl/lib -lGL.
+    local sys_libgl=""
+    for cand in \
+      /usr/lib/x86_64-linux-gnu/libGL.so \
+      /usr/lib64/libGL.so \
+      /lib/x86_64-linux-gnu/libGL.so; do
+        if [[ -e "$cand" ]]; then
+            sys_libgl="$cand"
+            break
+        fi
+    done
+    if [[ -z "$sys_libgl" ]]; then
+        echo "ERROR: system libGL.so not found. Install libgl1-mesa-dev (Ubuntu) or equivalent." >&2
+        return 1
+    fi
+    ln -sf "$sys_libgl" "$lib_dir/libGL.so"
+
+    # GLEW for modern GL function pointers (Linux only — macOS uses the Apple
+    # OpenGL framework directly).
+    local sys_libglew=""
+    for cand in \
+      /usr/lib/x86_64-linux-gnu/libGLEW.so \
+      /usr/lib64/libGLEW.so; do
+        if [[ -e "$cand" ]]; then
+            sys_libglew="$cand"
+            break
+        fi
+    done
+    if [[ -z "$sys_libglew" ]]; then
+        echo "ERROR: system libGLEW.so not found. Install libglew-dev (Ubuntu) or equivalent." >&2
+        return 1
+    fi
+    ln -sf "$sys_libglew" "$lib_dir/libGLEW.so"
+
     touch "$output_path.placeholder"
-    echo "Note: No OpenGL stub library needed on Linux (links directly to system libGL)" >&2
+    echo "Note: linked system libGL.so + libGLEW.so → $lib_dir/ (jank -L resolution)" >&2
 }
 
 get_opengl_link_flags() {
