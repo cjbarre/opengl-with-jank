@@ -47,10 +47,25 @@ cp -R "$PROJECT_DIR/third_party/ozz-animation/include/ozz" "$LIBS_DIR/ozz-animat
 
 cd "$PROJECT_DIR"
 
-# Build OpenGL stub library (platform-specific - no-op on Linux)
-echo "Building OpenGL stub library..."
-mkdir -p "$LIBS_DIR/opengl/lib"
-create_opengl_stub "$LIBS_DIR/opengl/lib/$(format_lib_name OpenGL)"
+# OpenGL stub:
+#  - macOS: an arm64/x86_64 dylib that re-exports the OpenGL.framework
+#    symbols. This is committed to the repo (it's a known-good binary
+#    produced by `clang -dynamiclib -framework OpenGL -Wl,-reexport_framework,OpenGL`).
+#    We skip regeneration when the committed file is present because some
+#    CI runner ld versions silently drop the LC_REEXPORT entry, leaving
+#    the stub useless and breaking the engine link with "_glX… undefined"
+#    errors.
+#  - Linux: the create_opengl_stub function symlinks system libGL and
+#    libGLEW into LIBS_DIR/opengl/lib so jank's -L resolution works.
+#    Always (re)run on Linux so the symlinks land.
+opengl_stub_path="$LIBS_DIR/opengl/lib/$(format_lib_name OpenGL)"
+if [[ "$PLATFORM_OS" == "macos" ]] && [[ -f "$opengl_stub_path" ]]; then
+    echo "OpenGL stub library: using committed $opengl_stub_path"
+else
+    echo "Building OpenGL stub library..."
+    mkdir -p "$LIBS_DIR/opengl/lib"
+    create_opengl_stub "$opengl_stub_path"
+fi
 
 # Build header-only libraries into shared libraries
 echo "Building STB library..."
