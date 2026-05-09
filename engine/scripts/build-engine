@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Verbose trace (temporary — we're debugging a silent CI failure). The
+# noise cost is acceptable in exchange for being able to see the exact
+# command that aborts. Drop this once the Linux bundling path is stable.
+set -x
 
 # Build the jank-engine runtime binary: a single self-contained executable
 # that AOT-bakes every engine.* namespace and bundles all native deps.
