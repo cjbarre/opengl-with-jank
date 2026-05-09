@@ -1,0 +1,184 @@
+name: build-linux
+
+on:
+  push:
+    branches: [main, runtime-binary]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: linux-x86_64
+    runs-on: ubuntu-24.04
+
+    env:
+      # Pin jank to the commit immediately preceding the custom-IR merge.
+      # See potential-issues.md / potential-issues-2.md for the regressions
+      # that gate moving past this. Bump along with both files when the
+      # upstream issues are closed.
+      JANK_SHA: d2111a51fe7378a1399508e348ed23f3f888a195
+      CLANG_VERSION: "22"
+      # Bump CACHE_REV when jank's apt.llvm.org or libstdc++ pins shift
+      # underneath us and the cached jank build needs invalidating.
+      CACHE_REV: "v1"
+
+    steps:
+      - name: Checkout opengl-with-jank
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ---------------------------------------------------------------------
+      # System dependencies
+      # ---------------------------------------------------------------------
+      - name: Add apt.llvm.org repo
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo gpg --dearmor -o /usr/share/keyrings/apt-llvm-org.gpg
+          echo "deb [signed-by=/usr/share/keyrings/apt-llvm-org.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-${CLANG_VERSION} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+
+      - name: Install build & runtime deps
+        run: |
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            clang-${CLANG_VERSION} clang-tools-${CLANG_VERSION} lld-${CLANG_VERSION} \
+            llvm-${CLANG_VERSION}-dev libclang-${CLANG_VERSION}-dev \
+            libclang-cpp${CLANG_VERSION}-dev libpolly-${CLANG_VERSION}-dev \
+            cmake ninja-build pkg-config build-essential \
+            libssl-dev libboost-all-dev zlib1g-dev libffi-dev libxml2-dev \
+            libtinfo-dev libzstd-dev \
+            gcc-14 g++-14 libstdc++-14-dev \
+            patchelf \
+            libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev \
+            libgl1-mesa-dev libglu1-mesa-dev libglew-dev \
+            xvfb mesa-utils libgl1-mesa-dri \
+            python3
+
+      - name: Install Clojure CLI
+        run: |
+          curl -L -o /tmp/linux-install.sh \
+            https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
+          chmod +x /tmp/linux-install.sh
+          sudo /tmp/linux-install.sh
+
+      # Capture the deb versions we just installed; cache invalidates if any move.
+      - name: Capture toolchain versions for cache key
+        id: tc
+        run: |
+          {
+            echo "clang=$(dpkg-query -W -f='${Version}' clang-${CLANG_VERSION})"
+            echo "libstdcxx=$(dpkg-query -W -f='${Version}' libstdc++-14-dev)"
+            echo "libzstd=$(dpkg-query -W -f='${Version}' libzstd-dev)"
+          } >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Build jank from source (cached)
+      # ---------------------------------------------------------------------
+      - name: Cache jank build
+        id: cache-jank
+        uses: actions/cache@v4
+        with:
+          path: ~/jank
+          key: jank-${{ env.JANK_SHA }}-clang-${{ steps.tc.outputs.clang }}-libstdcxx-${{ steps.tc.outputs.libstdcxx }}-${{ env.CACHE_REV }}
+
+      - name: Clone & build jank
+        if: steps.cache-jank.outputs.cache-hit != 'true'
+        run: |
+          git clone --recursive https://github.com/jank-lang/jank ~/jank
+          cd ~/jank
+          git checkout "$JANK_SHA"
+          git submodule update --init --recursive
+          cd compiler+runtime
+          export CC=clang-${CLANG_VERSION} CXX=clang++-${CLANG_VERSION}
+          ./bin/configure -G Ninja \
+            -Djank_local_clang=OFF \
+            -Dllvm_dir=/usr/lib/llvm-${CLANG_VERSION} \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXE_LINKER_FLAGS=-lzstd
+          cmake --build build -j "$(nproc)"
+
+      - name: Symlink jank into PATH
+        run: sudo ln -sf "$HOME/jank/compiler+runtime/build/jank" /usr/local/bin/jank
+
+      - name: jank check-health
+        run: jank check-health
+
+      # ---------------------------------------------------------------------
+      # Build the engine
+      # ---------------------------------------------------------------------
+      - name: Engine setup (native deps + embedded assets)
+        working-directory: engine
+        run: ./scripts/setup
+
+      - name: Build engine binary
+        working-directory: engine
+        run: ./scripts/build-engine
+
+      # ---------------------------------------------------------------------
+      # Smoke test: server binds, client renders under Xvfb, both stay up
+      # ---------------------------------------------------------------------
+      - name: Smoke test (server + client over loopback)
+        working-directory: game
+        run: |
+          set -eo pipefail
+          ENGINE=../engine/dist/jank-engine/jank-engine_run
+
+          # Server (headless, ENet UDP on 7777)
+          "$ENGINE" . server > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 4
+
+          if ! ss -ulnp 2>/dev/null | grep -q ':7777.*jank-engine'; then
+            echo "::error::server failed to bind UDP/7777"
+            cat /tmp/server.log
+            kill "$SERVER_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ server bound UDP/7777"
+
+          # Xvfb for client GL context
+          Xvfb :99 -screen 0 1280x720x24 -ac > /tmp/xvfb.log 2>&1 &
+          XVFB_PID=$!
+          sleep 1
+
+          # Client connects to loopback under software-rendered GL
+          DISPLAY=:99 "$ENGINE" . client > /tmp/client.log 2>&1 &
+          CLIENT_PID=$!
+          sleep 8
+
+          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+            echo "::error::client died before timeout"
+            cat /tmp/client.log
+            kill "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
+            exit 1
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "::error::server died while client was running"
+            cat /tmp/server.log
+            kill "$CLIENT_PID" "$XVFB_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ server + client co-ran for 8s"
+
+          # Clean teardown
+          kill "$CLIENT_PID" "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
+          wait 2>/dev/null || true
+
+      - name: Upload server / client logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-linux-x86_64
+          path: |
+            /tmp/server.log
+            /tmp/client.log
+            /tmp/xvfb.log
+          if-no-files-found: ignore
+
+      - name: Upload jank-engine binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: jank-engine-linux-x86_64
+          path: engine/dist/jank-engine/
+          retention-days: 14

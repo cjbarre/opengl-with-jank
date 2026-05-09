@@ -1,0 +1,171 @@
+name: build-macos
+
+on:
+  push:
+    branches: [main, runtime-binary]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: macos-arm64
+    runs-on: macos-14   # Apple silicon, Sonoma
+
+    env:
+      # Pin jank to the commit immediately preceding the custom-IR merge.
+      # See potential-issues.md / potential-issues-2.md. Bump along with
+      # both files when the upstream regressions are closed.
+      JANK_SHA: d2111a51fe7378a1399508e348ed23f3f888a195
+      CACHE_REV: "v1"
+      # Homebrew on Apple silicon
+      HOMEBREW_PREFIX: /opt/homebrew
+
+    steps:
+      - name: Checkout opengl-with-jank
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ---------------------------------------------------------------------
+      # System dependencies via Homebrew
+      # ---------------------------------------------------------------------
+      - name: Install brew deps
+        run: |
+          # Skip `brew update` — runners are kept reasonably current and
+          # update is the slowest part. Install what we need.
+          brew install llvm cmake ninja boost openssl@3 zstd
+          # Verify llvm is the version jank expects (22.x). If brew bumps
+          # past 23 before jank does, this will fail loudly.
+          installed_major=$("$HOMEBREW_PREFIX"/opt/llvm/bin/clang --version \
+            | head -1 | grep -oE 'version [0-9]+' | awk '{print $2}')
+          if [[ "$installed_major" != "22" ]]; then
+            echo "::error::brew llvm is version $installed_major; jank @ $JANK_SHA needs 22.x"
+            exit 1
+          fi
+
+      - name: Install Clojure CLI
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          cli: latest
+
+      - name: Capture toolchain versions for cache key
+        id: tc
+        run: |
+          {
+            echo "llvm=$(brew list --versions llvm | awk '{print $2}')"
+            echo "boost=$(brew list --versions boost | awk '{print $2}')"
+          } >> "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------------
+      # Build jank from source (cached) — system Clang from brew llvm
+      # ---------------------------------------------------------------------
+      - name: Cache jank build
+        id: cache-jank
+        uses: actions/cache@v4
+        with:
+          path: ~/jank
+          key: jank-mac14-${{ env.JANK_SHA }}-llvm-${{ steps.tc.outputs.llvm }}-boost-${{ steps.tc.outputs.boost }}-${{ env.CACHE_REV }}
+
+      - name: Clone & build jank
+        if: steps.cache-jank.outputs.cache-hit != 'true'
+        run: |
+          git clone --recursive https://github.com/jank-lang/jank ~/jank
+          cd ~/jank
+          git checkout "$JANK_SHA"
+          git submodule update --init --recursive
+          cd compiler+runtime
+          export CC="$HOMEBREW_PREFIX/opt/llvm/bin/clang"
+          export CXX="$HOMEBREW_PREFIX/opt/llvm/bin/clang++"
+          ./bin/configure -G Ninja \
+            -Djank_local_clang=OFF \
+            -Dllvm_dir="$HOMEBREW_PREFIX/opt/llvm" \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j "$(sysctl -n hw.ncpu)"
+
+      - name: Symlink jank into PATH
+        run: |
+          sudo mkdir -p /usr/local/bin
+          sudo ln -sf "$HOME/jank/compiler+runtime/build/jank" /usr/local/bin/jank
+
+      - name: jank check-health
+        run: jank check-health
+
+      # ---------------------------------------------------------------------
+      # Build the engine
+      # ---------------------------------------------------------------------
+      - name: Engine setup (native deps + embedded assets)
+        working-directory: engine
+        env:
+          JANK_LLVM: /opt/homebrew/opt/llvm
+        run: ./scripts/setup
+
+      - name: Build engine binary
+        working-directory: engine
+        env:
+          JANK_LLVM: /opt/homebrew/opt/llvm
+        run: ./scripts/build-engine
+
+      # ---------------------------------------------------------------------
+      # Smoke test
+      # ---------------------------------------------------------------------
+      # macOS GitHub runners have an active windowserver, so the GLFW client
+      # can create a window without Xvfb. If the client smoke turns out to be
+      # flaky on runners we can drop it; the server smoke is the load-bearing
+      # one (no GL needed).
+      - name: Smoke test (server + client over loopback)
+        working-directory: game
+        run: |
+          set -eo pipefail
+          ENGINE=../engine/dist/jank-engine/jank-engine_run
+
+          # Server (headless, ENet UDP on 7777)
+          "$ENGINE" . server > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 4
+
+          if ! lsof -nP -iUDP:7777 2>/dev/null | grep -q jank-engine; then
+            echo "::error::server failed to bind UDP/7777"
+            cat /tmp/server.log
+            kill "$SERVER_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ server bound UDP/7777"
+
+          # Client connects to loopback (uses Apple OpenGL framework)
+          "$ENGINE" . client > /tmp/client.log 2>&1 &
+          CLIENT_PID=$!
+          sleep 8
+
+          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+            echo "::error::client died before timeout"
+            cat /tmp/client.log
+            kill "$SERVER_PID" 2>/dev/null || true
+            exit 1
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "::error::server died while client was running"
+            cat /tmp/server.log
+            kill "$CLIENT_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ server + client co-ran for 8s"
+
+          kill "$CLIENT_PID" "$SERVER_PID" 2>/dev/null || true
+          wait 2>/dev/null || true
+
+      - name: Upload server / client logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs-macos-arm64
+          path: |
+            /tmp/server.log
+            /tmp/client.log
+          if-no-files-found: ignore
+
+      - name: Upload jank-engine binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: jank-engine-macos-arm64
+          path: engine/dist/jank-engine/
+          retention-days: 14
