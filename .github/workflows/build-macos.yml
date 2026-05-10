@@ -156,6 +156,11 @@ jobs:
             ps -p "$SERVER_PID" -o pid,etime,pcpu,rss,state,command 2>&1 || echo "(process gone)"
             echo "=== /tmp/server.log ==="
             cat /tmp/server.log || echo "(empty / missing)"
+            echo "=== thread stack snapshot (where is it stuck?) ==="
+            # macOS built-in: prints all thread call stacks for the live PID.
+            # 1-second sample is plenty for a process at ~0% CPU; longer just
+            # produces redundant frames. -mayDie: tolerate process death mid-sample.
+            sample "$SERVER_PID" 1 -mayDie 2>&1 | head -120 || echo "(sample failed / process gone)"
             echo "=== ls of bundle ==="
             ls -la ../engine/dist/jank-engine/bin ../engine/dist/jank-engine/lib/jank-engine 2>&1 | head -30
             echo "=== otool -L on the binary ==="
