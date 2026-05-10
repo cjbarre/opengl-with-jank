@@ -108,10 +108,14 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
     bundle_versioned() {
         local src="$1"
         local dest_dir="$2"
-        [[ -e "$src" || -L "$src" ]] || return
+        # Explicit `return 0` for missing matches: bare `return` returns the
+        # last command's exit code (the failed [[ ]] test → 1), and a non-zero
+        # function return aborts the caller under set -e. globs that don't
+        # match (e.g. libc++ on system-Clang Linux) are normal, not errors.
+        [[ -e "$src" || -L "$src" ]] || return 0
         local real
         real="$(readlink -f "$src")"
-        [[ -f "$real" ]] || return
+        [[ -f "$real" ]] || return 0
         local real_name
         real_name="$(basename "$real")"
         cp -f "$real" "$dest_dir/$real_name"
