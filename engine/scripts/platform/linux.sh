@@ -257,15 +257,37 @@ generate_launcher_script() {
     local executable_rel_path="$2"
     local lib_rel_path="$3"
 
-    cat > "$output_path" << 'LAUNCHER_HEADER'
+    cat > "$output_path" <<LAUNCHER
 #!/usr/bin/env bash
-# Auto-generated launcher script for Linux
-DIR="$(cd "$(dirname "$0")" && pwd)"
-LAUNCHER_HEADER
+# Auto-generated launcher script for Linux.
+DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 
-    # Add library path and execute
-    echo "export LD_LIBRARY_PATH=\"\$DIR/$lib_rel_path:\${LD_LIBRARY_PATH:-}\"" >> "$output_path"
-    echo "exec \"\$DIR/$executable_rel_path\" \"\$@\"" >> "$output_path"
+# Bundled native deps + jank runtime libs.
+export LD_LIBRARY_PATH="\$DIR/$lib_rel_path:\${LD_LIBRARY_PATH:-}"
+# Bundled clang (jank's runtime falls back to <resource_dir>/bin/clang++
+# when its baked-in JANK_CLANG_PATH doesn't exist on the consumer's box,
+# which is the normal case for a shipped artifact).
+export PATH="\$DIR/lib/jank/0.1/bin:\$PATH"
+
+# Bundled libstdc++ headers. clang's GCC-toolchain auto-detection only
+# fires when it sees a complete bin+lib/gcc+include layout, which we
+# don't synthesize, so pass them as JIT --include flags instead.
+INCLUDES=()
+CXX_DIR="\$DIR/lib/jank/0.1/include/c++"
+if [[ -d "\$CXX_DIR" ]]; then
+    for v in "\$CXX_DIR"/*/; do
+        v="\${v%/}"
+        [[ -d "\$v" ]] || continue
+        INCLUDES+=(--include "\$v")
+        [[ -d "\$v/backward" ]] && INCLUDES+=(--include "\$v/backward")
+        version="\$(basename "\$v")"
+        triple_v="\$DIR/lib/jank/0.1/include/\$(uname -m)-linux-gnu/c++/\$version"
+        [[ -d "\$triple_v" ]] && INCLUDES+=(--include "\$triple_v")
+    done
+fi
+
+exec "\$DIR/$executable_rel_path" "\${INCLUDES[@]}" "\$@"
+LAUNCHER
 
     chmod +x "$output_path"
 }

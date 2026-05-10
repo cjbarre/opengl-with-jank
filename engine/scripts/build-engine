@@ -105,18 +105,32 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
     # those symlinks but they'd dangle on any other machine. So: resolve each
     # match to its real file, copy under the real (versioned) name, and add
     # a same-dir symlink for any alias the source had.
+    bundle_versioned() {
+        local src="$1"
+        local dest_dir="$2"
+        [[ -e "$src" || -L "$src" ]] || return
+        local real
+        real="$(readlink -f "$src")"
+        [[ -f "$real" ]] || return
+        local real_name
+        real_name="$(basename "$real")"
+        cp -f "$real" "$dest_dir/$real_name"
+        local src_name
+        src_name="$(basename "$src")"
+        if [[ "$src_name" != "$real_name" ]]; then
+            ln -sf "$real_name" "$dest_dir/$src_name"
+        fi
+    }
     for pat in libLLVM libclang-cpp libc++ libunwind libc++abi; do
         for src in "$JANK_LLVM/lib/${pat}".so*; do
-            [[ -e "$src" || -L "$src" ]] || continue
-            real="$(readlink -f "$src")"
-            [[ -f "$real" ]] || continue
-            real_name="$(basename "$real")"
-            cp -f "$real" "$BUNDLE_DIR/$real_name"
-            src_name="$(basename "$src")"
-            if [[ "$src_name" != "$real_name" ]]; then
-                ln -sf "$real_name" "$BUNDLE_DIR/$src_name"
-            fi
+            bundle_versioned "$src" "$BUNDLE_DIR"
         done
+    done
+    # libLLVM's transitive deps that aren't in /usr/lib/llvm-22/. libz3 is a
+    # hard dep of LLVM 22 (used for SMT-based optimization passes); without
+    # it the engine binary fails to start with "libz3.so.4 not found".
+    for src in /usr/lib/x86_64-linux-gnu/libz3.so* /lib/x86_64-linux-gnu/libz3.so*; do
+        bundle_versioned "$src" "$BUNDLE_DIR"
     done
 else
     # macOS
@@ -157,7 +171,13 @@ ln -sf clang-22 "$BUILD_DIR/lib/jank/0.1/bin/clang"
 
 add_rpath "${RPATH_PREFIX}/../../../$OUTPUT" "$BUILD_DIR/lib/jank/0.1/bin/clang-22"
 
-# Clang resource directory + C++ stdlib headers + jank stdlib
+# Clang resource directory + C++ stdlib headers + jank stdlib.
+# The destination must be mkdir'd FIRST: with `cp -R src/22 dest/clang/`
+# where dest/clang/ doesn't exist, cp interprets dest/clang/ as the new
+# name for the copied tree (i.e. dest/clang/include/, no `22/` level).
+# That breaks clang's resource-dir auto-detection at runtime, which
+# expects <bin>/../lib/clang/<MAJOR>/include/.
+mkdir -p "$BUILD_DIR/lib/jank/0.1/lib/clang"
 cp -R "$JANK_LLVM/lib/clang/22" "$BUILD_DIR/lib/jank/0.1/lib/clang/"
 
 # C++ standard library headers — needed at runtime by the JIT for any
@@ -227,6 +247,18 @@ fi
 # ozz-animation headers
 if [[ -d "$LIBS_DIR/ozz-animation/include/ozz" ]]; then
     cp -R "$LIBS_DIR/ozz-animation/include/ozz" "$BUNDLE_INC/"
+fi
+# GLEW headers (Linux only — macOS uses Apple's OpenGL framework directly).
+# The engine's gl_wrappers.h does `#include <GL/glew.h>` and the JIT needs
+# to resolve that on the consumer machine without requiring libglew-dev to
+# be installed there.
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    for cand in /usr/include/GL/glew.h /usr/include/GL/wglew.h /usr/include/GL/glxew.h; do
+        if [[ -f "$cand" ]]; then
+            mkdir -p "$BUNDLE_INC/GL"
+            cp "$cand" "$BUNDLE_INC/GL/"
+        fi
+    done
 fi
 
 # Launcher (does NOT cd, so game paths resolve relative to user's CWD)
