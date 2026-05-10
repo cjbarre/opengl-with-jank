@@ -320,17 +320,15 @@ fi
 if [[ -d "$LIBS_DIR/ozz-animation/include/ozz" ]]; then
     cp -R "$LIBS_DIR/ozz-animation/include/ozz" "$BUNDLE_INC/"
 fi
-# GLEW headers (Linux only — macOS uses Apple's OpenGL framework directly).
-# The engine's gl_wrappers.h does `#include <GL/glew.h>` and the JIT needs
-# to resolve that on the consumer machine without requiring libglew-dev to
-# be installed there.
-if [[ "$PLATFORM_OS" == "linux" ]]; then
-    for cand in /usr/include/GL/glew.h /usr/include/GL/wglew.h /usr/include/GL/glxew.h; do
-        if [[ -f "$cand" ]]; then
-            mkdir -p "$BUNDLE_INC/GL"
-            cp "$cand" "$BUNDLE_INC/GL/"
-        fi
-    done
+# GL headers (Linux only — macOS uses Apple's OpenGL framework directly).
+# The engine's gl_wrappers.h does `#include <GL/glew.h>` which transitively
+# pulls in <GL/glu.h>, <GL/gl.h>, <GL/glext.h>, etc. The JIT needs to find
+# all of them on the consumer machine without requiring libglew-dev,
+# libgl-dev, libglu1-mesa-dev to be installed there. The whole tree is
+# small (<1 MB) so just bundle it wholesale.
+if [[ "$PLATFORM_OS" == "linux" && -d /usr/include/GL ]]; then
+    mkdir -p "$BUNDLE_INC/GL"
+    cp -R /usr/include/GL/. "$BUNDLE_INC/GL/"
 fi
 
 # Launcher (does NOT cd, so game paths resolve relative to user's CWD)
