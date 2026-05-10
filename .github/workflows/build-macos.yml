@@ -131,13 +131,29 @@ jobs:
           set -eo pipefail
           ENGINE=../engine/dist/jank-engine/jank-engine_run
 
-          # Server (headless, ENet UDP on 7777)
+          # Server (headless, ENet UDP on 7777). First-run PCH bootstrap
+          # on macOS can take ~20s, so poll the port instead of a flat sleep.
           "$ENGINE" . server > /tmp/server.log 2>&1 &
           SERVER_PID=$!
-          sleep 4
 
-          if ! lsof -nP -iUDP:7777 2>/dev/null | grep -q jank-engine; then
-            echo "::error::server failed to bind UDP/7777"
+          bound=0
+          for i in $(seq 1 40); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::server process exited before binding UDP/7777"
+              break
+            fi
+            if lsof -nP -iUDP:7777 2>/dev/null | grep -q jank-engine; then
+              bound=1
+              echo "✓ server bound UDP/7777 (after ~$((i*1))s)"
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$bound" -ne 1 ]]; then
+            echo "::error::server failed to bind UDP/7777 within 40s"
+            echo "=== process state ==="
+            ps -p "$SERVER_PID" -o pid,etime,pcpu,rss,state,command 2>&1 || echo "(process gone)"
             echo "=== /tmp/server.log ==="
             cat /tmp/server.log || echo "(empty / missing)"
             echo "=== ls of bundle ==="
@@ -146,12 +162,13 @@ jobs:
             otool -L ../engine/dist/jank-engine/bin/jank-engine 2>&1 | head -30
             echo "=== launcher ==="
             cat ../engine/dist/jank-engine/jank-engine_run
-            echo "=== jank check-health from the bundle ==="
-            ../engine/dist/jank-engine/lib/jank/0.1/bin/clang++ --version 2>&1 || echo "bundled clang failed to run"
+            echo "=== bundled clang ==="
+            ../engine/dist/jank-engine/lib/jank/0.1/bin/clang++ --version 2>&1 || echo "bundled clang failed"
+            echo "=== try running the binary directly with --help (very early exit path) ==="
+            "$ENGINE" 2>&1 | head -20 || echo "(exited non-zero)"
             kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
-          echo "✓ server bound UDP/7777"
 
           # Client connects to loopback (uses Apple OpenGL framework)
           "$ENGINE" . client > /tmp/client.log 2>&1 &
