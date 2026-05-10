@@ -142,7 +142,7 @@ jobs:
               echo "::error::server process exited before binding UDP/7777"
               break
             fi
-            if lsof -nP -iUDP:7777 2>/dev/null | grep -q jank-engine; then
+            if lsof -nP -p "$SERVER_PID" 2>/dev/null | grep -qE 'UDP.*:7777'; then
               bound=1
               echo "✓ server bound UDP/7777 (after ~$((i*1))s)"
               break
