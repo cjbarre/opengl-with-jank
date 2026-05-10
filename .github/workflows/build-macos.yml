@@ -138,7 +138,16 @@ jobs:
 
           if ! lsof -nP -iUDP:7777 2>/dev/null | grep -q jank-engine; then
             echo "::error::server failed to bind UDP/7777"
-            cat /tmp/server.log
+            echo "=== /tmp/server.log ==="
+            cat /tmp/server.log || echo "(empty / missing)"
+            echo "=== ls of bundle ==="
+            ls -la ../engine/dist/jank-engine/bin ../engine/dist/jank-engine/lib/jank-engine 2>&1 | head -30
+            echo "=== otool -L on the binary ==="
+            otool -L ../engine/dist/jank-engine/bin/jank-engine 2>&1 | head -30
+            echo "=== launcher ==="
+            cat ../engine/dist/jank-engine/jank-engine_run
+            echo "=== jank check-health from the bundle ==="
+            ../engine/dist/jank-engine/lib/jank/0.1/bin/clang++ --version 2>&1 || echo "bundled clang failed to run"
             kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
