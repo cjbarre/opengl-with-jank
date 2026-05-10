@@ -229,6 +229,35 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT"
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT"
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
+    # LLVM family. With jank_local_clang=OFF on macOS the binary's NEEDED
+    # entries point at brew's absolute Cellar paths (libLLVM.dylib,
+    # libclang-cpp.dylib, libc++.1.dylib in lib/c++/, libunwind.1.dylib in
+    # lib/unwind/). Rewrite each to @rpath so the dyld lookup hits the
+    # bundled copies in lib/<binary>/. Without this dyld fails before any
+    # program output, smoke shows "::error::server failed to bind UDP/7777"
+    # with an empty server.log.
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "@rpath/libLLVM.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "@rpath/libclang-cpp.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/c++/libc++.1.$LIB_EXT" "@rpath/libc++.1.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/unwind/libunwind.1.$LIB_EXT" "@rpath/libunwind.1.$LIB_EXT"
+    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/c++/libc++abi.1.$LIB_EXT" "@rpath/libc++abi.1.$LIB_EXT"
+
+    # Bundled dylibs themselves can reference brew absolute paths in their
+    # own load commands (libLLVM → libc++, libclang-cpp → libLLVM, etc.).
+    # Walk them and rewrite every absolute brew/Cellar reference to @rpath.
+    for dylib in "$BUNDLE_DIR"/*.dylib; do
+        [[ -f "$dylib" ]] || continue
+        # Set the dylib's own ID to @rpath/<basename> so when something else
+        # links against it via @rpath the load command resolves cleanly.
+        install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" 2>/dev/null || true
+        otool -L "$dylib" | awk 'NR>1{print $1}' | while read -r dep; do
+            case "$dep" in
+                /opt/homebrew/*|/usr/local/Cellar/*|"$JANK_LLVM"/*)
+                    install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib" 2>/dev/null || true
+                    ;;
+            esac
+        done
+    done
 fi
 
 delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
