@@ -118,11 +118,15 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
         [[ -f "$real" ]] || return 0
         local real_name
         real_name="$(basename "$real")"
-        cp -f "$real" "$dest_dir/$real_name"
-        local src_name
-        src_name="$(basename "$src")"
-        if [[ "$src_name" != "$real_name" ]]; then
-            ln -sf "$real_name" "$dest_dir/$src_name"
+        # Skip if we've already bundled this file (the apt deb ships
+        # libLLVM.so → libLLVM.so.1 → libLLVM.so.22.1 as a symlink chain;
+        # all three glob matches resolve to the same real file).
+        # Also: don't create unversioned symlink aliases. The binary's
+        # NEEDED entries reference the versioned soname directly, and
+        # actions/upload-artifact dereferences any symlink in the zip,
+        # turning each alias into a duplicate copy of the (~150 MB) file.
+        if [[ ! -f "$dest_dir/$real_name" ]]; then
+            cp -f "$real" "$dest_dir/$real_name"
         fi
     }
     for pat in libLLVM libclang-cpp libc++ libunwind libc++abi; do
