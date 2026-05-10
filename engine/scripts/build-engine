@@ -286,6 +286,18 @@ fi
 delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
 add_rpath "${RPATH_PREFIX}/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
 
+# Re-sign every macOS Mach-O we modified. Each install_name_tool /
+# add_rpath / delete_rpath call invalidates the ad-hoc signature
+# Apple Clang stamps onto its outputs at link time, and macOS arm64
+# SIGKILLs binaries with broken signatures (exit 137, no useful
+# diagnostic). Without this pass, the CI artifact runs on the build
+# runner — same security context, signature checks deferred — but
+# fails immediately when a user downloads and unzips it elsewhere.
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    find "$BUILD_DIR" -type f \( -name '*.dylib' -o -name 'jank-engine' -o -name 'clang-22' \) \
+      -print0 | xargs -0 codesign --force --sign - 2>/dev/null || true
+fi
+
 # Bundle headers next to the binary so consumer cpp/raw blocks can find
 # glm, GLFW, ozz, engine/foo_impl.h, cgltf.h, etc. without anyone needing
 # to know the build-machine paths. Runtime computes <bin-dir>/../include
