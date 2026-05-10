@@ -119,13 +119,14 @@ jobs:
           ./scripts/build-engine
 
       # ---------------------------------------------------------------------
-      # Smoke test
+      # Smoke test (server only)
       # ---------------------------------------------------------------------
-      # macOS GitHub runners have an active windowserver, so the GLFW client
-      # can create a window without Xvfb. If the client smoke turns out to be
-      # flaky on runners we can drop it; the server smoke is the load-bearing
-      # one (no GL needed).
-      - name: Smoke test (server + client over loopback)
+      # macOS-on-GitHub runners don't expose a usable Cocoa session to
+      # non-interactive jobs — `glfwCreateWindow` returns NULL and the
+      # client exits with "Window creation failed". The server has no
+      # GL/Cocoa dependency and is the meaningful test for "the engine
+      # binary loads, JITs game source, and reaches its main loop."
+      - name: Smoke test (server bind)
         working-directory: game
         run: |
           set -eo pipefail
@@ -175,26 +176,16 @@ jobs:
             exit 1
           fi
 
-          # Client connects to loopback (uses Apple OpenGL framework)
-          "$ENGINE" . client > /tmp/client.log 2>&1 &
-          CLIENT_PID=$!
-          sleep 8
-
-          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-            echo "::error::client died before timeout"
-            cat /tmp/client.log
-            kill "$SERVER_PID" 2>/dev/null || true
-            exit 1
-          fi
+          # Let the server tick for a few seconds, confirm it stays up.
+          sleep 5
           if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            echo "::error::server died while client was running"
+            echo "::error::server died after binding"
             cat /tmp/server.log
-            kill "$CLIENT_PID" 2>/dev/null || true
             exit 1
           fi
-          echo "✓ server + client co-ran for 8s"
+          echo "✓ server stable for ~5s after bind"
 
-          kill "$CLIENT_PID" "$SERVER_PID" 2>/dev/null || true
+          kill "$SERVER_PID" 2>/dev/null || true
           wait 2>/dev/null || true
 
       - name: Upload server / client logs on failure
