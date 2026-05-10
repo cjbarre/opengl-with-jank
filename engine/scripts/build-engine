@@ -242,21 +242,44 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/unwind/libunwind.1.$LIB_EXT" "@rpath/libunwind.1.$LIB_EXT"
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$JANK_LLVM/lib/c++/libc++abi.1.$LIB_EXT" "@rpath/libc++abi.1.$LIB_EXT"
 
-    # Bundled dylibs themselves can reference brew absolute paths in their
-    # own load commands (libLLVM → libc++, libclang-cpp → libLLVM, etc.).
-    # Walk them and rewrite every absolute brew/Cellar reference to @rpath.
-    for dylib in "$BUNDLE_DIR"/*.dylib; do
-        [[ -f "$dylib" ]] || continue
-        # Set the dylib's own ID to @rpath/<basename> so when something else
-        # links against it via @rpath the load command resolves cleanly.
+    # Bundled dylibs themselves reference brew absolute paths in their own
+    # load commands (libLLVM → libz3 / libc++; libclang-cpp → libLLVM; etc.).
+    # Walk them, rewrite each absolute brew/Cellar reference to @rpath, AND
+    # copy any not-yet-bundled dep into the bundle. Repeat until stable
+    # (newly-bundled deps may themselves have brew references).
+    process_macos_dylib_deps() {
+        local dylib="$1"
+        local added_count=0
         install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" 2>/dev/null || true
-        otool -L "$dylib" | awk 'NR>1{print $1}' | while read -r dep; do
+        while IFS= read -r dep; do
             case "$dep" in
                 /opt/homebrew/*|/usr/local/Cellar/*|"$JANK_LLVM"/*)
-                    install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib" 2>/dev/null || true
+                    local dep_name
+                    dep_name="$(basename "$dep")"
+                    if [[ ! -f "$BUNDLE_DIR/$dep_name" && -f "$dep" ]]; then
+                        cp "$dep" "$BUNDLE_DIR/$dep_name"
+                        chmod u+w "$BUNDLE_DIR/$dep_name"
+                        added_count=$((added_count + 1))
+                    fi
+                    install_name_tool -change "$dep" "@rpath/$dep_name" "$dylib" 2>/dev/null || true
                     ;;
             esac
+        done < <(otool -L "$dylib" | awk 'NR>1{print $1}')
+        # Exit 0 if anything was added (so `if process_…; then` enters the body)
+        [[ $added_count -gt 0 ]]
+    }
+
+    # Fixpoint: walk all bundled dylibs, then if any new files were added,
+    # walk again. Cap at 5 iterations as a safety net.
+    for _iter in 1 2 3 4 5; do
+        any_added=0
+        for dylib in "$BUNDLE_DIR"/*.dylib; do
+            [[ -f "$dylib" ]] || continue
+            if process_macos_dylib_deps "$dylib"; then
+                any_added=1
+            fi
         done
+        [[ "$any_added" -eq 0 ]] && break
     done
 fi
 
