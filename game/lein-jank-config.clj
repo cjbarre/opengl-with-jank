@@ -16,10 +16,12 @@
       glfw-lib (if (= platform-os "macos") "glfw.3" "glfw")
       opengl-libs (if (= platform-os "macos") ["OpenGL"] ["GL" "GLEW"])
       optimization-level (some-> (System/getenv "JANK_OPTIMIZATION_LEVEL")
-                                 Integer/parseInt)]
+                                 Integer/parseInt)
+      runtime (keyword (or (System/getenv "JANK_RUNTIME") "static"))]
   {:name (or (System/getenv "JANK_NAME") "sca")
    :target-dir (or (System/getenv "JANK_TARGET_DIR") "target/debug")
    :optimization-level (or optimization-level 0)
+   :runtime runtime
    :include-dirs [(str libs-dir "/glfw/include")
                   "../engine/libs/glm"
                   "../engine/include"

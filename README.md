@@ -114,24 +114,21 @@ Iterate on game source without rebuilding the engine. Requires XCode Command Lin
 
 ### Shipping a game: `bake`
 
-`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` (~365 MB) — engine + a specific game's source, AOT-compiled into one binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories.
+`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` — engine + a specific game's source, AOT-compiled into one static-runtime binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories.
 
 ```
 <game-dir>/dist/<name>/
 ├── bin/<name>               AOT executable (engine + game baked together)
 ├── lib/<name>/              bundled dylibs
-├── lib/jank/0.1/            jank runtime resources
-├── include/                 bundled headers
-├── shim/xcrun               bypasses XCode CLI tools requirement
 ├── models/  textures/       game assets (per :assets in jank-engine.edn)
 └── <name>_run               launcher
 ```
 
-**End users need nothing.** No XCode CLI tools, no jank, no clang. The bundle includes a tiny `xcrun` shim that satisfies jank's startup probe without invoking the system stub that would otherwise prompt to install CLI tools.
+**End users need nothing.** No XCode CLI tools, no jank, no clang, no LLVM runtime. Baked bundles use jank's static runtime, so they cannot JIT loose source or runtime `eval`; all game and engine namespaces must be compiled into the binary.
 
 To distribute: ship the `dist/<name>/` directory; users run `./<name>_run`.
 
-How and why the no-prereq trick works is documented in detail in [engine/docs/bake-distribution.md](engine/docs/bake-distribution.md), including the specific jank-source paths the shim depends on (so future-us can spot if upstream changes break it).
+How and why the no-prereq baked bundle works is documented in [engine/docs/bake-distribution.md](engine/docs/bake-distribution.md).
 
 ## Platform support
 
