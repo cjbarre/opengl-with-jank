@@ -15,7 +15,7 @@ Watch the [demo video on YouTube](https://youtu.be/hVQB7G6YVKQ):
 git clone --recursive <repo-url>
 cd opengl-with-jank/engine
 ./scripts/setup           # build native deps + libengine_assets
-./scripts/build-engine    # build the jank-engine runtime binary
+./scripts/build-engine    # build the jank-engine runtime binary with lein-jank
 
 cd ../game
 ../engine/dist/jank-engine/jank-engine_run . server   # host on port 7777
@@ -80,7 +80,7 @@ Run with `jank-engine_run . <mode>` from inside `game/`.
 
 ## Dependencies
 
-Jank, GLFW, OpenGL 3.3+, GLM (header-only), STB, cgltf, ozz-animation, ENet.
+Jank, Leiningen with lein-jank, GLFW, OpenGL 3.3+, GLM (header-only), STB, cgltf, ozz-animation, ENet.
 
 ## Distribution
 

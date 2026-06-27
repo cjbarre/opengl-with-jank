@@ -32,7 +32,7 @@ jobs:
       - name: Install brew deps
         run: |
           # Skip `brew update` — slowest step, runners stay fairly current.
-          brew install llvm cmake ninja boost openssl@3 zstd doctest
+          brew install llvm cmake ninja boost openssl@3 zstd doctest leiningen
           installed_major=$(/opt/homebrew/opt/llvm/bin/clang --version \
             | head -1 | grep -oE 'version [0-9]+' | awk '{print $2}')
           if [[ "$installed_major" != "22" ]]; then

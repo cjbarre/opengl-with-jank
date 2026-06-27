@@ -24,10 +24,8 @@ LIB_EXT="$(get_lib_extension)"
 BREW_PREFIX="$(get_homebrew_prefix)"
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    OPENGL_LIB_FLAG="-lGL -lGLEW"
     RPATH_PREFIX='$ORIGIN'
 else
-    OPENGL_LIB_FLAG="-lOpenGL"
     RPATH_PREFIX="@executable_path"
 fi
 
@@ -37,7 +35,6 @@ OZZ_PRELOAD_LIBS=(
     "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT"
 )
 
-NAMESPACE="engine.runtime.core"
 OUTPUT="jank-engine"
 # Per-binary dist tree so this doesn't clobber output of ./bin/compile
 BUILD_DIR="$PROJECT_DIR/dist/jank-engine"
@@ -53,44 +50,37 @@ fi
 export LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$LIBS_DIR/opengl/lib:$LIBS_DIR/engine-assets/lib:${LIBRARY_PATH:-}"
 
 cd "$PROJECT_DIR"
-if [[ "$PLATFORM_OS" == "linux" ]]; then
-    GLFW_LIB="-lglfw"
-else
-    GLFW_LIB="-lglfw.3"
-fi
-
-JANK_COMMON_ARGS=(
-  -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include"
-  -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" -L"$LIBS_DIR/engine-assets/lib"
-  $GLFW_LIB
-  -lozz_animation_r -lozz_base_r -lozz_geometry_r
-  -lstb_all
-  -lenet
-  -lcgltf
-  -lengine_assets
-  $OPENGL_LIB_FLAG
-  --module-path $(clojure -Spath)
-  -O3
-  --eagerness eager
-  --runtime dynamic
-)
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
   OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
-  JANK_COMPILE=(env LD_PRELOAD="$OZZ_PRELOAD" jank)
+  LEIN_COMPILE=(env LD_PRELOAD="$OZZ_PRELOAD" lein compile)
 else
   OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
-  JANK_COMPILE=(env DYLD_INSERT_LIBRARIES="$OZZ_PRELOAD" jank)
+  LEIN_JAR="${LEIN_JAR:-}"
+  if [[ -z "$LEIN_JAR" ]] && command -v brew >/dev/null 2>&1; then
+    LEIN_JAR="$(find "$(brew --prefix leiningen)/libexec" -name 'leiningen-*-standalone.jar' | head -1)"
+  fi
+  if [[ -z "$LEIN_JAR" ]]; then
+      echo "ERROR: Leiningen standalone jar not found." >&2
+      echo "       Install Leiningen with Homebrew or set LEIN_JAR." >&2
+      exit 1
+  fi
+  JAVA_BIN="${JAVA_CMD:-$(command -v java)}"
+  LEIN_COMPILE=(env DYLD_INSERT_LIBRARIES="$OZZ_PRELOAD" "$JAVA_BIN"
+    -Dfile.encoding=UTF-8
+    -Dmaven.wagon.http.ssl.easy=false
+    -Dleiningen.original.pwd="$PROJECT_DIR"
+    -Dleiningen.script="$(command -v lein)"
+    -classpath "$LEIN_JAR"
+    clojure.main -m leiningen.core.main compile)
 fi
 
-if ! "${JANK_COMPILE[@]}" "${JANK_COMMON_ARGS[@]}" --target-dir "$BUILD_DIR" --name "$OUTPUT" compile "$NAMESPACE"; then
-  echo "WARN: current jank compile CLI failed; trying legacy -o form..." >&2
-  "${JANK_COMPILE[@]}" "${JANK_COMMON_ARGS[@]}" compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
-fi
+"${LEIN_COMPILE[@]}"
 
 # =============================================================================
 # Bundle for standalone distribution
 # =============================================================================
+chmod -R u+w "$BUILD_DIR" 2>/dev/null || true
 mkdir -p "$BUILD_DIR/bin"
 mkdir -p "$BUILD_DIR/lib/$OUTPUT"
 mkdir -p "$BUILD_DIR/lib/jank/0.1/bin"

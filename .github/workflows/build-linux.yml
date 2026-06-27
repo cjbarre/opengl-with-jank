@@ -46,6 +46,7 @@ jobs:
             llvm-${CLANG_VERSION}-dev libclang-${CLANG_VERSION}-dev \
             libclang-cpp${CLANG_VERSION}-dev libpolly-${CLANG_VERSION}-dev \
             cmake ninja-build pkg-config build-essential \
+            leiningen \
             libssl-dev libboost-all-dev zlib1g-dev libffi-dev libxml2-dev \
             libtinfo-dev libzstd-dev \
             gcc-14 g++-14 libstdc++-14-dev \
