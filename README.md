@@ -2,6 +2,8 @@
 
 A jank+OpenGL game engine and a game built on it ("Strafe Combat Academy"). Written in [Jank](https://jank-lang.org/) (a Clojure-on-LLVM dialect with C++ interop) with networked multiplayer, skeletal animation, and Quake-style movement.
 
+[![Strafe Combat Academy demo](https://img.youtube.com/vi/hVQB7G6YVKQ/maxresdefault.jpg)](https://youtu.be/hVQB7G6YVKQ)
+
 > Requires Jank built from latest `main`.
 
 ## Quick start
