@@ -344,12 +344,12 @@
   (let [current-frame (cpp/glfwGetTime)
         delta-time (math/*-> :float delta-time)
         last-frame (math/*-> :float last-frame)
-        raw-dt (cpp/- current-frame last-frame)
-        clamped-dt (cond
-                     (cpp/< raw-dt (cpp/float 0.0)) (cpp/float 0.0)
-                     (cpp/> raw-dt (cpp/float 0.05)) (cpp/float 0.016)
-                     :else raw-dt)]
-    (cpp/= delta-time clamped-dt)
+        raw-dt (cpp/- current-frame last-frame)]
+    (cpp/= delta-time raw-dt)
+    (when (cpp/< raw-dt (cpp/float 0.0))
+      (cpp/= delta-time (cpp/float 0.0)))
+    (when (cpp/> raw-dt (cpp/float 0.05))
+      (cpp/= delta-time (cpp/float 0.016)))
     (cpp/= last-frame current-frame)))
 
 ;; =============================================================================
