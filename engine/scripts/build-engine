@@ -31,6 +31,12 @@ else
     RPATH_PREFIX="@executable_path"
 fi
 
+OZZ_PRELOAD_LIBS=(
+    "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT"
+    "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT"
+    "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT"
+)
+
 NAMESPACE="engine.runtime.core"
 OUTPUT="jank-engine"
 # Per-binary dist tree so this doesn't clobber output of ./bin/compile
@@ -64,12 +70,22 @@ JANK_COMMON_ARGS=(
   -lengine_assets
   $OPENGL_LIB_FLAG
   --module-path $(clojure -Spath)
+  -O3
+  --eagerness eager
   --runtime dynamic
 )
 
-if ! jank "${JANK_COMMON_ARGS[@]}" --target-dir "$BUILD_DIR" --name "$OUTPUT" compile "$NAMESPACE"; then
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+  OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
+  JANK_COMPILE=(env LD_PRELOAD="$OZZ_PRELOAD" jank)
+else
+  OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
+  JANK_COMPILE=(env DYLD_INSERT_LIBRARIES="$OZZ_PRELOAD" jank)
+fi
+
+if ! "${JANK_COMPILE[@]}" "${JANK_COMMON_ARGS[@]}" --target-dir "$BUILD_DIR" --name "$OUTPUT" compile "$NAMESPACE"; then
   echo "WARN: current jank compile CLI failed; trying legacy -o form..." >&2
-  jank "${JANK_COMMON_ARGS[@]}" compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
+  "${JANK_COMPILE[@]}" "${JANK_COMMON_ARGS[@]}" compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
 fi
 
 # =============================================================================
