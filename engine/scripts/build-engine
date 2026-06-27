@@ -29,12 +29,6 @@ else
     RPATH_PREFIX="@executable_path"
 fi
 
-OZZ_PRELOAD_LIBS=(
-    "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT"
-    "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT"
-    "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT"
-)
-
 OUTPUT="jank-engine"
 # Per-binary dist tree so this doesn't clobber output of ./bin/compile
 BUILD_DIR="$PROJECT_DIR/dist/jank-engine"
@@ -47,35 +41,7 @@ if [[ ! -f "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" ]]; then
     exit 1
 fi
 
-export LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$LIBS_DIR/opengl/lib:$LIBS_DIR/engine-assets/lib:${LIBRARY_PATH:-}"
-
-cd "$PROJECT_DIR"
-
-if [[ "$PLATFORM_OS" == "linux" ]]; then
-  OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
-  LEIN_COMPILE=(env LD_PRELOAD="$OZZ_PRELOAD" lein compile)
-else
-  OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
-  LEIN_JAR="${LEIN_JAR:-}"
-  if [[ -z "$LEIN_JAR" ]] && command -v brew >/dev/null 2>&1; then
-    LEIN_JAR="$(find "$(brew --prefix leiningen)/libexec" -name 'leiningen-*-standalone.jar' | head -1)"
-  fi
-  if [[ -z "$LEIN_JAR" ]]; then
-      echo "ERROR: Leiningen standalone jar not found." >&2
-      echo "       Install Leiningen with Homebrew or set LEIN_JAR." >&2
-      exit 1
-  fi
-  JAVA_BIN="${JAVA_CMD:-$(command -v java)}"
-  LEIN_COMPILE=(env DYLD_INSERT_LIBRARIES="$OZZ_PRELOAD" "$JAVA_BIN"
-    -Dfile.encoding=UTF-8
-    -Dmaven.wagon.http.ssl.easy=false
-    -Dleiningen.original.pwd="$PROJECT_DIR"
-    -Dleiningen.script="$(command -v lein)"
-    -classpath "$LEIN_JAR"
-    clojure.main -m leiningen.core.main compile)
-fi
-
-"${LEIN_COMPILE[@]}"
+run_lein_compile_with_ozz_preload "$PROJECT_DIR"
 
 # =============================================================================
 # Bundle for standalone distribution

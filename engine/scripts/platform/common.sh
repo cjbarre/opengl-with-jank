@@ -171,6 +171,48 @@ load_jank_paths() {
     export JANK_DIR JANK_LLVM
 }
 
+# Run `lein compile` with the ozz runtime libraries preloaded. Several engine
+# namespaces bind ozz symbols during compilation; without the preload jank can
+# fail to load those generated namespaces before the final executable is linked.
+run_lein_compile_with_ozz_preload() {
+    local project_dir="$1"
+    shift
+
+    local libs_dir lib_ext ozz_preload
+    libs_dir="$(get_libs_dir)"
+    lib_ext="$(get_lib_extension)"
+    local ozz_preload_libs=(
+        "$libs_dir/ozz-animation/lib/libozz_animation_r.$lib_ext"
+        "$libs_dir/ozz-animation/lib/libozz_base_r.$lib_ext"
+        "$libs_dir/ozz-animation/lib/libozz_geometry_r.$lib_ext"
+    )
+
+    if [[ "$PLATFORM_OS" == "linux" ]]; then
+        ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
+        (cd "$project_dir" && env "$@" LD_PRELOAD="$ozz_preload" lein compile)
+    else
+        ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
+        local lein_jar java_bin
+        lein_jar="${LEIN_JAR:-}"
+        if [[ -z "$lein_jar" ]] && command -v brew >/dev/null 2>&1; then
+            lein_jar="$(find "$(brew --prefix leiningen)/libexec" -name 'leiningen-*-standalone.jar' | head -1)"
+        fi
+        if [[ -z "$lein_jar" ]]; then
+            echo "ERROR: Leiningen standalone jar not found." >&2
+            echo "       Install Leiningen with Homebrew or set LEIN_JAR." >&2
+            exit 1
+        fi
+        java_bin="${JAVA_CMD:-$(command -v java)}"
+        (cd "$project_dir" && env "$@" DYLD_INSERT_LIBRARIES="$ozz_preload" "$java_bin" \
+            -Dfile.encoding=UTF-8 \
+            -Dmaven.wagon.http.ssl.easy=false \
+            -Dleiningen.original.pwd="$project_dir" \
+            -Dleiningen.script="$(command -v lein)" \
+            -classpath "$lein_jar" \
+            clojure.main -m leiningen.core.main compile)
+    fi
+}
+
 # Print platform info (useful for debugging)
 print_platform_info() {
     echo "Platform: $PLATFORM"
