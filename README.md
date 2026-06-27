@@ -54,6 +54,17 @@ The two trees are independent — no symlinks between them. The engine knows not
 
 `jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace plus all native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, libc++, clang JIT). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, and `(require ...)` the `:entry` namespace — JIT-compiled by the embedded clang. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
 
+## How lein-jank fits in
+
+lein-jank owns the jank compilation step; the repo's shell scripts still own native dependency setup, dylib bundling, rpaths, asset copying, launchers, and final distribution layout.
+
+- `engine/scripts/build-engine` runs `lein compile` from `engine/`, using `engine/project.clj` and `engine/lein-jank-config.clj`, then packages the reusable `jank-engine_run` runtime.
+- `engine/scripts/bake` runs `lein compile` from the game directory, using the game's `project.clj` and `lein-jank-config.clj`, then packages a standalone baked game bundle.
+- The lein-jank config files define source paths, `:main`, platform-specific include/library/link flags, output names, target directories, and optimization levels. The reusable engine binary also sets `:runtime :dynamic` so it can JIT-load loose game source at runtime.
+- During bake, the script overrides the game config with `JANK_NAME`, `JANK_TARGET_DIR`, and `JANK_OPTIMIZATION_LEVEL` so `jank-engine.edn` remains the source of bundle name/assets while lein-jank still performs the compile.
+
+On macOS, the build scripts invoke Leiningen through the standalone jar with Java instead of the `lein` shell wrapper. This preserves `DYLD_INSERT_LIBRARIES`, which is needed to preload the ozz libraries while jank compiles namespaces that bind animation symbols.
+
 ## Modes
 
 The bundled game (`game/`) dispatches on its first arg:
