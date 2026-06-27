@@ -103,7 +103,7 @@ Iterate on game source without rebuilding the engine. Requires XCode Command Lin
 
 ### Shipping a game: `bake`
 
-`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` (~365 MB) — engine + a specific game's source, AOT-compiled into one binary:
+`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` (~365 MB) — engine + a specific game's source, AOT-compiled into one binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories.
 
 ```
 <game-dir>/dist/<name>/

@@ -16,7 +16,8 @@ set -euo pipefail
 # Usage:
 #   bake <game-dir> [-o <output-dir>]
 #
-# <game-dir> must contain a jank-engine.edn with at least:
+# <game-dir> must contain project.clj configured for lein-jank and a
+# jank-engine.edn with at least:
 #   {:entry my-game.core
 #    :paths ["src"]
 #    :includes ["include"]      ; optional - dirs of *_impl.h
@@ -69,9 +70,16 @@ fi
 
 GAME_DIR="$(cd "$GAME_DIR" && pwd)"
 EDN="$GAME_DIR/jank-engine.edn"
+PROJECT_CLJ="$GAME_DIR/project.clj"
 
 if [[ ! -f "$EDN" ]]; then
     echo "ERROR: $EDN not found" >&2
+    exit 1
+fi
+
+if [[ ! -f "$PROJECT_CLJ" ]]; then
+    echo "ERROR: $PROJECT_CLJ not found" >&2
+    echo "       bake now compiles through lein-jank; add a game project.clj with :main matching jank-engine.edn." >&2
     exit 1
 fi
 
@@ -116,14 +124,16 @@ LIB_EXT="$(get_lib_extension)"
 BREW_PREFIX="$(get_homebrew_prefix)"
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    OPENGL_LIB_FLAG="-lGL"
     RPATH_PREFIX='$ORIGIN'
-    GLFW_LIB="-lglfw"
 else
-    OPENGL_LIB_FLAG="-lOpenGL"
     RPATH_PREFIX="@executable_path"
-    GLFW_LIB="-lglfw.3"
 fi
+
+OZZ_PRELOAD_LIBS=(
+    "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT"
+    "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT"
+    "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT"
+)
 
 if [[ ! -f "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" ]]; then
     echo "ERROR: libengine_assets.$LIB_EXT not found." >&2
@@ -142,33 +152,44 @@ mkdir -p "$OUT_DIR/bin" "$OUT_DIR/lib/$NAME" "$OUT_DIR/lib/jank/0.1/bin" \
          "$OUT_DIR/lib/jank/0.1/include" "$OUT_DIR/lib/jank/0.1/lib" \
          "$OUT_DIR/lib/jank/0.1/src" "$OUT_DIR/shim" "$OUT_DIR/include"
 
-# Build the module-path: engine src + each :paths entry, resolved against game dir
-MODULE_PATH="$PROJECT_DIR/src"
-for p in "${PATHS[@]}"; do
-    MODULE_PATH="$MODULE_PATH:$GAME_DIR/$p"
-done
-
-# Build -I flags: engine includes + game :includes
-INCLUDE_FLAGS=( -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" \
-                -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" )
-for inc in "${INCLUDES[@]}"; do
-    INCLUDE_FLAGS+=( -I"$GAME_DIR/$inc" )
-done
-
 export LIBRARY_PATH="$LIBS_DIR/glfw/lib:$LIBS_DIR/ozz-animation/lib:$LIBS_DIR/stb/lib:$LIBS_DIR/enet/lib:$LIBS_DIR/cgltf/lib:$LIBS_DIR/opengl/lib:$LIBS_DIR/engine-assets/lib:${LIBRARY_PATH:-}"
 
-cd "$PROJECT_DIR"
-jank \
-  "${INCLUDE_FLAGS[@]}" \
-  -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" \
-  -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" \
-  -L"$LIBS_DIR/engine-assets/lib" \
-  $GLFW_LIB \
-  -lozz_animation_r -lozz_base_r -lozz_geometry_r \
-  -lstb_all -lenet -lcgltf -lengine_assets \
-  $OPENGL_LIB_FLAG \
-  --module-path "$MODULE_PATH" \
-  compile "$ENTRY" -o "$OUT_DIR/bin/$NAME"
+cd "$GAME_DIR"
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
+    LEIN_COMPILE=(env
+        LD_PRELOAD="$OZZ_PRELOAD"
+        JANK_NAME="$NAME"
+        JANK_TARGET_DIR="$OUT_DIR/bin"
+        JANK_OPTIMIZATION_LEVEL=3
+        lein compile)
+else
+    OZZ_PRELOAD="$(IFS=:; echo "${OZZ_PRELOAD_LIBS[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
+    LEIN_JAR="${LEIN_JAR:-}"
+    if [[ -z "$LEIN_JAR" ]] && command -v brew >/dev/null 2>&1; then
+        LEIN_JAR="$(find "$(brew --prefix leiningen)/libexec" -name 'leiningen-*-standalone.jar' | head -1)"
+    fi
+    if [[ -z "$LEIN_JAR" ]]; then
+        echo "ERROR: Leiningen standalone jar not found." >&2
+        echo "       Install Leiningen with Homebrew or set LEIN_JAR." >&2
+        exit 1
+    fi
+    JAVA_BIN="${JAVA_CMD:-$(command -v java)}"
+    LEIN_COMPILE=(env
+        DYLD_INSERT_LIBRARIES="$OZZ_PRELOAD"
+        JANK_NAME="$NAME"
+        JANK_TARGET_DIR="$OUT_DIR/bin"
+        JANK_OPTIMIZATION_LEVEL=3
+        "$JAVA_BIN"
+        -Dfile.encoding=UTF-8
+        -Dmaven.wagon.http.ssl.easy=false
+        -Dleiningen.original.pwd="$GAME_DIR"
+        -Dleiningen.script="$(command -v lein)"
+        -classpath "$LEIN_JAR"
+        clojure.main -m leiningen.core.main compile)
+fi
+
+"${LEIN_COMPILE[@]}"
 
 # =============================================================================
 # Bundle native deps (mirrors build-engine)
@@ -202,9 +223,17 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
 else
     cp "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "$BUNDLE_DIR/"
     cp "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "$BUNDLE_DIR/"
-    cp "$JANK_LLVM/lib/libc++.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++.1.$LIB_EXT"
-    cp "$JANK_LLVM/lib/libunwind.1.0.$LIB_EXT" "$BUNDLE_DIR/libunwind.1.$LIB_EXT"
-    cp "$JANK_LLVM/lib/libc++abi.1.0.$LIB_EXT" "$BUNDLE_DIR/libc++abi.1.$LIB_EXT"
+    for pair in "libc++:lib/c++" "libc++abi:lib/c++" "libunwind:lib/unwind"; do
+        libname="${pair%%:*}"
+        subdir="${pair##*:}"
+        for src in "$JANK_LLVM/lib/${libname}.1.0.$LIB_EXT" \
+                   "$JANK_LLVM/${subdir}/${libname}.1.0.$LIB_EXT"; do
+            if [[ -f "$src" ]]; then
+                cp "$src" "$BUNDLE_DIR/${libname}.1.$LIB_EXT"
+                break
+            fi
+        done
+    done
 fi
 
 if [[ "$PLATFORM_OS" == "macos" ]]; then
@@ -223,6 +252,7 @@ ln -sf clang-22 "$OUT_DIR/lib/jank/0.1/bin/clang++"
 ln -sf clang-22 "$OUT_DIR/lib/jank/0.1/bin/clang"
 add_rpath "${RPATH_PREFIX}/../../../$NAME" "$OUT_DIR/lib/jank/0.1/bin/clang-22"
 
+mkdir -p "$OUT_DIR/lib/jank/0.1/lib/clang"
 cp -R "$JANK_LLVM/lib/clang/22" "$OUT_DIR/lib/jank/0.1/lib/clang/"
 cp -R "$JANK_LLVM/include/c++" "$OUT_DIR/lib/jank/0.1/include/"
 cp -R "$JANK_DIR/include/cpp/jank" "$OUT_DIR/lib/jank/0.1/include/"

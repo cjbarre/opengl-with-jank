@@ -14,10 +14,12 @@
       platform-os (first (clojure.string/split platform #"-"))
       libs-dir (str "../engine/libs/" platform)
       glfw-lib (if (= platform-os "macos") "glfw.3" "glfw")
-      opengl-libs (if (= platform-os "macos") ["OpenGL"] ["GL" "GLEW"])]
-  {:name "sca"
-   :target-dir "target/debug"
-   :optimization-level 0
+      opengl-libs (if (= platform-os "macos") ["OpenGL"] ["GL" "GLEW"])
+      optimization-level (some-> (System/getenv "JANK_OPTIMIZATION_LEVEL")
+                                 Integer/parseInt)]
+  {:name (or (System/getenv "JANK_NAME") "sca")
+   :target-dir (or (System/getenv "JANK_TARGET_DIR") "target/debug")
+   :optimization-level (or optimization-level 0)
    :include-dirs [(str libs-dir "/glfw/include")
                   "../engine/libs/glm"
                   "../engine/include"

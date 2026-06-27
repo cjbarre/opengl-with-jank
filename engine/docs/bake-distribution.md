@@ -32,6 +32,10 @@ If `bake` ever breaks for non-obvious reasons, start here.
 The two are independent — neither needs the other at runtime. Devs use the
 first while iterating; shipping uses the second.
 
+`bake` compiles through the game directory's lein-jank `project.clj`. The
+game's `jank-engine.edn` is still used for bundle metadata: output name,
+asset directories, and defensive include directories.
+
 The split exists because they have opposite optimization targets:
 
 | Goal | jank-engine | bake |
