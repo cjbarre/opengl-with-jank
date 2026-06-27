@@ -15,6 +15,7 @@ cd opengl-with-jank/engine
 cd ../game
 ../engine/dist/jank-engine/jank-engine_run . server   # host on port 7777
 ../engine/dist/jank-engine/jank-engine_run . client   # join (in another terminal)
+../engine/dist/jank-engine/jank-engine_run . editor   # open the course editor
 
 # To produce a self-contained game bundle for shipping:
 cd ../engine

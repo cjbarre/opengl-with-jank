@@ -47,7 +47,7 @@
               (if (>= i n)
                 out
                 (let [current (get winding i)
-                      next-pt (get winding (mod (inc i) n))
+                      next-pt (get winding (int (mod (inc i) n)))
                       ;; Signed distance from clip plane
                       d-current (- (m/v3-dot clip-normal current) clip-dist)
                       d-next (- (m/v3-dot clip-normal next-pt) clip-dist)

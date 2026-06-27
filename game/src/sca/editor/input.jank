@@ -19,7 +19,7 @@
                 (>= i (count facings)) 0
                 (= (get facings i) current) i
                 :else (recur (inc i))))
-        next-idx (mod (inc idx) (count facings))]
+        next-idx (int (mod (inc idx) (count facings)))]
     (get facings next-idx)))
 
 (defn- clamp [v lo hi]
@@ -46,7 +46,7 @@
                 (= (get arc-angles i) cur) i
                 :else (recur (inc i))))
         n (count arc-angles)]
-    (get arc-angles (mod (+ idx dir) n))))
+    (get arc-angles (int (mod (+ idx dir) n)))))
 
 (defn- adjust-piece-param
   "Adjust the signature parameter for a piece type based on dir (-1 or +1)
@@ -94,7 +94,7 @@
         ;; Adjusted: yaw 0 -> looking -X, yaw 90 -> looking -Z
         ;; Forward direction based on yaw quadrant
         sector (int (/ (+ y 45.0) 90.0))]
-    (case (mod sector 4)
+    (case (int (mod sector 4))
       0 {:fwd [1 0]  :right [0 1]}    ;; looking +X
       1 {:fwd [0 1]  :right [-1 0]}   ;; looking +Z
       2 {:fwd [-1 0] :right [0 -1]}   ;; looking -X
