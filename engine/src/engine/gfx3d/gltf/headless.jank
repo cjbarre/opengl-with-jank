@@ -71,6 +71,22 @@
                    (cpp/cgltf_accessor_read_index accessor (cpp/cgltf_size i))))
            (range count))}))
 
+(defn parse-primitive
+  [primitive-box]
+  (let [primitive (cpp/unbox (:* cgltf_primitive) primitive-box)
+        attributes-box (cpp/box (cpp/.-attributes primitive))
+        attribute-data (reduce
+                        (fn [acc k]
+                          (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
+                                attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                            (if-let [result (parse-attribute attribute)]
+                              (merge acc result)
+                              acc)))
+                        {}
+                        (range (cpp/.-attributes_count primitive)))
+        indices-data (parse-indices primitive-box)]
+    (merge attribute-data indices-data)))
+
 (defn parse-mesh [mesh]
   (let [mesh (cpp/unbox (:* cgltf_mesh) mesh)
         primitives-box (cpp/box (cpp/.-primitives mesh))]
@@ -79,19 +95,8 @@
      (vec
       (for [j (range (cpp/.-primitives_count mesh))
             :let [primitives     (cpp/unbox (:* cgltf_primitive) primitives-box)
-                  primitive      (cpp/aget primitives (cpp/int j))
-                  attributes-box (cpp/box (cpp/.-attributes primitive))]]
-        (let [attribute-data (reduce
-                              (fn [acc k]
-                                (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
-                                      attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
-                                  (if-let [result (parse-attribute attribute)]
-                                    (merge acc result)
-                                    acc)))
-                              {}
-                              (range (cpp/.-attributes_count primitive)))
-              indices-data (parse-indices (cpp/box (cpp/& primitive)))]
-          (merge attribute-data indices-data))))}))
+                  primitive      (cpp/box (cpp/& (cpp/aget primitives (cpp/int j))))]]
+        (parse-primitive primitive)))}))
 
 
 

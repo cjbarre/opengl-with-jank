@@ -119,13 +119,18 @@
         bg-end (+ center-angle half-arc)
 
         ;; Velocity direction on the arc (relative to view)
-        screen-vel-angle (+ center-angle rel-vel-angle)]
+        screen-vel-angle (+ center-angle rel-vel-angle)
+        begin-2d (:begin-2d gfx2d)
+        end-2d (:end-2d gfx2d)
+        set-color (:set-color gfx2d)
+        render-arc-outline (:render-arc-outline gfx2d)
+        render-line (:render-line gfx2d)]
 
-    ((:begin-2d gfx2d) screen-width screen-height)
+    (begin-2d screen-width screen-height)
 
     ;; Draw background arc
-    ((:set-color gfx2d) color-background)
-    ((:render-arc-outline gfx2d) cx cy radius bg-start bg-end segs arc-thick)
+    (set-color color-background)
+    (render-arc-outline cx cy radius bg-start bg-end segs arc-thick)
 
     ;; Draw acceleration zones - FIXED on screen
     ;; Green zones show where velocity should be for acceleration
@@ -140,24 +145,24 @@
             right-zone-end (+ center-angle optimal-angle)]
 
         ;; Left zone
-        ((:set-color gfx2d) color-accel-zone)
-        ((:render-arc-outline gfx2d) cx cy radius left-zone-start left-zone-end (/ segs 4) arc-thick)
+        (set-color color-accel-zone)
+        (render-arc-outline cx cy radius left-zone-start left-zone-end (/ segs 4) arc-thick)
 
         ;; Right zone
-        ((:render-arc-outline gfx2d) cx cy radius right-zone-start right-zone-end (/ segs 4) arc-thick)
+        (render-arc-outline cx cy radius right-zone-start right-zone-end (/ segs 4) arc-thick)
 
         ;; Optimal angle markers
-        ((:set-color gfx2d) color-optimal)
+        (set-color color-optimal)
         (let [opt-left (- center-angle optimal-angle)
               opt-right (+ center-angle optimal-angle)
               marker-len 15.0]
-          ((:render-line gfx2d)
+          (render-line
            (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-left))))
            (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-left))))
            (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-left))))
            (+ cy (* (+ radius marker-len) (cpp/sin (cpp/float opt-left))))
            line-thick)
-          ((:render-line gfx2d)
+          (render-line
            (+ cx (* (- radius 5) (cpp/cos (cpp/float opt-right))))
            (+ cy (* (- radius 5) (cpp/sin (cpp/float opt-right))))
            (+ cx (* (+ radius marker-len) (cpp/cos (cpp/float opt-right))))
@@ -165,23 +170,23 @@
            line-thick))))
 
     ;; Draw velocity direction line (where you're moving relative to view)
-    ((:set-color gfx2d) color-velocity)
-    ((:render-line gfx2d)
+    (set-color color-velocity)
+    (render-line
      cx cy
      (+ cx (* (+ radius 20) (cpp/cos (cpp/float screen-vel-angle))))
      (+ cy (* (+ radius 20) (cpp/sin (cpp/float screen-vel-angle))))
      (+ line-thick 1.0))
 
     ;; Draw center marker (where you're looking - always points up)
-    ((:set-color gfx2d) color-view)
-    ((:render-line gfx2d)
+    (set-color color-view)
+    (render-line
      (+ cx (* (- radius 5) (cpp/cos (cpp/float center-angle))))
      (+ cy (* (- radius 5) (cpp/sin (cpp/float center-angle))))
      (+ cx (* (+ radius 10) (cpp/cos (cpp/float center-angle))))
      (+ cy (* (+ radius 10) (cpp/sin (cpp/float center-angle))))
      line-thick)
 
-    ((:end-2d gfx2d))
+    (end-2d)
 
     ;; Render speed text below the arc (scaled to feel like Quake ups)
     (let [display-speed (* speed 50.0)  ;; Scale factor: 8.0 max -> 400 ups

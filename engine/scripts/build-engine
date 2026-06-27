@@ -53,18 +53,24 @@ else
     GLFW_LIB="-lglfw.3"
 fi
 
-jank \
-  -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include" \
-  -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" -L"$LIBS_DIR/engine-assets/lib" \
-  $GLFW_LIB \
-  -lozz_animation_r -lozz_base_r -lozz_geometry_r \
-  -lstb_all \
-  -lenet \
-  -lcgltf \
-  -lengine_assets \
-  $OPENGL_LIB_FLAG \
-  --module-path $(clojure -Spath) \
-  compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
+JANK_COMMON_ARGS=(
+  -I"$LIBS_DIR/glfw/include" -I"$PROJECT_DIR/libs/glm" -I"$PROJECT_DIR/include" -I"$LIBS_DIR/ozz-animation/include"
+  -L"$LIBS_DIR/glfw/lib" -L"$LIBS_DIR/ozz-animation/lib" -L"$LIBS_DIR/stb/lib" -L"$LIBS_DIR/enet/lib" -L"$LIBS_DIR/cgltf/lib" -L"$LIBS_DIR/opengl/lib" -L"$LIBS_DIR/engine-assets/lib"
+  $GLFW_LIB
+  -lozz_animation_r -lozz_base_r -lozz_geometry_r
+  -lstb_all
+  -lenet
+  -lcgltf
+  -lengine_assets
+  $OPENGL_LIB_FLAG
+  --module-path $(clojure -Spath)
+  --runtime dynamic
+)
+
+if ! jank "${JANK_COMMON_ARGS[@]}" --target-dir "$BUILD_DIR" --name "$OUTPUT" compile "$NAMESPACE"; then
+  echo "WARN: current jank compile CLI failed; trying legacy -o form..." >&2
+  jank "${JANK_COMMON_ARGS[@]}" compile "$NAMESPACE" -o "$BUILD_DIR/$OUTPUT"
+fi
 
 # =============================================================================
 # Bundle for standalone distribution

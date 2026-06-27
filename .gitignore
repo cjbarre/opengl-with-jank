@@ -66,5 +66,12 @@ Thumbs.db
 .portal/
 .rebel_readline_history
 
+# Local agent/tool state
+.claude/settings.local.json
+.claude/*.lock
+
+# Local dependency checkouts outside the engine vendor tree
+/libs/
+
 # Build archives
 *.tar.gz

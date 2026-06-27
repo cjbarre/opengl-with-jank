@@ -14,7 +14,8 @@
             [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
-            [engine.gfx3d.gltf.interface :as gltf]
+            [engine.gfx3d.gltf.interface :as gltf])
+  (:require
             [engine.gfx3d.collision.interface :as collision]
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
@@ -342,8 +343,13 @@
   [{:keys [delta-time last-frame]}]
   (let [current-frame (cpp/glfwGetTime)
         delta-time (math/*-> :float delta-time)
-        last-frame (math/*-> :float last-frame)]
-    (cpp/= delta-time (cpp/- current-frame last-frame))
+        last-frame (math/*-> :float last-frame)
+        raw-dt (cpp/- current-frame last-frame)
+        clamped-dt (cond
+                     (cpp/< raw-dt (cpp/float 0.0)) (cpp/float 0.0)
+                     (cpp/> raw-dt (cpp/float 0.05)) (cpp/float 0.016)
+                     :else raw-dt)]
+    (cpp/= delta-time clamped-dt)
     (cpp/= last-frame current-frame)))
 
 ;; =============================================================================
@@ -421,7 +427,8 @@
         _ (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                                       (cpp/glm.value_ptr model-m))]
     (when model
-      ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
+      (let [draw (:draw model)]
+        (draw {:shader shader :model/local-matrix-uniform "local"})))))
 
 (defn draw-world
   "Draw the game world."
@@ -468,7 +475,8 @@
             (let [model-m-loc (cpp/wrap_glGetUniformLocation shader "model")
                   _ (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                                         (cpp/glm.value_ptr (cpp/identity_matrix)))]
-              ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"})))
+              (let [draw (:draw level-model)]
+                (draw {:shader shader :model/local-matrix-uniform "local"}))))
 
         ;; Switch to line shader for player skeleton rendering
         _ (cpp/wrap_glUseProgram line-shader)

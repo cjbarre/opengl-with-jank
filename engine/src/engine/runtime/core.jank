@@ -14,7 +14,8 @@
             [engine.gfx3d.animation.interface]
             [engine.gfx3d.animation.mesh]
             [engine.gfx3d.collision.interface]
-            [engine.gfx3d.geometry.interface]
+            [engine.gfx3d.geometry.interface])
+  (:require
             [engine.gfx3d.gltf.interface]
             [engine.gfx3d.gltf.headless]
             [engine.gfx3d.lines.interface]
@@ -22,7 +23,8 @@
             [engine.gl.interface]
             [engine.io.interface]
             [engine.math.interface]
-            [engine.networking.interface]
+            [engine.networking.interface])
+  (:require
             [engine.networking.protocol]
             [engine.resources.interface]
             [engine.shaders.interface]))

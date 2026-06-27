@@ -83,7 +83,11 @@
             physics-state (shared/entity->physics-state entity)
             ;; Convert command to input
             input (shared/command->input command)
-            delta-time (get command :delta-time 0.016)
+            command-dt (get command :delta-time 0.016)
+            delta-time (cond
+                         (< command-dt 0.0) 0.0
+                         (> command-dt 0.05) 0.016
+                         :else command-dt)
             ;; Run physics
             new-physics (shared/simulate-physics physics-state input delta-time collision-mesh)
             ;; Update entity

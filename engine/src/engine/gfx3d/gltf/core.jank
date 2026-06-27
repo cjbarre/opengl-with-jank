@@ -116,7 +116,40 @@
                                                     :wrap-s (cpp/.-wrap_s sampler)
                                                     :wrap-t (cpp/.-wrap_t sampler)}}}})))}))))
 
-(defn parse-mesh [mesh]
+(defn parse-render-primitive
+  [primitive-box]
+  (let [primitive (cpp/unbox (:* cgltf_primitive) primitive-box)
+        attributes-box (cpp/box (cpp/.-attributes primitive))
+        attribute-data (reduce
+                        (fn [acc k]
+                          (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
+                                attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                            (if-let [result (parse-attribute attribute)]
+                              (merge acc result)
+                              acc)))
+                        {}
+                        (range (cpp/.-attributes_count primitive)))
+        indices-data (parse-indices primitive-box)
+        material-data (parse-material primitive-box)]
+    (merge attribute-data indices-data material-data)))
+
+(defn parse-collision-primitive
+  [primitive-box]
+  (let [primitive (cpp/unbox (:* cgltf_primitive) primitive-box)
+        attributes-box (cpp/box (cpp/.-attributes primitive))
+        attribute-data (reduce
+                        (fn [acc k]
+                          (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
+                                attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
+                            (if-let [result (parse-attribute attribute)]
+                              (merge acc result)
+                              acc)))
+                        {}
+                        (range (cpp/.-attributes_count primitive)))
+        indices-data (parse-indices primitive-box)]
+    (merge attribute-data indices-data)))
+
+(defn parse-mesh [mesh collision-only?]
   (let [mesh (cpp/unbox (:* cgltf_mesh) mesh)
         primitives-box (cpp/box (cpp/.-primitives mesh))]
     {:name (str (cpp/.-name mesh))
@@ -124,20 +157,10 @@
      (vec
       (for [j (range (cpp/.-primitives_count mesh))
             :let [primitives     (cpp/unbox (:* cgltf_primitive) primitives-box)
-                  primitive      (cpp/aget primitives (cpp/int j))
-                  attributes-box (cpp/box (cpp/.-attributes primitive))]]
-        (let [attribute-data (reduce
-                              (fn [acc k]
-                                (let [attributes (cpp/unbox (:* cgltf_attribute) attributes-box)
-                                      attribute  (cpp/box (cpp/& (cpp/aget attributes (cpp/int k))))]
-                                  (if-let [result (parse-attribute attribute)]
-                                    (merge acc result)
-                                    acc)))
-                              {}
-                              (range (cpp/.-attributes_count primitive)))
-              indices-data (parse-indices (cpp/box (cpp/& primitive)))
-              material-data (parse-material (cpp/box (cpp/& primitive)))]
-          (merge attribute-data indices-data material-data))))}))
+                  primitive      (cpp/box (cpp/& (cpp/aget primitives (cpp/int j))))]]
+        (if collision-only?
+          (parse-collision-primitive primitive)
+          (parse-render-primitive primitive))))}))
 
 
 
@@ -146,31 +169,32 @@
   (clet [node (cpp/unbox (:* cgltf_node) node)
          :when (cpp/> (cpp/.-children_count node) (cpp/int 0))
          :error (throw (ex-info "Parsing node children not implemented" {}))
-         mesh (cpp/box (cpp/.-mesh node))
          node-name (str (cpp/.-name node))
          is-collision (cpp/egltf.node_is_colonly node)]
-        (cond-> {:name node-name
-                 :mesh (parse-mesh mesh)
-                 :collision-only (cpp/!= cpp/false is-collision)}
-          (cpp/!= cpp/false (cpp/.-has_translation node))
-          (assoc :translation
-                 (let [translation (cpp/egltf.get_node_translation node)]
-                   [(cpp/aget translation (cpp/int 0))
-                    (cpp/aget translation (cpp/int 1))
-                    (cpp/aget translation (cpp/int 2))]))
+        (let [collision-only? (cpp/!= cpp/false is-collision)
+              mesh (cpp/box (cpp/.-mesh node))]
+          (cond-> {:name node-name
+                   :mesh (parse-mesh mesh collision-only?)
+                   :collision-only collision-only?}
+            (cpp/!= cpp/false (cpp/.-has_translation node))
+            (assoc :translation
+                   (let [translation (cpp/egltf.get_node_translation node)]
+                     [(cpp/aget translation (cpp/int 0))
+                      (cpp/aget translation (cpp/int 1))
+                      (cpp/aget translation (cpp/int 2))]))
 
-          (cpp/!= cpp/false (cpp/.-has_scale node))
-          (assoc :scale
-                 (let [scale (cpp/egltf.get_node_scale node)]
-                   [(cpp/aget scale (cpp/int 0))
-                    (cpp/aget scale (cpp/int 1))
-                    (cpp/aget scale (cpp/int 2))]))
+            (cpp/!= cpp/false (cpp/.-has_scale node))
+            (assoc :scale
+                   (let [scale (cpp/egltf.get_node_scale node)]
+                     [(cpp/aget scale (cpp/int 0))
+                      (cpp/aget scale (cpp/int 1))
+                      (cpp/aget scale (cpp/int 2))]))
 
-          (cpp/!= cpp/false (cpp/.-has_rotation node))
-          (assoc :rotation (throw (ex-info "Node rotation not implemeted" {})))
+            (cpp/!= cpp/false (cpp/.-has_rotation node))
+            (assoc :rotation (throw (ex-info "Node rotation not implemeted" {})))
 
-          (cpp/!= cpp/false (cpp/.-has_matrix node))
-          (assoc :matrix (throw (ex-info "Node matrix not implemeted" {}))))))
+            (cpp/!= cpp/false (cpp/.-has_matrix node))
+            (assoc :matrix (throw (ex-info "Node matrix not implemeted" {})))))))
 
 (defn parse-scene
   [scene]
@@ -200,9 +224,6 @@
                 :let [scenes (cpp/unbox (:* cgltf_scene) scenes)
                       scene (cpp/box (cpp/& (cpp/aget scenes (cpp/int scene-i))))]]
             (parse-scene scene)))}))
-
-
-
 ;; Using centralized GL constants from engine.gl.constants
 
 (defn load
@@ -336,7 +357,8 @@
     {:draw
      (fn draw-model [context]
        (doseq [pi primitive-instances]
-         ((:draw pi) context)))
+         (let [draw (:draw pi)]
+           (draw context))))
      :collision
      (vec (for [scene (:scenes model)
                 node (:nodes scene)

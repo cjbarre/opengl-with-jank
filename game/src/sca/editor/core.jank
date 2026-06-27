@@ -8,7 +8,8 @@
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gc.interface :as gc]
             [engine.gl.constants :as gl]
-            [engine.events.interface :as es]
+            [engine.events.interface :as es])
+  (:require
             [sca.camera :as camera]
             [sca.physics :as shared]
             [sca.client :as client]
