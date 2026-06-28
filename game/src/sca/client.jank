@@ -11,7 +11,6 @@
             [sca.networking.prediction :as pred]
             [sca.physics :as shared]
             [sca.camera :as camera]
-            [engine.io.interface :as io]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
             [engine.gfx3d.gltf.interface :as gltf])
@@ -20,6 +19,7 @@
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.animation.interface :as anim]
+            [engine.gfx3d.lines.interface :as lines]
             [engine.gc.interface :as gc]
             [sca.animation :as player]
             [sca.strafehelper.interface :as strafehelper]
@@ -39,8 +39,7 @@
 ;; Shared animation types header for AOT
 (cpp/raw "#include \"animation_types.h\"")
 (cpp/raw "#include \"gl_utils.h\"")
-
-;; Line rendering helpers for skeleton visualization (in sca/client_impl.h)
+(cpp/raw "#include \"engine/lines_impl.h\"")
 
 ;; C++ helper for identity bones (in sca/client_impl.h)
 
@@ -189,11 +188,11 @@
           verts-box (:vertices skeleton-lines)
           verts-ptr (cpp/.data (cpp/unbox (:* (std.vector float)) verts-box))
           ;; Update VBO with line vertices
-          _ (cpp/eclient.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
+          _ (cpp/elines.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
           ;; Draw lines
-          _ (cpp/wrap_glBindVertexArray line-vao)
-          _ (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/* (cpp/int line-count) (cpp/int 2)))
-          _ (cpp/wrap_glBindVertexArray (cpp/int 0))]
+          _ (lines/bind-line-vao {:vao line-vao})
+          _ (lines/draw-lines line-count)
+          _ (lines/unbind-line-vao)]
       nil)))
 
 (defn update-player-animation
@@ -726,9 +725,9 @@
 
          ;; Line shader for skeleton rendering (with geometry shader for thick lines)
          line-shader (shaders/line)
-         line-vbo-ptr (cpp/new cpp/GLuint)
-         line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
-         line-vbo (cpp/* line-vbo-ptr)
+         line-data (lines/create-line-vao {:max-lines 128})
+         line-vao (:vao line-data)
+         line-vbo (:vbo line-data)
 
          text-shader (shaders/text)
          _ (text/font 24.0 text-shader)

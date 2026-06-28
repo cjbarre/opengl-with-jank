@@ -30,44 +30,6 @@ inline void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     glViewport(0, 0, width, height);
 }
 
-inline GLuint compile_shader_inline(GLenum type, const char* source) {
-    GLuint shader = glCreateShader(type);
-    glShaderSource(shader, 1, &source, nullptr);
-    glCompileShader(shader);
-    return shader;
-}
-
-inline GLuint create_line_shader(const char* vs, const char* fs) {
-    GLuint vert = compile_shader_inline(GL_VERTEX_SHADER, vs);
-    GLuint frag = compile_shader_inline(GL_FRAGMENT_SHADER, fs);
-    GLuint prog = glCreateProgram();
-    glAttachShader(prog, vert);
-    glAttachShader(prog, frag);
-    glLinkProgram(prog);
-    glDeleteShader(vert);
-    glDeleteShader(frag);
-    return prog;
-}
-
-inline GLuint create_line_vao(GLuint* vbo_out) {
-    GLuint vao, vbo;
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glBindVertexArray(vao);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, 128 * 6 * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
-    *vbo_out = vbo;
-    return vao;
-}
-
-inline void update_line_vbo(GLuint vbo, float* vertices, int line_count) {
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, line_count * 6 * sizeof(float), vertices);
-}
-
 inline bool starts_with(const char* str, const char* prefix) {
     return strncmp(str, prefix, strlen(prefix)) == 0;
 }

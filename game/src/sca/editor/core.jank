@@ -6,9 +6,9 @@
             [engine.math.interface :as math]
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
+            [engine.gfx3d.lines.interface :as lines]
             [engine.gc.interface :as gc]
-            [engine.gl.constants :as gl]
-            [engine.events.interface :as es])
+            [engine.gl.constants :as gl])
   (:require
             [sca.camera :as camera]
             [sca.physics :as shared]
@@ -25,6 +25,7 @@
           #include <glm/gtc/type_ptr.hpp>")
 (cpp/raw "#include <math.h>")
 (cpp/raw "#include \"gl_utils.h\"")
+(cpp/raw "#include \"engine/lines_impl.h\"")
 
 ;; ============================================================================
 ;; Window setup
@@ -220,9 +221,9 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
      (cpp/wrap_glGetUniformLocation line-shader "model")
      (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr (cpp/identity_matrix)))
     (cpp/upload_cursor_lines line-vbo x1 y1 z1 x2 y2 z2)
-    (cpp/wrap_glBindVertexArray line-vao)
-    (cpp/wrap_glDrawArrays gl/GL_LINES (cpp/int 0) (cpp/int 24))
-    (cpp/wrap_glBindVertexArray (cpp/int 0))))
+    (lines/bind-line-vao {:vao line-vao})
+    (lines/draw-lines 12)
+    (lines/unbind-line-vao)))
 
 (defn- piece-param-summary
   "Build a string showing the active piece-specific parameter."
@@ -586,9 +587,9 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
            (cpp/wrap_glGetUniformLocation shader "uBaseColorTex") (cpp/int 0))
 
         line-shader (shaders/line)
-        line-vbo-ptr (cpp/new cpp/GLuint)
-        line-vao (cpp/eclient.create_line_vao line-vbo-ptr)
-        line-vbo (cpp/* line-vbo-ptr)
+        line-data (lines/create-line-vao {:max-lines 128})
+        line-vao (:vao line-data)
+        line-vbo (:vbo line-data)
 
         ;; Text rendering
         text-shader (shaders/text)

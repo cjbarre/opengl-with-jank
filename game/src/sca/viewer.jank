@@ -4,6 +4,7 @@
   (:require [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
             [engine.gfx3d.animation.interface :as anim]
+            [engine.gfx3d.lines.interface :as lines]
             [engine.gfx2d.text.interface :as text]
             [engine.io.interface :as io]
             [engine.gl.constants :as gl]))
@@ -19,30 +20,12 @@
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>
           #include \"gl_utils.h\"")
+(cpp/raw "#include \"engine/lines_impl.h\"")
 
 (cpp/raw "#include \"animation_types.h\"")
 
-;; pskel functions (framebuffer_size_callback, compile_shader_inline, create_line_shader,
-;; create_line_vao, update_line_vbo, starts_with, print_bone_lines) in sca/viewer_impl.h
-
-;; Simple line shader for skeleton visualization
-(def line-vertex-shader
-  "#version 330 core
-   layout (location = 0) in vec3 aPos;
-   uniform mat4 model;
-   uniform mat4 view;
-   uniform mat4 projection;
-   void main() {
-       gl_Position = projection * view * model * vec4(aPos, 1.0);
-   }")
-
-(def line-fragment-shader
-  "#version 330 core
-   out vec4 FragColor;
-   uniform vec3 lineColor;
-   void main() {
-       FragColor = vec4(lineColor, 1.0);
-   }")
+;; pskel functions (framebuffer_size_callback, starts_with, print_bone_lines)
+;; in sca/viewer_impl.h.
 
 (defn setup-window
   [{:keys [width height name]}]
@@ -441,7 +424,7 @@
             (swap! state assoc :lines-printed true))
 
         ;; Update VBO
-        _ (cpp/pskel.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
+        _ (cpp/elines.update_line_vbo line-vbo verts-ptr (cpp/int line-count))
 
         ;; Setup matrices
         model (cpp/glm.mat4 (cpp/float 1.0))
@@ -463,11 +446,13 @@
                                            1 gl/GL_FALSE (cpp/glm.value_ptr view))
         _ (cpp/wrap_glUniformMatrix4fv (cpp/wrap_glGetUniformLocation line-shader "projection")
                                            1 gl/GL_FALSE (cpp/glm.value_ptr projection))
+        _ (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
         _ (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 1.0 0.5)
+        _ (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.4 1.0 0.8)
 
-        _ (cpp/wrap_glBindVertexArray line-vao)
-        _ (cpp/wrap_glDrawArrays gl/GL_LINES 0 (cpp/* (cpp/int line-count) (cpp/int 2)))
-        _ (cpp/wrap_glBindVertexArray 0)]
+        _ (lines/bind-line-vao {:vao line-vao})
+        _ (lines/draw-lines line-count)
+        _ (lines/unbind-line-vao)]
 
     ;; Render HUD
     (when (seq animations)
@@ -504,10 +489,10 @@
         window (setup-window {:width 1280 :height 720 :name "Player Skeleton Viewer"})
 
         ;; Create shaders
-        line-shader (cpp/pskel.create_line_shader line-vertex-shader line-fragment-shader)
-        line-vbo-ptr (cpp/new cpp/GLuint)
-        line-vao (cpp/pskel.create_line_vao line-vbo-ptr)
-        line-vbo (cpp/* line-vbo-ptr)
+        line-shader (shaders/line)
+        line-data (lines/create-line-vao {:max-lines 128})
+        line-vao (:vao line-data)
+        line-vbo (:vbo line-data)
 
         ;; Load text shader
         text-shader (shaders/text)
