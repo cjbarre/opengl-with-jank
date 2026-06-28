@@ -15,8 +15,16 @@
  :paths ["src"]
  :includes ["include"]             ; sca's *_impl.h (engine third-party headers
                                    ; are auto-registered by the binary itself)
- ;; Dev runtime default: :preload :all, which eagerly requires all .jank
- ;; namespaces under :paths and realizes deferred defn bodies before -main to
- ;; avoid first-use JIT stutter.
+ ;; Dev runtime preloads namespaces and realizes deferred defn bodies before
+ ;; -main to avoid first-use JIT stutter. Visual modes warm all source; the
+ ;; headless server warms only server-path code so smoke tests bind quickly.
  ;; Set :preload false for entry-only loading while debugging startup.
+ :preload {"client" :all
+           "editor" :all
+           "viewer" :all
+           "server" [sca.server
+                     sca.physics
+                     sca.networking.snapshot]
+           "net-test" [sca.tests.net]
+           :default :all}
  :assets ["models" "textures"]}    ; dirs copied into the baked bundle

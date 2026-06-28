@@ -10,11 +10,7 @@
      editor                   — course designer
      viewer                   — animation viewer
      net-test {server|client} — networking smoke test"
-  (:require [sca.client :as client]
-            [sca.server :as server]
-            [sca.editor.core :as editor]
-            [sca.viewer :as viewer]
-            [sca.tests.net :as net-test]))
+  )
 
 (defn- print-usage []
   (println "usage: jank-engine . <mode> [args...]")
@@ -29,16 +25,23 @@
   ([] (-main "client"))
   ([mode]
    (cond
-     (= mode "client")   (client/run-client)
-     (= mode "server")   (server/run-server)
-     (= mode "editor")   (editor/-main)
-     (= mode "viewer")   (viewer/-main)
-     (= mode "net-test") (net-test/-main)
+     (= mode "client")   (do (require 'sca.client)
+                              ((deref (resolve 'sca.client/run-client))))
+     (= mode "server")   (do (require 'sca.server)
+                              ((deref (resolve 'sca.server/run-server))))
+     (= mode "editor")   (do (require 'sca.editor.core)
+                              ((deref (resolve 'sca.editor.core/-main))))
+     (= mode "viewer")   (do (require 'sca.viewer)
+                              ((deref (resolve 'sca.viewer/-main))))
+     (= mode "net-test") (do (require 'sca.tests.net)
+                              ((deref (resolve 'sca.tests.net/-main))))
      :else (do (println "Unknown mode:" mode)
                (print-usage))))
   ([mode arg]
    (cond
-     (= mode "client")   (client/run-client arg)
-     (= mode "net-test") (net-test/-main arg)
+     (= mode "client")   (do (require 'sca.client)
+                              ((deref (resolve 'sca.client/run-client)) arg))
+     (= mode "net-test") (do (require 'sca.tests.net)
+                              ((deref (resolve 'sca.tests.net/-main)) arg))
      :else (do (println "Unknown mode:" mode)
                (print-usage)))))

@@ -174,7 +174,7 @@ static int runtime_realize_deferred_functions(char const *ns_name)
   (println "    {:entry      my-game.core   ; entry namespace")
   (println "     :paths      [\"src\"]        ; module-loader paths (relative to game-dir)")
   (println "     :includes   [\"include\"]    ; JIT include paths (relative to game-dir)")
-  (println "     :preload    :all}          ; :all by default, false for entry-only")
+  (println "     :preload    :all}          ; :all/default, false, seq, or mode map")
   (println "     :cwd        \".\"}           ; chdir target relative to game-dir")
   (println "")
   (println "  --include PATH   add an extra JIT include path (repeatable)")
@@ -205,6 +205,10 @@ static int runtime_realize_deferred_functions(char const *ns_name)
       (= "--ns" (first remaining))
       (let [p (second remaining)]
         (if (nil? p) nil (recur includes cwd p (drop 2 remaining))))
+
+      (or (= "--help" (first remaining))
+          (= "-h" (first remaining)))
+      {:help? true}
 
       (nil? (first remaining))
       nil
@@ -282,12 +286,24 @@ static int runtime_realize_deferred_functions(char const *ns_name)
     (or (symbol? value) (string? value) (keyword? value)) [(as-string value)]
     :else (map as-string value)))
 
+(defn- preload-for-mode [preload game-args]
+  (if (map? preload)
+    (let [mode (or (first game-args) "client")]
+      (or (get preload mode)
+          (get preload (keyword mode))
+          (get preload (symbol mode))
+          (get preload :default)
+          (get preload "default")
+          (get preload 'default)
+          :all))
+    preload))
+
 (defn- preload-namespaces [module-name paths preload]
   (let [configured (normalize-preload preload)
         namespaces (if (= false configured)
                      [module-name]
-                     (or configured
-                         (vec (concat [module-name]
+                     (vec (concat [module-name]
+                                  (or configured
                                       (mapcat collect-source-namespaces paths)))))]
     (doseq [ns-name namespaces]
       (require (symbol ns-name)))
@@ -302,7 +318,9 @@ static int runtime_realize_deferred_functions(char const *ns_name)
   (let [parsed (parse-args args)]
     (if (nil? parsed)
       (print-usage)
-      (let [{:keys [cli-includes cli-cwd cli-ns game-dir positional]} parsed
+      (if (:help? parsed)
+        (print-usage)
+        (let [{:keys [cli-includes cli-cwd cli-ns game-dir positional]} parsed
             cfg          (read-config game-dir)
             cfg-entry    (when-let [e (:entry cfg)] (as-string e))
             ;; Decide module-name + game-args.
@@ -326,7 +344,7 @@ static int runtime_realize_deferred_functions(char const *ns_name)
             ;; module paths: config :paths (relative) OR fallback to [game-dir].
             cfg-paths    (mapv #(resolve-rel game-dir %) (or (:paths cfg) []))
             paths        (if (seq cfg-paths) cfg-paths [game-dir])
-            preload      (:preload cfg)]
+            preload      (preload-for-mode (:preload cfg) game-args)]
         (cond
           (nil? module-name)
           (do (println "ERROR: no namespace given on CLI and no :entry in jank-engine.edn")
@@ -361,4 +379,4 @@ static int runtime_realize_deferred_functions(char const *ns_name)
             (let [main-var (resolve (symbol module-name "-main"))]
               (if main-var
                 (apply (deref main-var) game-args)
-                (println "ERROR: no -main in" module-name)))))))))
+                (println "ERROR: no -main in" module-name))))))))))
