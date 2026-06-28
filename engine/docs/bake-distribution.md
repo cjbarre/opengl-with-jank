@@ -10,12 +10,15 @@ There are two separate products:
 
 | Path | Output | Runtime model | Audience |
 |---|---|---|---|
-| `engine/scripts/build-engine` | `engine/dist/jank-engine/` | dynamic runtime; JIT-loads loose game source | development |
+| `engine/scripts/build-engine` | `engine/dist/jank-engine/` | dynamic runtime; uses installed jank to JIT-load loose game source | development |
 | `engine/scripts/bake <game-dir>` | `<game-dir>/dist/<name>/` | static runtime; engine + game AOT'd into one binary | shipping |
 
 The dev engine must stay dynamic because `engine.runtime.core` reads
 `jank-engine.edn`, adds the game's source paths, and `(require ...)`s the game
 entry namespace at runtime. Jank's static runtime cannot read loose modules.
+The dev bundle is intentionally jank-native: it packages the engine binary,
+engine-native dylibs, and C++ headers, but it expects `jank` on `PATH` to
+provide LLVM/clang/JIT resources.
 
 The baked binary uses `JANK_RUNTIME=static`, which lein-jank passes to jank as
 `--runtime static`. Static runtime removes the startup JIT/clang path and lets

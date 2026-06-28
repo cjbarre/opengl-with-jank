@@ -52,7 +52,7 @@ The two trees are independent — no symlinks between them. The engine knows not
 
 ## How it works
 
-`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace plus all native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, libc++, clang JIT). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, and `(require ...)` the `:entry` namespace — JIT-compiled by the embedded clang. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
+`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages the engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, and `(require ...)`s the `:entry` namespace through the developer's installed jank/clang runtime. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
 
 ## How lein-jank fits in
 
@@ -99,18 +99,17 @@ Two paths depending on audience.
 
 ### Dev iteration: `jank-engine_run`
 
-`./scripts/build-engine` produces `engine/dist/jank-engine/` (~324 MB) — a reusable runtime that JIT-loads any game directory:
+`./scripts/build-engine` produces `engine/dist/jank-engine/` — a reusable runtime that JIT-loads any game directory. This is a jank-native developer bundle: it requires a compatible `jank` on `PATH` for LLVM/clang/JIT resources instead of bundling those pieces itself.
 
 ```
 dist/jank-engine/
 ├── bin/jank-engine          executable
-├── lib/jank-engine/         bundled dylibs (incl. libengine_assets)
-├── lib/jank/0.1/            jank runtime: clang, libc++, headers, stdlib
+├── lib/jank-engine/         engine-native dylibs (incl. libengine_assets)
 ├── include/                 third-party headers (glm, GLFW, ozz, engine *_impl.h)
 └── jank-engine_run          launcher
 ```
 
-Iterate on game source without rebuilding the engine. Requires XCode Command Line Tools on the running machine (jank's JIT calls clang).
+Iterate on game source without rebuilding the engine. The launcher checks for `jank` and uses the installed jank environment for dynamic runtime support.
 
 ### Shipping a game: `bake`
 
