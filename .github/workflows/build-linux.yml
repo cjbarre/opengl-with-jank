@@ -147,15 +147,40 @@ jobs:
 
           /tmp/sca-bake/sca_run server > /tmp/baked-server.log 2>&1 &
           SERVER_PID=$!
-          sleep 4
+          cleanup_pid_tree() {
+            local pid="$1"
+            while IFS= read -r child_pid; do
+              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
+            done < <(pgrep -P "$pid" 2>/dev/null || true)
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          cleanup_smoke() {
+            [[ -n "${CLIENT_PID:-}" ]] && cleanup_pid_tree "$CLIENT_PID"
+            [[ -n "${SERVER_PID:-}" ]] && cleanup_pid_tree "$SERVER_PID"
+            [[ -n "${XVFB_PID:-}" ]] && cleanup_pid_tree "$XVFB_PID"
+          }
+          trap cleanup_smoke EXIT
 
-          if ! ss -ulnp 2>/dev/null | grep -q ':7777.*sca'; then
+          bound=0
+          for i in $(seq 1 40); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::baked server exited before binding UDP/7777"
+              break
+            fi
+            if ss -ulnp 2>/dev/null | grep -q ':7777'; then
+              bound=1
+              echo "✓ baked server bound UDP/7777 (after ~$((i*1))s)"
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$bound" -ne 1 ]]; then
             echo "::error::baked server failed to bind UDP/7777"
             cat /tmp/baked-server.log
-            kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
-          echo "✓ baked server bound UDP/7777"
 
           Xvfb :98 -screen 0 1280x720x24 -ac > /tmp/baked-xvfb.log 2>&1 &
           XVFB_PID=$!
@@ -168,19 +193,17 @@ jobs:
           if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
             echo "::error::baked client died before timeout"
             cat /tmp/baked-client.log
-            kill "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
             exit 1
           fi
           if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             echo "::error::baked server died while client was running"
             cat /tmp/baked-server.log
-            kill "$CLIENT_PID" "$XVFB_PID" 2>/dev/null || true
             exit 1
           fi
           echo "✓ baked server + client co-ran for 8s"
 
-          kill "$CLIENT_PID" "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
-          wait 2>/dev/null || true
+          cleanup_smoke
+          trap - EXIT
 
       # ---------------------------------------------------------------------
       # Smoke test: server binds, client renders under Xvfb, both stay up
@@ -194,15 +217,40 @@ jobs:
           # Server (headless, ENet UDP on 7777)
           "$ENGINE" . server > /tmp/server.log 2>&1 &
           SERVER_PID=$!
-          sleep 4
+          cleanup_pid_tree() {
+            local pid="$1"
+            while IFS= read -r child_pid; do
+              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
+            done < <(pgrep -P "$pid" 2>/dev/null || true)
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          cleanup_smoke() {
+            [[ -n "${CLIENT_PID:-}" ]] && cleanup_pid_tree "$CLIENT_PID"
+            [[ -n "${SERVER_PID:-}" ]] && cleanup_pid_tree "$SERVER_PID"
+            [[ -n "${XVFB_PID:-}" ]] && cleanup_pid_tree "$XVFB_PID"
+          }
+          trap cleanup_smoke EXIT
 
-          if ! ss -ulnp 2>/dev/null | grep -q ':7777.*jank-engine'; then
+          bound=0
+          for i in $(seq 1 40); do
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::server exited before binding UDP/7777"
+              break
+            fi
+            if ss -ulnp 2>/dev/null | grep -q ':7777'; then
+              bound=1
+              echo "✓ server bound UDP/7777 (after ~$((i*1))s)"
+              break
+            fi
+            sleep 1
+          done
+
+          if [[ "$bound" -ne 1 ]]; then
             echo "::error::server failed to bind UDP/7777"
             cat /tmp/server.log
-            kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
-          echo "✓ server bound UDP/7777"
 
           # Xvfb for client GL context
           Xvfb :99 -screen 0 1280x720x24 -ac > /tmp/xvfb.log 2>&1 &
@@ -217,20 +265,18 @@ jobs:
           if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
             echo "::error::client died before timeout"
             cat /tmp/client.log
-            kill "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
             exit 1
           fi
           if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             echo "::error::server died while client was running"
             cat /tmp/server.log
-            kill "$CLIENT_PID" "$XVFB_PID" 2>/dev/null || true
             exit 1
           fi
           echo "✓ server + client co-ran for 8s"
 
           # Clean teardown
-          kill "$CLIENT_PID" "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
-          wait 2>/dev/null || true
+          cleanup_smoke
+          trap - EXIT
 
       - name: Upload server / client logs on failure
         if: failure()
