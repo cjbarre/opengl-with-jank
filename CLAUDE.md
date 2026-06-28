@@ -67,7 +67,7 @@ cd engine
 2. Reads `<game-dir>/jank-engine.edn` (`:entry`, `:paths`, `:includes`).
 3. `chdir`s into the game directory so asset paths resolve relative to it.
 4. Adds the game's `:paths` to the jank module loader and its `:includes` to clang.
-5. `(require ...)` the entry namespace and invokes its `-main`.
+5. Eagerly `(require ...)`s game source namespaces under `:paths`, realizes deferred function bodies (default `:preload :all`; set `:preload false` for entry-only dev loading), and invokes the entry namespace's `-main`.
 
 Engine assets (shaders/fonts) are embedded into `libengine_assets.dylib` at engine-build time and registered into jank's static `aot::resource` registry by a top-level form in `engine.resources.core`. Consumers access them through engine helpers (see "Resource registry" below) — the game CWD does **not** need to contain a `shaders/` or `fonts/` directory.
 

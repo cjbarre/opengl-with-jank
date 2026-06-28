@@ -53,7 +53,7 @@ The two trees are independent — no symlinks between them. The engine knows not
 
 ## How it works
 
-`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages the engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, and `(require ...)`s the `:entry` namespace through the developer's installed jank/clang runtime. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
+`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages the engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, eagerly `(require ...)`s loose game source namespaces, and realizes deferred function bodies through the developer's installed jank/clang runtime before invoking `:entry`. This moves dev JIT work to startup instead of the first gameplay frame that touches a code path. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
 
 ## How lein-jank fits in
 

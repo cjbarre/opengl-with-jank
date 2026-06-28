@@ -3,8 +3,8 @@
 
    Bootstrap-requires every engine.* namespace so AOT bakes them all in.
    -main resolves the game's configuration from a jank-engine.edn config
-   file (in the game dir) merged with CLI flags, then JIT-loads the
-   consumer's entry namespace and invokes its -main."
+   file (in the game dir) merged with CLI flags, eagerly JIT-loads the
+   consumer's game source namespaces, and invokes the entry -main."
   (:require [engine.behavior-tree.interface]
             [engine.behavior-tree.protocol]
             [engine.events.interface]
@@ -21,7 +21,7 @@
             [engine.gfx3d.lines.interface]
             [engine.gfx3d.textures.interface]
             [engine.gl.interface]
-            [engine.io.interface]
+            [engine.io.interface :as io]
             [engine.math.interface]
             [engine.networking.interface])
   (:require
@@ -32,6 +32,9 @@
 (cpp/raw "
 #include <jank/runtime/context.hpp>
 #include <jank/runtime/module/loader.hpp>
+#include <jank/runtime/obj/deferred_cpp_function.hpp>
+#include <jank/runtime/obj/symbol.hpp>
+#include <jank/runtime/rtti.hpp>
 #include <CppInterOp/CppInterOp.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -111,6 +114,57 @@ static int runtime_file_exists(char const *path)
   if(stat(path, &s) != 0) { return 0; }
   return S_ISREG(s.st_mode) ? 1 : 0;
 }
+
+static int runtime_ends_with(char const *s, char const *suffix)
+{
+  if(s == nullptr || suffix == nullptr) { return 0; }
+  std::size_t s_len = std::strlen(s);
+  std::size_t suffix_len = std::strlen(suffix);
+  if(s_len < suffix_len) { return 0; }
+  return std::strcmp(s + (s_len - suffix_len), suffix) == 0 ? 1 : 0;
+}
+
+static std::string runtime_namespace_from_file(char const *root, char const *path)
+{
+  std::string root_s{ root ? root : \"\" };
+  std::string path_s{ path ? path : \"\" };
+  std::string rel = path_s;
+  if(!root_s.empty() && rel.rfind(root_s, 0) == 0) {
+    rel = rel.substr(root_s.size());
+    if(!rel.empty() && rel[0] == '/') { rel = rel.substr(1); }
+  }
+  std::string suffix = \".jank\";
+  if(rel.size() >= suffix.size()
+     && rel.compare(rel.size() - suffix.size(), suffix.size(), suffix) == 0) {
+    rel.resize(rel.size() - suffix.size());
+  }
+  for(char &c : rel) {
+    if(c == '/') { c = '.'; }
+    else if(c == '_') { c = '-'; }
+  }
+  return rel;
+}
+
+static int runtime_realize_deferred_functions(char const *ns_name)
+{
+  auto const ns = jank::runtime::__rt_ctx->find_ns(
+    jank::runtime::make_box<jank::runtime::obj::symbol>(ns_name));
+  if(ns.is_nil()) { return 0; }
+
+  int realized = 0;
+  auto const mappings = ns->get_mappings();
+  for(auto const &entry : mappings->data) {
+    auto const var = jank::runtime::try_object<jank::runtime::var>(entry.second);
+    if(var.is_nil()) { continue; }
+
+    auto const root = var->deref();
+    if(root.get_type() != jank::runtime::object_type::deferred_cpp_function) { continue; }
+
+    jank::runtime::expect_object<jank::runtime::obj::deferred_cpp_function>(root)->realize();
+    ++realized;
+  }
+  return realized;
+}
 ")
 
 (defn- print-usage []
@@ -120,6 +174,7 @@ static int runtime_file_exists(char const *path)
   (println "    {:entry      my-game.core   ; entry namespace")
   (println "     :paths      [\"src\"]        ; module-loader paths (relative to game-dir)")
   (println "     :includes   [\"include\"]    ; JIT include paths (relative to game-dir)")
+  (println "     :preload    :all}          ; :all by default, false for entry-only")
   (println "     :cwd        \".\"}           ; chdir target relative to game-dir")
   (println "")
   (println "  --include PATH   add an extra JIT include path (repeatable)")
@@ -188,6 +243,61 @@ static int runtime_file_exists(char const *path)
     (keyword? x) (name x)
     :else (str x)))
 
+(defn- jank-file? [path]
+  (= 1 (cpp/runtime_ends_with path ".jank")))
+
+(defn- namespace-from-file [root path]
+  (str (cpp/runtime_namespace_from_file root path)))
+
+(defn- collect-source-namespaces
+  "Collect namespace names from .jank files below root.
+   This uses the same path convention as jank's module loader:
+   path segments map to namespace segments and underscores map to hyphens."
+  [root]
+  (letfn [(walk [dir]
+            (reduce
+             (fn [acc name]
+               (let [path (str dir "/" name)]
+                 (cond
+                   (= 1 (cpp/runtime_dir_exists path))
+                   (vec (concat acc (walk path)))
+
+                   (jank-file? path)
+                   (conj acc (namespace-from-file root path))
+
+                   :else
+                   acc)))
+             []
+             (io/list-dir {:path dir :strip-extension? false})))]
+    (walk root)))
+
+(defn- normalize-preload
+  "Returns nil for default :all, false for disabled, or a sequence of namespace names."
+  [value]
+  (cond
+    (nil? value) nil
+    (= false value) false
+    (or (= :entry value) (= "entry" value)) false
+    (or (= :all value) (= "all" value)) nil
+    (or (symbol? value) (string? value) (keyword? value)) [(as-string value)]
+    :else (map as-string value)))
+
+(defn- preload-namespaces [module-name paths preload]
+  (let [configured (normalize-preload preload)
+        namespaces (if (= false configured)
+                     [module-name]
+                     (or configured
+                         (vec (concat [module-name]
+                                      (mapcat collect-source-namespaces paths)))))]
+    (doseq [ns-name namespaces]
+      (require (symbol ns-name)))
+    {:namespaces namespaces
+     :realize? (not= false configured)}))
+
+(defn- realize-namespace-functions [namespaces]
+  (doseq [ns-name namespaces]
+    (cpp/runtime_realize_deferred_functions ns-name)))
+
 (defn -main [& args]
   (let [parsed (parse-args args)]
     (if (nil? parsed)
@@ -215,7 +325,8 @@ static int runtime_file_exists(char const *path)
                              game-dir)
             ;; module paths: config :paths (relative) OR fallback to [game-dir].
             cfg-paths    (mapv #(resolve-rel game-dir %) (or (:paths cfg) []))
-            paths        (if (seq cfg-paths) cfg-paths [game-dir])]
+            paths        (if (seq cfg-paths) cfg-paths [game-dir])
+            preload      (:preload cfg)]
         (cond
           (nil? module-name)
           (do (println "ERROR: no namespace given on CLI and no :entry in jank-engine.edn")
@@ -241,8 +352,12 @@ static int runtime_file_exists(char const *path)
             ;; Add all module-loader paths.
             (doseq [p paths]
               (cpp/runtime_add_path p))
-            ;; Require + invoke.
-            (require (symbol module-name))
+            ;; Eagerly load loose game source and realize deferred defn bodies
+            ;; before gameplay, so JIT work happens during startup instead of
+            ;; on first touched codepath.
+            (let [{:keys [namespaces realize?]} (preload-namespaces module-name paths preload)]
+              (when realize?
+                (realize-namespace-functions namespaces)))
             (let [main-var (resolve (symbol module-name "-main"))]
               (if main-var
                 (apply (deref main-var) game-args)
