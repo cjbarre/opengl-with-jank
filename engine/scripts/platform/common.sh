@@ -171,9 +171,11 @@ load_jank_paths() {
     export JANK_DIR JANK_LLVM
 }
 
-# Run `lein compile` with the ozz runtime libraries preloaded. Several engine
-# namespaces bind ozz symbols during compilation; without the preload jank can
-# fail to load those generated namespaces before the final executable is linked.
+# Run `lein compile` with stable compiler flags. Linux still preloads the ozz
+# runtime libraries because some generated namespaces can need those symbols
+# before the final executable is linked. On macOS, injecting arm64 project
+# dylibs into the host Java process is not portable because GitHub's Java can
+# run as arm64e; lein-jank links the libraries through the project config there.
 run_lein_compile_with_ozz_preload() {
     local project_dir="$1"
     shift
@@ -200,7 +202,6 @@ run_lein_compile_with_ozz_preload() {
         ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
         (cd "$project_dir" && env "$@" JANK_EXTRA_FLAGS="$prefix_map_flags" LD_PRELOAD="$ozz_preload" lein compile --no-debug)
     else
-        ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
         local lein_jar java_bin
         lein_jar="${LEIN_JAR:-}"
         if [[ -z "$lein_jar" ]] && command -v brew >/dev/null 2>&1; then
@@ -212,7 +213,7 @@ run_lein_compile_with_ozz_preload() {
             exit 1
         fi
         java_bin="${JAVA_CMD:-$(command -v java)}"
-        (cd "$project_dir" && env "$@" JANK_EXTRA_FLAGS="$prefix_map_flags" DYLD_INSERT_LIBRARIES="$ozz_preload" "$java_bin" \
+        (cd "$project_dir" && env "$@" JANK_EXTRA_FLAGS="$prefix_map_flags" "$java_bin" \
             -Dfile.encoding=UTF-8 \
             -Dmaven.wagon.http.ssl.easy=false \
             -Dleiningen.original.pwd="$project_dir" \
