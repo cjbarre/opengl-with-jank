@@ -7,7 +7,6 @@
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.lines.interface :as lines]
-            [engine.gc.interface :as gc]
             [engine.gl.constants :as gl])
   (:require
             [sca.camera :as camera]

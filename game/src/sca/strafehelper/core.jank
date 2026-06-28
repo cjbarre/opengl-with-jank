@@ -1,6 +1,5 @@
 (ns sca.strafehelper.core
-  (:require [engine.gfx2d.graphics.interface :as gfx2d]
-            [engine.gfx2d.text.interface :as text]))
+  (:require [engine.gfx2d.text.interface :as text]))
 
 ;; C++ math implementation to avoid jank numeric conversion issues
 (cpp/raw "#include <math.h>")

@@ -26,7 +26,7 @@
 
 (cpp/raw "#include \"animation_types.h\"")
 
-;; pskel functions (framebuffer_size_callback, starts_with, print_bone_lines)
+;; pskel functions (framebuffer_size_callback, print_bone_lines)
 ;; in sca/viewer_impl.h.
 
 (defn setup-window

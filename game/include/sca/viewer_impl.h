@@ -30,10 +30,6 @@ inline void framebuffer_size_callback(GLFWwindow* window, int width, int height)
     glViewport(0, 0, width, height);
 }
 
-inline bool starts_with(const char* str, const char* prefix) {
-    return strncmp(str, prefix, strlen(prefix)) == 0;
-}
-
 inline void print_bone_lines(float* vertices, int line_count, int max_print) {
     std::cout << std::endl << "=== BONE LINES BEING RENDERED ===" << std::endl;
     for (int i = 0; i < line_count && i < max_print; ++i) {
