@@ -157,6 +157,14 @@ jobs:
           set -eo pipefail
           /tmp/sca-bake/sca_run server > /tmp/baked-server.log 2>&1 &
           SERVER_PID=$!
+          cleanup_server() {
+            while IFS= read -r child_pid; do
+              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
+            done < <(pgrep -P "$SERVER_PID" 2>/dev/null || true)
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup_server EXIT
 
           bound=0
           for i in $(seq 1 20); do
@@ -174,12 +182,11 @@ jobs:
 
           if [[ "$bound" -ne 1 ]]; then
             cat /tmp/baked-server.log || true
-            kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
 
-          kill "$SERVER_PID" 2>/dev/null || true
-          wait "$SERVER_PID" 2>/dev/null || true
+          cleanup_server
+          trap - EXIT
 
       # ---------------------------------------------------------------------
       # Smoke test (server only)
@@ -199,6 +206,14 @@ jobs:
           # on macOS can take ~20s, so poll the port instead of a flat sleep.
           "$ENGINE" . server > /tmp/server.log 2>&1 &
           SERVER_PID=$!
+          cleanup_server() {
+            while IFS= read -r child_pid; do
+              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
+            done < <(pgrep -P "$SERVER_PID" 2>/dev/null || true)
+            kill "$SERVER_PID" 2>/dev/null || true
+            wait "$SERVER_PID" 2>/dev/null || true
+          }
+          trap cleanup_server EXIT
 
           bound=0
           for i in $(seq 1 40); do
@@ -237,7 +252,6 @@ jobs:
             /opt/homebrew/opt/llvm/bin/clang++ --version 2>&1 || echo "installed clang failed"
             echo "=== try running the binary directly with --help (very early exit path) ==="
             "$ENGINE" 2>&1 | head -20 || echo "(exited non-zero)"
-            kill "$SERVER_PID" 2>/dev/null || true
             exit 1
           fi
 
@@ -250,8 +264,8 @@ jobs:
           fi
           echo "✓ server stable for ~5s after bind"
 
-          kill "$SERVER_PID" 2>/dev/null || true
-          wait 2>/dev/null || true
+          cleanup_server
+          trap - EXIT
 
       - name: Upload server / client logs on failure
         if: failure()
