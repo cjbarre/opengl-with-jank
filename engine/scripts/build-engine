@@ -98,12 +98,13 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
 fi
 
 sanitize_embedded_build_paths "$BUILD_DIR/bin/$OUTPUT" "$PROJECT_DIR"
-if [[ "$PLATFORM_OS" == "macos" ]]; then
-    for dylib in "$BUNDLE_DIR"/*.dylib; do
-        [[ -f "$dylib" ]] || continue
-        sanitize_embedded_build_paths "$dylib" "$PROJECT_DIR"
-    done
-fi
+for native_lib in "$BUNDLE_DIR"/*; do
+    [[ -f "$native_lib" ]] || continue
+    if [[ "$PLATFORM_OS" == "linux" ]]; then
+        fix_lib_install_name "$native_lib"
+    fi
+    sanitize_embedded_build_paths "$native_lib" "$PROJECT_DIR"
+done
 
 if [[ "$PLATFORM_OS" == "macos" ]]; then
     find "$BUILD_DIR" -type f \( -name '*.dylib' -o -name "$OUTPUT" \) \

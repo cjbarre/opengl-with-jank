@@ -211,11 +211,15 @@ done
 add_rpath "${RPATH_PREFIX}/../lib/$NAME" "$OUT_DIR/bin/$NAME"
 
 sanitize_embedded_build_paths "$OUT_DIR/bin/$NAME" "$GAME_DIR" "$OUT_DIR"
+for native_lib in "$BUNDLE_DIR"/*; do
+    [[ -f "$native_lib" ]] || continue
+    if [[ "$PLATFORM_OS" == "linux" ]]; then
+        fix_lib_install_name "$native_lib"
+    fi
+    sanitize_embedded_build_paths "$native_lib" "$GAME_DIR" "$OUT_DIR"
+done
+
 if [[ "$PLATFORM_OS" == "macos" ]]; then
-    for dylib in "$BUNDLE_DIR"/*.dylib; do
-        [[ -f "$dylib" ]] || continue
-        sanitize_embedded_build_paths "$dylib" "$GAME_DIR" "$OUT_DIR"
-    done
     find "$OUT_DIR" -type f \( -name '*.dylib' -o -name "$NAME" \) \
       -print0 | xargs -0 codesign --force --sign - 2>/dev/null || true
 fi

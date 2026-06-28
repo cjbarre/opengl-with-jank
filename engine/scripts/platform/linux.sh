@@ -65,6 +65,7 @@ fix_lib_install_name() {
 
     # Set SONAME to just the filename for clean rpath resolution
     patchelf --set-soname "$lib_name" "$lib_path" 2>/dev/null || true
+    patchelf --remove-rpath "$lib_path" 2>/dev/null || true
 }
 
 add_rpath() {

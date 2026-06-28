@@ -40,6 +40,10 @@ mkdir -p "$LIBS_DIR/ozz-animation/lib"
 cp "src/base/$(format_lib_name ozz_base_r)" "$LIBS_DIR/ozz-animation/lib/"
 cp "src/animation/runtime/$(format_lib_name ozz_animation_r)" "$LIBS_DIR/ozz-animation/lib/"
 cp "src/geometry/runtime/$(format_lib_name ozz_geometry_r)" "$LIBS_DIR/ozz-animation/lib/"
+for ozz_lib in "$LIBS_DIR/ozz-animation/lib/"*."$LIB_EXT"; do
+    [[ -f "$ozz_lib" ]] || continue
+    fix_lib_install_name "$ozz_lib"
+done
 
 # Copy ozz headers (macOS vendors these; Linux/Windows copy from submodule)
 mkdir -p "$LIBS_DIR/ozz-animation/include"
@@ -79,7 +83,9 @@ cat > /tmp/stb_impl.c << 'EOF'
 EOF
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    gcc -shared -fPIC -O2 -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -I"$PROJECT_DIR/include" -lm
+    gcc -shared -fPIC -O2 \
+        -ffile-prefix-map="$PROJECT_DIR=/portable/engine" \
+        -o "$LIBS_DIR/stb/lib/libstb_all.so" /tmp/stb_impl.c -I"$PROJECT_DIR/include" -lm
     fix_lib_install_name "$LIBS_DIR/stb/lib/libstb_all.so"
 else
     clang -dynamiclib -O2 -o "$LIBS_DIR/stb/lib/libstb_all.dylib" /tmp/stb_impl.c \
@@ -94,7 +100,9 @@ cat > /tmp/cgltf_impl.c << 'EOF'
 EOF
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    gcc -shared -fPIC -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.so" /tmp/cgltf_impl.c -I"$PROJECT_DIR/include"
+    gcc -shared -fPIC -O2 \
+        -ffile-prefix-map="$PROJECT_DIR=/portable/engine" \
+        -o "$LIBS_DIR/cgltf/lib/libcgltf.so" /tmp/cgltf_impl.c -I"$PROJECT_DIR/include"
     fix_lib_install_name "$LIBS_DIR/cgltf/lib/libcgltf.so"
 else
     clang -dynamiclib -O2 -o "$LIBS_DIR/cgltf/lib/libcgltf.dylib" /tmp/cgltf_impl.c \
@@ -109,7 +117,9 @@ cat > /tmp/enet_impl.c << 'EOF'
 EOF
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
-    gcc -shared -fPIC -O2 -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -I"$PROJECT_DIR/include"
+    gcc -shared -fPIC -O2 \
+        -ffile-prefix-map="$PROJECT_DIR=/portable/engine" \
+        -o "$LIBS_DIR/enet/lib/libenet.so" /tmp/enet_impl.c -I"$PROJECT_DIR/include"
     fix_lib_install_name "$LIBS_DIR/enet/lib/libenet.so"
 else
     clang -dynamiclib -O2 -o "$LIBS_DIR/enet/lib/libenet.dylib" /tmp/enet_impl.c \
@@ -127,7 +137,7 @@ if [[ "$PLATFORM_OS" == "linux" ]]; then
     cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON \
           -DGLFW_BUILD_EXAMPLES=OFF -DGLFW_BUILD_TESTS=OFF -DGLFW_BUILD_DOCS=OFF \
           -DGLFW_BUILD_WAYLAND=OFF -DGLFW_BUILD_X11=ON
-    cmake --build build -j$(nproc)
+    cmake --build build -j"$(nproc)"
     mkdir -p "$LIBS_DIR/glfw/lib" "$LIBS_DIR/glfw/include"
     cp build/src/libglfw.so.3 "$LIBS_DIR/glfw/lib/"
     ln -sf libglfw.so.3 "$LIBS_DIR/glfw/lib/libglfw.so"
@@ -180,6 +190,7 @@ fi
 
 if [[ "$PLATFORM_OS" == "linux" ]]; then
     g++ -shared -fPIC -O2 \
+        -ffile-prefix-map="$PROJECT_DIR=/portable/engine" \
         -I"$JANK_INCLUDE_DIR" \
         -o "$LIBS_DIR/engine-assets/lib/libengine_assets.so" \
         "$PROJECT_DIR/build/engine_assets.cpp"
