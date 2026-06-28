@@ -1,6 +1,16 @@
 # Build Workflow: LLVM/Clang + Jank for Linux x86_64
 
-Build jank's custom LLVM 22 and jank compiler on native Linux x64 to compile the opengl-with-jank game (server and client distributions).
+Historical/manual notes for building jank and native dependencies on Linux
+x86_64. The current project build path is `engine/scripts/setup`,
+`engine/scripts/build-engine`, and `engine/scripts/bake`; CI exercises those
+scripts on Ubuntu 24.04 and verifies the resulting bundles with
+`engine/scripts/verify-portability`.
+
+For current packaging behavior, see
+[`engine/docs/bake-distribution.md`](bake-distribution.md). The dev engine uses
+an installed `jank`/LLVM/clang runtime for loose-source JIT; baked distributions
+use jank's static runtime and do not require jank, LLVM, clang, or local headers
+on the end-user machine.
 
 > **Important**: The "from-source LLVM" path (Phase 1 below) uses cjbarre's fork
 > of jank with Windows/cross-platform improvements:
@@ -15,11 +25,10 @@ Skips the ~30 min LLVM-from-source build by using LLVM 22 from
 [apt.llvm.org](https://apt.llvm.org/). Verified on Ubuntu 24.04
 (noble), Digital Ocean droplet, 2 vCPU / 4 GB RAM.
 
-> **Pin upstream jank to `d2111a51`** for now. That's the commit
-> immediately preceding the custom-IR merge (#735). Anything later
-> currently has the regressions catalogued in `potential-issues.md`
-> and `potential-issues-2.md`. Revisit once those are all closed
-> upstream.
+> CI resolves upstream `jank-lang/jank` `main` when the workflow runs and keys
+> the jank build cache by that resolved commit SHA. This keeps CI current with
+> upstream while still reusing the expensive build for repeated runs at the same
+> jank revision.
 
 ### What this path does differently
 
@@ -30,12 +39,12 @@ Skips the ~30 min LLVM-from-source build by using LLVM 22 from
 | jank binary size | ~324 MB (bundles LLVM) | ~20 MB (system LLVM) |
 | `jank_local_clang` flag | `ON` | `OFF` |
 | C++ stdlib | libc++ (built into bundled LLVM) | libstdc++ from gcc-14 |
-| Bundled jank fork | `cjbarre/jank @ add-windows` | `jank-lang/jank @ d2111a51` |
-| End-user requirement | None — jank ships its clang | clang-22 must be on the box (for JIT) |
+| Bundled jank fork | `cjbarre/jank @ add-windows` | `jank-lang/jank @ main` |
+| Dev-engine runtime requirement | jank/clang from the local build | installed `jank` + LLVM/clang runtime |
 
-The system-Clang path is what we want for CI runners and short-lived VMs.
-The from-source path is what `bake` produces for shippable end-user
-binaries (no clang on the user's machine).
+The system-Clang path is what CI uses for the dev engine. Shippable baked
+bundles are produced separately by `engine/scripts/bake` with jank's static
+runtime; those end-user bundles do not require clang on the user's machine.
 
 ### Step-by-step
 
@@ -65,9 +74,9 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
   gcc-14 g++-14 libstdc++-14-dev \
   python3
 
-# jank pinned to d2111a51
+# jank from upstream main
 git clone --recursive https://github.com/jank-lang/jank ~/jank
-cd ~/jank && git checkout d2111a51 && git submodule update --init --recursive
+cd ~/jank && git checkout main && git submodule update --init --recursive
 cd compiler+runtime
 export CC=clang-22 CXX=clang++-22
 
@@ -134,16 +143,14 @@ When this becomes a `.github/workflows/*.yml`:
 
 - **Drop the swap step.** `ubuntu-latest` has 16 GB RAM; not needed.
 - **Use `-j 4`** to match the 4 vCPUs on the standard runner.
-- **Cache the jank build directory.** Key on (`d2111a51`, clang-22 deb
-  version, `libstdc++-14-dev` deb version). Cache hit → skip the ~25
-  min jank build entirely; the engine job becomes minutes.
+- **Cache the jank build directory.** Key on (resolved upstream jank SHA,
+  clang-22 deb version, `libstdc++-14-dev` deb version). Cache hit -> skip the
+  ~25 min jank build entirely; the engine job becomes minutes.
 - **Pin the Clang 22 package version** in the cache key so an apt.llvm.org
   bump doesn't silently invalidate everything but also doesn't go
   unnoticed.
-- **`actions/checkout` jank as a separate step** at the pinned SHA,
-  rather than running the `git clone` from this doc. Lets cached
-  artifacts key cleanly on the Action's `hashFiles` of a pinned
-  `jank.sha` file in the engine repo.
+- **Resolve the jank ref before caching** so the cache key can include the
+  actual upstream SHA produced by `git ls-remote`.
 
 ---
 
@@ -595,8 +602,9 @@ export LD_LIBRARY_PATH=$PWD/dist/lib/demo:$LD_LIBRARY_PATH
 ```
 
 ### "Unable to find a suitable Clang 22 binary"
-- Ensure `dist/lib/jank/0.1/bin/clang++` exists
-- Check clang can find its libraries: `ldd dist/lib/jank/0.1/bin/clang-22`
+- Ensure `jank` is installed on `PATH` and `jank check-health` passes.
+- If the dev engine cannot derive the LLVM root from your jank install, set
+  `JANK_LLVM` to the LLVM root used by jank, for example `/usr/lib/llvm-22`.
 
 ### LLVM build fails with OOM
 ```bash

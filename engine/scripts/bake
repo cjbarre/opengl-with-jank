@@ -141,7 +141,7 @@ echo "==========================================================================
 echo "Baking $NAME ($ENTRY) -> $OUT_DIR"
 echo "============================================================================="
 
-rm -rf "$OUT_DIR/bin" "$OUT_DIR/lib" "$OUT_DIR/include" "$OUT_DIR/shim"
+rm -rf "${OUT_DIR:?}/bin" "${OUT_DIR:?}/lib" "${OUT_DIR:?}/include"
 mkdir -p "$OUT_DIR/bin" "$OUT_DIR/lib/$NAME"
 
 run_lein_compile_with_ozz_preload \
@@ -203,7 +203,22 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
 fi
 
 delete_rpath "$JANK_LLVM/bin/../lib" "$OUT_DIR/bin/$NAME"
+delete_rpath "$JANK_LLVM/lib" "$OUT_DIR/bin/$NAME"
+for lib_dir in glfw ozz-animation stb enet cgltf opengl engine-assets; do
+    delete_rpath "$LIBS_DIR/$lib_dir/lib" "$OUT_DIR/bin/$NAME"
+    delete_rpath "../engine/libs/$PLATFORM/$lib_dir/lib" "$OUT_DIR/bin/$NAME"
+done
 add_rpath "${RPATH_PREFIX}/../lib/$NAME" "$OUT_DIR/bin/$NAME"
+
+sanitize_embedded_build_paths "$OUT_DIR/bin/$NAME" "$GAME_DIR" "$OUT_DIR"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    for dylib in "$BUNDLE_DIR"/*.dylib; do
+        [[ -f "$dylib" ]] || continue
+        sanitize_embedded_build_paths "$dylib" "$GAME_DIR" "$OUT_DIR"
+    done
+    find "$OUT_DIR" -type f \( -name '*.dylib' -o -name "$NAME" \) \
+      -print0 | xargs -0 codesign --force --sign - 2>/dev/null || true
+fi
 
 # =============================================================================
 # Bundle game assets
@@ -213,7 +228,7 @@ for asset in "${ASSETS[@]}"; do
         echo "ERROR: invalid asset path in $EDN: $asset" >&2
         exit 1
     fi
-    rm -rf "$OUT_DIR/$asset"
+    rm -rf "${OUT_DIR:?}/$asset"
     if [[ -d "$GAME_DIR/$asset" ]]; then
         cp -R "$GAME_DIR/$asset" "$OUT_DIR/$asset"
     else

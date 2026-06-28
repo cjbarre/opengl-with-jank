@@ -12,11 +12,9 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
-      # Pin jank to the commit immediately preceding the custom-IR merge.
-      # See potential-issues.md / potential-issues-2.md for the regressions
-      # that gate moving past this. Bump along with both files when the
-      # upstream issues are closed.
-      JANK_SHA: d2111a51fe7378a1399508e348ed23f3f888a195
+      # Track jank main, but key the cache by the resolved commit SHA so each
+      # upstream change gets a fresh build.
+      JANK_REF: main
       CLANG_VERSION: "22"
       # Bump CACHE_REV when jank's apt.llvm.org or libstdc++ pins shift
       # underneath us and the cached jank build needs invalidating.
@@ -73,6 +71,17 @@ jobs:
             echo "libzstd=$(dpkg-query -W -f='${Version}' libzstd-dev)"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve jank ref
+        id: jank-ref
+        run: |
+          sha="$(git ls-remote https://github.com/jank-lang/jank "$JANK_REF" | awk '{print $1}')"
+          if [[ -z "$sha" ]]; then
+            echo "::error::unable to resolve jank ref: $JANK_REF"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved jank $JANK_REF -> $sha"
+
       # ---------------------------------------------------------------------
       # Build jank from source (cached)
       # ---------------------------------------------------------------------
@@ -81,14 +90,14 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/jank
-          key: jank-${{ env.JANK_SHA }}-clang-${{ steps.tc.outputs.clang }}-libstdcxx-${{ steps.tc.outputs.libstdcxx }}-${{ env.CACHE_REV }}
+          key: jank-${{ steps.jank-ref.outputs.sha }}-clang-${{ steps.tc.outputs.clang }}-libstdcxx-${{ steps.tc.outputs.libstdcxx }}-${{ env.CACHE_REV }}
 
       - name: Clone & build jank
         if: steps.cache-jank.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/jank-lang/jank ~/jank
           cd ~/jank
-          git checkout "$JANK_SHA"
+          git checkout "${{ steps.jank-ref.outputs.sha }}"
           git submodule update --init --recursive
           cd compiler+runtime
           export CC=clang-${CLANG_VERSION} CXX=clang++-${CLANG_VERSION}
@@ -105,6 +114,10 @@ jobs:
       - name: jank check-health
         run: jank check-health
 
+      - name: Verify portability checker self-test
+        working-directory: engine
+        run: ./scripts/verify-portability --self-test
+
       # ---------------------------------------------------------------------
       # Build the engine
       # ---------------------------------------------------------------------
@@ -115,6 +128,59 @@ jobs:
       - name: Build engine binary
         working-directory: engine
         run: ./scripts/build-engine
+
+      - name: Verify dev engine portability
+        working-directory: engine
+        run: ./scripts/verify-portability dist/jank-engine
+
+      - name: Bake game distribution
+        working-directory: engine
+        run: ./scripts/bake ../game -o /tmp/sca-bake
+
+      - name: Verify baked distribution portability
+        working-directory: engine
+        run: ./scripts/verify-portability /tmp/sca-bake
+
+      - name: Smoke test baked distribution (server + client)
+        run: |
+          set -eo pipefail
+
+          /tmp/sca-bake/sca_run server > /tmp/baked-server.log 2>&1 &
+          SERVER_PID=$!
+          sleep 4
+
+          if ! ss -ulnp 2>/dev/null | grep -q ':7777.*sca'; then
+            echo "::error::baked server failed to bind UDP/7777"
+            cat /tmp/baked-server.log
+            kill "$SERVER_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ baked server bound UDP/7777"
+
+          Xvfb :98 -screen 0 1280x720x24 -ac > /tmp/baked-xvfb.log 2>&1 &
+          XVFB_PID=$!
+          sleep 1
+
+          DISPLAY=:98 /tmp/sca-bake/sca_run client > /tmp/baked-client.log 2>&1 &
+          CLIENT_PID=$!
+          sleep 8
+
+          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+            echo "::error::baked client died before timeout"
+            cat /tmp/baked-client.log
+            kill "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
+            exit 1
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            echo "::error::baked server died while client was running"
+            cat /tmp/baked-server.log
+            kill "$CLIENT_PID" "$XVFB_PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "✓ baked server + client co-ran for 8s"
+
+          kill "$CLIENT_PID" "$SERVER_PID" "$XVFB_PID" 2>/dev/null || true
+          wait 2>/dev/null || true
 
       # ---------------------------------------------------------------------
       # Smoke test: server binds, client renders under Xvfb, both stay up
@@ -175,6 +241,9 @@ jobs:
             /tmp/server.log
             /tmp/client.log
             /tmp/xvfb.log
+            /tmp/baked-server.log
+            /tmp/baked-client.log
+            /tmp/baked-xvfb.log
           if-no-files-found: ignore
 
       - name: Upload jank-engine binary

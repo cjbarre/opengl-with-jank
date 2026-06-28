@@ -174,7 +174,6 @@ create_app_bundle() {
     local bundle_path="$1"
     local app_name="$2"
     local version="${3:-1.0.0}"
-    local bundle_id="${4:-com.example.$app_name}"
 
     # Linux doesn't have .app bundles
     # Create a standard directory structure instead
@@ -262,31 +261,10 @@ generate_launcher_script() {
 # Auto-generated launcher script for Linux.
 DIR="\$(cd "\$(dirname "\$0")" && pwd)"
 
-# Bundled native deps + jank runtime libs.
+# Bundled native deps.
 export LD_LIBRARY_PATH="\$DIR/$lib_rel_path:\${LD_LIBRARY_PATH:-}"
-# Bundled clang (jank's runtime falls back to <resource_dir>/bin/clang++
-# when its baked-in JANK_CLANG_PATH doesn't exist on the consumer's box,
-# which is the normal case for a shipped artifact).
-export PATH="\$DIR/lib/jank/0.1/bin:\$PATH"
 
-# Bundled libstdc++ headers. clang's GCC-toolchain auto-detection only
-# fires when it sees a complete bin+lib/gcc+include layout, which we
-# don't synthesize, so pass them as JIT --include flags instead.
-INCLUDES=()
-CXX_DIR="\$DIR/lib/jank/0.1/include/c++"
-if [[ -d "\$CXX_DIR" ]]; then
-    for v in "\$CXX_DIR"/*/; do
-        v="\${v%/}"
-        [[ -d "\$v" ]] || continue
-        INCLUDES+=(--include "\$v")
-        [[ -d "\$v/backward" ]] && INCLUDES+=(--include "\$v/backward")
-        version="\$(basename "\$v")"
-        triple_v="\$DIR/lib/jank/0.1/include/\$(uname -m)-linux-gnu/c++/\$version"
-        [[ -d "\$triple_v" ]] && INCLUDES+=(--include "\$triple_v")
-    done
-fi
-
-exec "\$DIR/$executable_rel_path" "\${INCLUDES[@]}" "\$@"
+exec "\$DIR/$executable_rel_path" "\$@"
 LAUNCHER
 
     chmod +x "$output_path"
@@ -347,29 +325,13 @@ else
     exit 1
 fi
 
-# Set LD_LIBRARY_PATH for child processes (e.g., clang spawned by jank for JIT)
-# IMPORTANT: Only include app/LLVM libs, NOT glibc libs!
-# Child processes must use system glibc to avoid version conflicts.
+# Set LD_LIBRARY_PATH for child processes. IMPORTANT: Only include app libs,
+# NOT glibc libs. Child processes must use system glibc to avoid version
+# conflicts.
 export LD_LIBRARY_PATH="$LIB_DIR:${LD_LIBRARY_PATH:-}"
 
-# Add jank's bundled clang to PATH so jank can find it for JIT
-export PATH="$LIB_DIR/jank/0.1/bin:$PATH"
-
-# Set C++ include path so clang finds bundled libstdc++ headers (not system headers)
-JANK_INCLUDE="$LIB_DIR/jank/0.1/include"
-# Detect architecture for platform-specific headers
-ARCH=$(uname -m)
-if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
-    ARCH_INCLUDE="$JANK_INCLUDE/aarch64-linux-gnu/c++/14"
-elif [ "$ARCH" = "x86_64" ]; then
-    ARCH_INCLUDE="$JANK_INCLUDE/x86_64-linux-gnu/c++/14"
-else
-    ARCH_INCLUDE=""
-fi
-export CPLUS_INCLUDE_PATH="$JANK_INCLUDE/c++/14:$ARCH_INCLUDE:$JANK_INCLUDE"
-
 # Use the bundled dynamic loader with both lib dirs:
-# - LIB_DIR: app/LLVM libraries
+# - LIB_DIR: app libraries
 # - GLIBC_DIR: bundled glibc (only for main process, not inherited by children)
 exec "$LOADER" --library-path "$LIB_DIR:$GLIBC_DIR" "$BIN" "$@"
 LAUNCHER_EXEC
@@ -381,7 +343,7 @@ LAUNCHER_EXEC
 # This copies glibc, libstdc++, and all transitive dependencies
 #
 # Structure:
-#   lib/         - LLVM and app libraries (exported via LD_LIBRARY_PATH for child processes)
+#   lib/         - app libraries (exported via LD_LIBRARY_PATH for child processes)
 #   lib/glibc/   - Core glibc libraries (only used by bundled loader, NOT in LD_LIBRARY_PATH)
 #
 # This separation is critical: child processes (like clang spawned by jank) must use
@@ -458,20 +420,6 @@ bundle_all_dependencies() {
         fi
     done
 
-    # Copy LLVM libraries if jank is installed
-    if [[ -d "${JANK_LLVM_LIB:-}" ]]; then
-        echo "Copying LLVM libraries..."
-        for lib in "$JANK_LLVM_LIB"/*.so*; do
-            if [[ -f "$lib" ]]; then
-                libname="$(basename "$lib")"
-                if [[ ! -f "$lib_dir/$libname" ]]; then
-                    echo "  Copying: $libname"
-                    cp -L "$lib" "$lib_dir/" 2>/dev/null || true
-                fi
-            fi
-        done
-    fi
-
     # Iteratively copy transitive dependencies (3 passes)
     for pass in 1 2 3; do
         echo "Transitive dependency pass $pass..."
@@ -499,7 +447,7 @@ bundle_all_dependencies() {
     echo "Creating library symlinks..."
     for dir in "$lib_dir" "$glibc_dir"; do
         (
-            cd "$dir"
+            cd "$dir" || return 1
             for lib in *.so.*; do
                 if [[ -f "$lib" ]]; then
                     base="${lib%.so.*}.so"
@@ -514,7 +462,7 @@ bundle_all_dependencies() {
     local lib_count glibc_count
     lib_count="$(find "$lib_dir" -maxdepth 1 -name "*.so*" | wc -l)"
     glibc_count="$(find "$glibc_dir" -name "*.so*" | wc -l)"
-    echo "=== Bundled $lib_count app/LLVM libraries + $glibc_count glibc libraries ==="
+    echo "=== Bundled $lib_count app libraries + $glibc_count glibc libraries ==="
 }
 
 # Create a fully standalone distribution

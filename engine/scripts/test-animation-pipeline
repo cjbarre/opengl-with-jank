@@ -7,45 +7,50 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR/.."
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+GLA_EXTRACT_DIR="${GLA_EXTRACT_DIR:-/tmp/gla-extract}"
+CONVERTER_OUTPUT="${CONVERTER_OUTPUT:-/tmp/converter-output.txt}"
+CONVERTED_ANIM="${CONVERTED_ANIM:-/tmp/BOTH_STAND1.ozz}"
+CONVERTED_SKEL="${CONVERTED_SKEL:-/tmp/humanoid.ozz}"
+cd "$PROJECT_DIR"
 
 echo "=== ANIMATION PIPELINE TEST ==="
 echo ""
 
 # Step 1: Make sure GLA is extracted
-if [ ! -f /tmp/gla-extract/models/players/_humanoid/_humanoid.gla ]; then
+GLA_FILE="$GLA_EXTRACT_DIR/models/players/_humanoid/_humanoid.gla"
+if [ ! -f "$GLA_FILE" ]; then
     echo "Step 1: Extracting GLA file..."
-    echo "NOTE: You need to extract the GLA file from your source to /tmp/gla-extract/"
+    echo "NOTE: You need to extract the GLA file from your source to $GLA_EXTRACT_DIR/"
     exit 1
 fi
 
 # Step 2: Convert with debug output
 echo "Step 2: Converting BOTH_STAND1 with debug..."
-cd /tmp
-./Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/build/gla2ozz \
-    --file="/tmp/gla-extract/models/players/_humanoid/_humanoid.gla" \
-    --config_file=/Users/cam/Documents/code/opengl-with-jank/tools/gla2ozz/test_stand1_only.json 2>&1 \
-    | tee /tmp/converter-output.txt
+"$PROJECT_DIR/tools/gla2ozz/build/gla2ozz" \
+    --file="$GLA_FILE" \
+    --config_file="$PROJECT_DIR/tools/gla2ozz/test_stand1_only.json" 2>&1 \
+    | tee "$CONVERTER_OUTPUT"
 
 # Step 3: Copy converted files
 echo ""
 echo "Step 3: Copying converted files..."
-cp /tmp/BOTH_STAND1.ozz /tmp/humanoid.ozz /Users/cam/Documents/code/opengl-with-jank/models/player/animations/
+cp "$CONVERTED_ANIM" "$CONVERTED_SKEL" "$PROJECT_DIR/models/player/animations/"
 
 # Step 4: Extract key data from converter
 echo ""
 echo "=== CONVERTER OUTPUT ANALYSIS ==="
 echo ""
 echo "--- SKELETON pelvis local rotation ---"
-grep -A5 "SKELETON Joint\[1\]" /tmp/converter-output.txt | grep "OZZ local rot"
+grep -A5 "SKELETON Joint\[1\]" "$CONVERTER_OUTPUT" | grep "OZZ local rot"
 
 echo ""
 echo "--- ANIMATION pelvis local rotation ---"
-grep -A6 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "Computed local rot"
+grep -A6 "ANIMATION Joint\[1\]" "$CONVERTER_OUTPUT" | grep "Computed local rot"
 
 echo ""
 echo "--- ANIMATION pelvis world position ---"
-grep -A2 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "OZZ world pos"
+grep -A2 "ANIMATION Joint\[1\]" "$CONVERTER_OUTPUT" | grep "OZZ world pos"
 
 echo ""
 echo "=== KEY COMPARISON ==="
@@ -56,10 +61,10 @@ echo "Large differences suggest a bug in the conversion."
 echo ""
 
 # Extract the actual values for comparison
-SKEL_ROT=$(grep -A5 "SKELETON Joint\[1\]" /tmp/converter-output.txt | grep "OZZ local rot" | sed 's/.*(\([^)]*\)).*/\1/')
-ANIM_ROT=$(grep -A6 "ANIMATION Joint\[1\]" /tmp/converter-output.txt | grep "Computed local rot" | sed 's/.*(\([^)]*\)).*/\1/')
+SKEL_ROT=$(grep -A5 "SKELETON Joint\[1\]" "$CONVERTER_OUTPUT" | grep "OZZ local rot" | sed 's/.*(\([^)]*\)).*/\1/')
+ANIM_ROT=$(grep -A6 "ANIMATION Joint\[1\]" "$CONVERTER_OUTPUT" | grep "Computed local rot" | sed 's/.*(\([^)]*\)).*/\1/')
 
 echo "Skeleton pelvis OZZ rot: ($SKEL_ROT)"
 echo "Animation pelvis OZZ rot: ($ANIM_ROT)"
 echo ""
-echo "Full converter output saved to: /tmp/converter-output.txt"
+echo "Full converter output saved to: $CONVERTER_OUTPUT"

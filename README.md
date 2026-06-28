@@ -2,7 +2,8 @@
 
 A jank+OpenGL game engine and a game built on it ("Strafe Combat Academy"). Written in [Jank](https://jank-lang.org/) (a Clojure-on-LLVM dialect with C++ interop) with networked multiplayer, skeletal animation, and Quake-style movement.
 
-> Requires Jank built from latest `main`.
+> Requires a compatible Jank on `PATH`. CI tracks `jank-lang/jank` `main` and
+> caches builds by the resolved upstream commit SHA.
 
 Watch the [demo video on YouTube](https://youtu.be/hVQB7G6YVKQ):
 
@@ -109,7 +110,7 @@ dist/jank-engine/
 └── jank-engine_run          launcher
 ```
 
-Iterate on game source without rebuilding the engine. The launcher checks for `jank` and uses the installed jank environment for dynamic runtime support.
+Iterate on game source without rebuilding the engine. The launcher checks for `jank` and uses the installed jank environment for dynamic runtime support. On macOS it maps the installed jank LLVM, OpenSSL, and zstd library directories through bundle-local rpath symlinks; set `JANK_LLVM`, `JANK_CRYPTO_DIR`, or `JANK_ZSTD_DIR` if your jank install uses non-standard locations.
 
 ### Shipping a game: `bake`
 
@@ -127,12 +128,16 @@ Iterate on game source without rebuilding the engine. The launcher checks for `j
 
 To distribute: ship the `dist/<name>/` directory; users run `./<name>_run`.
 
-How and why the no-prereq baked bundle works is documented in [engine/docs/bake-distribution.md](engine/docs/bake-distribution.md).
+Before distributing, run `./scripts/verify-portability dist/jank-engine` and
+`./scripts/verify-portability <game-dist>` from `engine/`. How and why the
+no-prereq baked bundle works is documented in
+[engine/docs/bake-distribution.md](engine/docs/bake-distribution.md).
 
 ## Platform support
 
 **macOS (Apple Silicon)** — primary platform, fully supported.
-**Linux / Windows** — platform abstraction stubs exist; no working build path yet. (To produce a Linux `jank-engine`, run `./scripts/build-engine` on a Linux machine once the platform helpers are filled in.)
+**Linux (x86_64)** — built and smoke-tested in CI with Xvfb.
+**Windows** — platform abstraction stubs exist; no working build path yet.
 
 ## Points of interest
 

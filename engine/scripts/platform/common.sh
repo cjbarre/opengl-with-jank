@@ -128,7 +128,7 @@ require_platform_support() {
 load_jank_paths() {
     # Try environment variable first
     if [[ -n "${JANK_DIR:-}" ]]; then
-        JANK_DIR="$JANK_DIR"
+        :
     # Try to find jank in PATH and derive location (follow symlinks)
     elif command -v jank &>/dev/null; then
         local jank_path
@@ -159,7 +159,7 @@ load_jank_paths() {
     # inside the jank build dir; with jank_local_clang=OFF (system Clang),
     # let the caller override or fall back to the system LLVM root.
     if [[ -n "${JANK_LLVM:-}" ]]; then
-        JANK_LLVM="$JANK_LLVM"
+        :
     elif [[ -d "$JANK_DIR/build/llvm-install/usr/local" ]]; then
         JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
     elif [[ -d "/usr/lib/llvm-22" ]]; then
@@ -178,9 +178,18 @@ run_lein_compile_with_ozz_preload() {
     local project_dir="$1"
     shift
 
-    local libs_dir lib_ext ozz_preload
+    local libs_dir lib_ext ozz_preload prefix_map_flags
     libs_dir="$(get_libs_dir)"
     lib_ext="$(get_lib_extension)"
+    prefix_map_flags="-ffile-prefix-map=$JANK_DIR=/jank"
+    prefix_map_flags="$prefix_map_flags -ffile-prefix-map=$PROJECT_DIR=/engine"
+    prefix_map_flags="$prefix_map_flags -ffile-prefix-map=$project_dir=/project"
+    if [[ -n "${JANK_LLVM:-}" ]]; then
+        prefix_map_flags="$prefix_map_flags -ffile-prefix-map=$JANK_LLVM=/jank-llvm"
+    fi
+    if [[ -n "${JANK_EXTRA_FLAGS:-}" ]]; then
+        prefix_map_flags="$JANK_EXTRA_FLAGS $prefix_map_flags"
+    fi
     local ozz_preload_libs=(
         "$libs_dir/ozz-animation/lib/libozz_animation_r.$lib_ext"
         "$libs_dir/ozz-animation/lib/libozz_base_r.$lib_ext"
@@ -189,7 +198,7 @@ run_lein_compile_with_ozz_preload() {
 
     if [[ "$PLATFORM_OS" == "linux" ]]; then
         ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${LD_PRELOAD:+:$LD_PRELOAD}"
-        (cd "$project_dir" && env "$@" LD_PRELOAD="$ozz_preload" lein compile)
+        (cd "$project_dir" && env "$@" JANK_EXTRA_FLAGS="$prefix_map_flags" LD_PRELOAD="$ozz_preload" lein compile --no-debug)
     else
         ozz_preload="$(IFS=:; echo "${ozz_preload_libs[*]}")${DYLD_INSERT_LIBRARIES:+:$DYLD_INSERT_LIBRARIES}"
         local lein_jar java_bin
@@ -203,14 +212,67 @@ run_lein_compile_with_ozz_preload() {
             exit 1
         fi
         java_bin="${JAVA_CMD:-$(command -v java)}"
-        (cd "$project_dir" && env "$@" DYLD_INSERT_LIBRARIES="$ozz_preload" "$java_bin" \
+        (cd "$project_dir" && env "$@" JANK_EXTRA_FLAGS="$prefix_map_flags" DYLD_INSERT_LIBRARIES="$ozz_preload" "$java_bin" \
             -Dfile.encoding=UTF-8 \
             -Dmaven.wagon.http.ssl.easy=false \
             -Dleiningen.original.pwd="$project_dir" \
             -Dleiningen.script="$(command -v lein)" \
             -classpath "$lein_jar" \
-            clojure.main -m leiningen.core.main compile)
+            clojure.main -m leiningen.core.main compile --no-debug)
     fi
+}
+
+same_length_path_token() {
+    local original="$1"
+    local label="$2"
+    local original_len=${#original}
+    local label_len=${#label}
+
+    if (( label_len > original_len )); then
+        label="${label:0:$original_len}"
+        label_len=$original_len
+    fi
+
+    printf '%s' "$label"
+    local pad_count=$((original_len - label_len))
+    if (( pad_count > 0 )); then
+        printf '%*s' "$pad_count" '' | tr ' ' '_'
+    fi
+}
+
+rewrite_embedded_path_prefix() {
+    local file="$1"
+    local old_prefix="$2"
+    local label="$3"
+
+    [[ -n "$old_prefix" && -e "$file" ]] || return 0
+    if ! command -v perl >/dev/null 2>&1; then
+        echo "WARN: perl not found; cannot sanitize embedded path prefix in $file" >&2
+        return 0
+    fi
+
+    local replacement
+    replacement="$(same_length_path_token "$old_prefix" "$label")"
+    OLD_PREFIX="$old_prefix" NEW_PREFIX="$replacement" \
+        perl -0pi -e 's/\Q$ENV{OLD_PREFIX}\E/$ENV{NEW_PREFIX}/g' "$file"
+}
+
+sanitize_embedded_build_paths() {
+    local file="$1"
+    shift || true
+
+    local repo_root
+    repo_root="$(cd "$PROJECT_DIR/.." && pwd)"
+
+    rewrite_embedded_path_prefix "$file" "$repo_root" "/portable/opengl-with-jank"
+    rewrite_embedded_path_prefix "$file" "$PROJECT_DIR" "/portable/engine"
+    rewrite_embedded_path_prefix "$file" "${JANK_DIR:-}" "/portable/jank"
+    rewrite_embedded_path_prefix "$file" "${JANK_LLVM:-}" "/portable/jank-llvm"
+
+    local extra
+    for extra in "$@"; do
+        rewrite_embedded_path_prefix "$file" "$extra" "/portable/project"
+    done
 }
 
 # Print platform info (useful for debugging)

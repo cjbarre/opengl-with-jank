@@ -61,7 +61,7 @@ cd engine
 
 ## Runtime model
 
-`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace plus all native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, libc++, embedded clang for JIT). At startup it:
+`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). It intentionally uses the developer's installed `jank`/LLVM/clang runtime for loose game-source JIT. At startup it:
 
 1. Resolves `<bin>/../include` via `_NSGetExecutablePath` and adds it to `Cpp::AddIncludePath` so consumer `cpp/raw` blocks find glm/GLFW/ozz/engine `*_impl.h`.
 2. Reads `<game-dir>/jank-engine.edn` (`:entry`, `:paths`, `:includes`).
@@ -218,11 +218,11 @@ Build with `engine/scripts/build-gla2ozz`, `engine/scripts/build-ozz2gltf`, `eng
 
 There are two artifacts, for two different audiences:
 
-**`scripts/build-engine` → `engine/dist/jank-engine/`** (~324 MB) — the dev-iteration runtime. Bakes every `engine.*` namespace plus all native deps and a JIT-capable clang. Reusable across games: `jank-engine_run /path/to/any-game-dir`. Requires XCode CLI tools on the running machine because consumer source is JIT-compiled.
+**`scripts/build-engine` → `engine/dist/jank-engine/`** — the dev-iteration runtime. Bakes every `engine.*` namespace, packages engine-native dylibs and headers, and expects a compatible `jank` on `PATH` for LLVM/clang/JIT resources. Reusable across games: `jank-engine_run /path/to/any-game-dir`. On macOS the launcher maps installed jank LLVM/OpenSSL/zstd library dirs through temporary bundle-local rpath symlinks.
 
-**`scripts/bake` → `<game-dir>/dist/<name>/`** (~365 MB) — the shipping artifact. AOT-compiles engine + a specific game's source into one binary. No JIT happens at runtime, so end users need **nothing** — no XCode CLI tools, no jank, no clang. Bundles its own libc++, clang (for jank's startup probe only), and an `xcrun` shim that satisfies jank's startup check without invoking the system stub that would otherwise prompt for CLI-tools install.
+**`scripts/bake` → `<game-dir>/dist/<name>/`** — the shipping artifact. AOT-compiles engine + a specific game's source into one static-runtime binary. No JIT happens at runtime, so end users need **nothing** — no XCode CLI tools, no jank, no clang, no LLVM runtime. It bundles only the runtime support dylibs/shared objects needed by the executable and native engine libraries.
 
-The shim mechanic: jank's runtime context constructor calls `xcrun --show-sdk-path` once at startup and stashes the result for later clang invocations. With AOT'd code, those later invocations never happen, so any non-empty path satisfies the probe. The bundled launcher prepends `<bundle>/shim/` to PATH so our 3-line `echo "/dev/null"` script wins over the system stub.
+Both packaging paths run build-path sanitization after compile. Use `engine/scripts/verify-portability <dist-dir>` to check binaries, dylibs/shared objects, dynamic loader metadata, and executable launchers for local checkout/temp/package-manager path leaks. CI runs `verify-portability --self-test` first so the checker proves it catches known-bad launcher and binary fixtures.
 
 Full design + jank-source citations + failure modes + verification recipe in [`engine/docs/bake-distribution.md`](engine/docs/bake-distribution.md). Read that before changing anything in `bake` or upgrading the jank submodule.
 
@@ -232,7 +232,7 @@ Full design + jank-source citations + failure modes + verification recipe in [`e
 - `:paths`, `:includes` — source and header dirs (relative to game dir)
 - `:assets` (optional) — dirs to copy into the bundle (e.g. `["models" "textures"]`)
 
-Linux build path is unbuilt; bake currently macOS-only.
+Linux x86_64 builds are covered by CI. The Linux workflow builds the dev engine, verifies portability, bakes the sample game, verifies the baked bundle, and smoke-tests both dev and baked server/client paths under Xvfb. Windows remains stubbed.
 
 ## Common gotchas
 

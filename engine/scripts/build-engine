@@ -68,6 +68,13 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
 fi
 
 if [[ "$PLATFORM_OS" == "macos" ]]; then
+    install_name_tool -change "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "@rpath/libLLVM.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "@rpath/libclang-cpp.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$JANK_LLVM/lib/c++/libc++.1.$LIB_EXT" "@rpath/libc++.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$JANK_LLVM/lib/unwind/libunwind.1.$LIB_EXT" "@rpath/libunwind.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
+    install_name_tool -change "$JANK_LLVM/lib/c++/libc++abi.1.$LIB_EXT" "@rpath/libc++abi.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
     change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "@rpath/libOpenGL.$LIB_EXT"
@@ -77,7 +84,26 @@ if [[ "$PLATFORM_OS" == "macos" ]]; then
     done
 fi
 
+delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
+delete_rpath "$JANK_LLVM/lib" "$BUILD_DIR/bin/$OUTPUT"
+for lib_dir in glfw ozz-animation stb enet cgltf opengl engine-assets; do
+    delete_rpath "$LIBS_DIR/$lib_dir/lib" "$BUILD_DIR/bin/$OUTPUT"
+    delete_rpath "libs/$PLATFORM/$lib_dir/lib" "$BUILD_DIR/bin/$OUTPUT"
+done
 add_rpath "${RPATH_PREFIX}/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    add_rpath "${RPATH_PREFIX}/../lib/jank-runtime" "$BUILD_DIR/bin/$OUTPUT"
+    add_rpath "${RPATH_PREFIX}/../lib/jank-crypto" "$BUILD_DIR/bin/$OUTPUT"
+    add_rpath "${RPATH_PREFIX}/../lib/jank-zstd" "$BUILD_DIR/bin/$OUTPUT"
+fi
+
+sanitize_embedded_build_paths "$BUILD_DIR/bin/$OUTPUT" "$PROJECT_DIR"
+if [[ "$PLATFORM_OS" == "macos" ]]; then
+    for dylib in "$BUNDLE_DIR"/*.dylib; do
+        [[ -f "$dylib" ]] || continue
+        sanitize_embedded_build_paths "$dylib" "$PROJECT_DIR"
+    done
+fi
 
 if [[ "$PLATFORM_OS" == "macos" ]]; then
     find "$BUILD_DIR" -type f \( -name '*.dylib' -o -name "$OUTPUT" \) \
@@ -140,11 +166,58 @@ if [[ -z "$JANK_LLVM" || ! -d "$JANK_LLVM/lib" ]]; then
 fi
 
 if [[ "$(uname -s)" == "Darwin" ]]; then
+    find_lib_dir() {
+        local lib_name="$1"
+        shift
+        for dir in "$@"; do
+            if [[ -n "$dir" && -f "$dir/$lib_name" ]]; then
+                echo "$dir"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    CRYPTO_DIR="${JANK_CRYPTO_DIR:-}"
+    if [[ -z "$CRYPTO_DIR" ]]; then
+        CRYPTO_DIR="$(find_lib_dir libcrypto.3.dylib \
+            "$JANK_LLVM/lib" \
+            "$JANK_DIR/build/llvm-install/usr/local/lib" \
+            /opt/homebrew/opt/openssl@3/lib \
+            /usr/local/opt/openssl@3/lib \
+            2>/dev/null || true)"
+    fi
+
+    ZSTD_DIR="${JANK_ZSTD_DIR:-}"
+    if [[ -z "$ZSTD_DIR" ]]; then
+        ZSTD_DIR="$(find_lib_dir libzstd.1.dylib \
+            "$JANK_LLVM/lib" \
+            "$JANK_DIR/build/llvm-install/usr/local/lib" \
+            /opt/homebrew/opt/zstd/lib \
+            /usr/local/opt/zstd/lib \
+            2>/dev/null || true)"
+    fi
+
+    if [[ -z "$CRYPTO_DIR" || -z "$ZSTD_DIR" ]]; then
+        echo "ERROR: unable to locate jank support libraries." >&2
+        echo "       Set JANK_CRYPTO_DIR and/or JANK_ZSTD_DIR if your jank install uses non-standard locations." >&2
+        exit 1
+    fi
+
+    mkdir -p "$DIR/lib"
+    ln -sfn "$JANK_LLVM/lib" "$DIR/lib/jank-runtime"
+    ln -sfn "$CRYPTO_DIR" "$DIR/lib/jank-crypto"
+    ln -sfn "$ZSTD_DIR" "$DIR/lib/jank-zstd"
+    cleanup_runtime_links() {
+        rm -f "$DIR/lib/jank-runtime" "$DIR/lib/jank-crypto" "$DIR/lib/jank-zstd"
+    }
+    trap cleanup_runtime_links EXIT INT TERM
+
     # Do not prepend the installed jank LLVM/C++ runtime on macOS. The engine
-    # binary is linked with jank's own rpaths; overriding them through
+    # binary resolves those deps through bundle-local rpath symlinks; overriding
     # DYLD_LIBRARY_PATH can mix incompatible C++ runtime images.
     DYLD_LIBRARY_PATH="$DIR/lib/jank-engine${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}" \
-      exec "$DIR/bin/jank-engine" "$@"
+      "$DIR/bin/jank-engine" "$@"
 else
     LIB_PATHS=("$DIR/lib/jank-engine" "$JANK_LLVM/lib")
     LD_LIBRARY_PATH="$(IFS=:; echo "${LIB_PATHS[*]}")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \

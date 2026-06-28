@@ -1,0 +1,283 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: verify-portability <bundle-dir> [binary-path ...]
+       verify-portability --self-test
+
+Checks compiled executables and shared libraries in <bundle-dir> for absolute
+build-machine paths in embedded strings and dynamic-loader metadata.
+
+Set ALLOWED_PORTABLE_STRINGS to an extended grep pattern for known-safe matches.
+USAGE
+}
+
+run_expect_success() {
+    local label="$1"
+    shift
+
+    if ! "$@" >"$label.out" 2>&1; then
+        echo "ERROR: expected success: $*" >&2
+        sed -n '1,120p' "$label.out" >&2 || true
+        return 1
+    fi
+}
+
+run_expect_failure() {
+    local label="$1"
+    shift
+
+    if "$@" >"$label.out" 2>&1; then
+        echo "ERROR: expected failure: $*" >&2
+        sed -n '1,120p' "$label.out" >&2 || true
+        return 1
+    fi
+
+    if ! grep -q "non-portable path" "$label.out"; then
+        echo "ERROR: failure did not report a non-portable path: $*" >&2
+        sed -n '1,120p' "$label.out" >&2 || true
+        return 1
+    fi
+}
+
+SELF_TEST_TEMP=""
+cleanup_self_test() {
+    [[ -n "${SELF_TEST_TEMP:-}" ]] && rm -rf "$SELF_TEST_TEMP"
+}
+
+self_test() {
+    local temp_dir good_dir bad_text_dir bad_object_dir
+    temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/verify-portability.XXXXXX")"
+    SELF_TEST_TEMP="$temp_dir"
+    trap cleanup_self_test EXIT
+
+    good_dir="$temp_dir/good"
+    bad_text_dir="$temp_dir/bad-text"
+    bad_object_dir="$temp_dir/bad-object"
+    mkdir -p "$good_dir" "$bad_text_dir" "$bad_object_dir/bin"
+
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'DIR="$(cd "$(dirname "$0")" && pwd)"' \
+        'exec "$DIR/bin/game" "$@"' \
+        > "$good_dir/game_run"
+    chmod +x "$good_dir/game_run"
+    run_expect_success "$temp_dir/good" "$SCRIPT_PATH" "$good_dir"
+
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'exec /Users/example/not-portable/bin/game "$@"' \
+        > "$bad_text_dir/bad_run"
+    chmod +x "$bad_text_dir/bad_run"
+    run_expect_failure "$temp_dir/bad-text" "$SCRIPT_PATH" "$bad_text_dir"
+
+    if command -v cc >/dev/null 2>&1; then
+        cat > "$bad_object_dir/bad.c" <<'C_SOURCE'
+#include <stdio.h>
+int main(void)
+{
+    puts("/Users/example/not-portable");
+    return 0;
+}
+C_SOURCE
+        cc -g0 "$bad_object_dir/bad.c" -o "$bad_object_dir/bin/bad"
+        run_expect_failure "$temp_dir/bad-object" "$SCRIPT_PATH" "$bad_object_dir"
+    else
+        echo "WARN: cc not found; skipping compiled-object negative check" >&2
+    fi
+
+    echo "verify-portability self-test passed"
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+    self_test
+    exit 0
+fi
+
+if [[ $# -lt 1 ]]; then
+    usage
+    exit 2
+fi
+
+BUNDLE_DIR="$(cd "$1" && pwd)"
+shift
+
+if [[ ! -d "$BUNDLE_DIR" ]]; then
+    echo "ERROR: bundle dir not found: $BUNDLE_DIR" >&2
+    exit 1
+fi
+
+declare -a CHECK_FILES=()
+if [[ $# -gt 0 ]]; then
+    for file in "$@"; do
+        if [[ "$file" == /* ]]; then
+            CHECK_FILES+=("$file")
+        else
+            CHECK_FILES+=("$BUNDLE_DIR/$file")
+        fi
+    done
+else
+    while IFS= read -r -d '' file; do
+        file_info="$(file "$file")"
+        if printf '%s\n' "$file_info" | grep -Eq 'Mach-O|ELF' \
+            || { [[ -x "$file" ]] && printf '%s\n' "$file_info" | grep -Eiq 'text|script'; }; then
+            CHECK_FILES+=("$file")
+        fi
+    done < <(find "$BUNDLE_DIR" -type f -print0)
+fi
+
+if [[ "${#CHECK_FILES[@]}" -eq 0 ]]; then
+    echo "ERROR: no executable/library files found under $BUNDLE_DIR" >&2
+    exit 1
+fi
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENGINE_DIR="$REPO_ROOT/engine"
+JANK_DIR="${JANK_DIR:-}"
+JANK_LLVM="${JANK_LLVM:-}"
+RUNNER_HOME="${HOME:-}"
+
+if [[ -z "$JANK_DIR" ]] && command -v jank >/dev/null 2>&1; then
+    jank_bin="$(command -v jank)"
+    if command -v realpath >/dev/null 2>&1; then
+        jank_bin="$(realpath "$jank_bin" 2>/dev/null || echo "$jank_bin")"
+    elif command -v readlink >/dev/null 2>&1; then
+        jank_bin="$(readlink -f "$jank_bin" 2>/dev/null || echo "$jank_bin")"
+    fi
+    if [[ "$jank_bin" == */build/jank ]]; then
+        JANK_DIR="${jank_bin%/build/jank}"
+    fi
+fi
+
+if [[ -z "$JANK_LLVM" && -n "$JANK_DIR" && -d "$JANK_DIR/build/llvm-install/usr/local" ]]; then
+    JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
+elif [[ -z "$JANK_LLVM" && -n "${CLANG_VERSION:-}" && -d "/usr/lib/llvm-$CLANG_VERSION" ]]; then
+    JANK_LLVM="/usr/lib/llvm-$CLANG_VERSION"
+elif [[ -z "$JANK_LLVM" && -d "/usr/lib/llvm-22" ]]; then
+    JANK_LLVM="/usr/lib/llvm-22"
+fi
+
+declare -a OBJECT_FORBIDDEN_PREFIXES=(
+    "$REPO_ROOT"
+    "$ENGINE_DIR"
+    "$BUNDLE_DIR"
+    "$JANK_DIR"
+    "$JANK_LLVM"
+    "$RUNNER_HOME"
+    "/Users/"
+    "/home/runner/"
+    "/private/tmp/"
+    "/tmp/sca-"
+    "/opt/homebrew/opt/llvm"
+    "/opt/homebrew/opt/openssl@3"
+    "/opt/homebrew/opt/zstd"
+    "/usr/local/opt/llvm"
+    "/usr/local/opt/openssl@3"
+    "/usr/local/opt/zstd"
+    "/usr/lib/llvm-22"
+)
+
+declare -a TEXT_FORBIDDEN_PREFIXES=(
+    "$REPO_ROOT"
+    "$ENGINE_DIR"
+    "$BUNDLE_DIR"
+    "$RUNNER_HOME"
+    "/Users/"
+    "/home/runner/"
+    "/private/tmp/"
+    "/tmp/sca-"
+)
+
+for prefix in ${PORTABILITY_FORBIDDEN_PREFIXES:-}; do
+    OBJECT_FORBIDDEN_PREFIXES+=("$prefix")
+    TEXT_FORBIDDEN_PREFIXES+=("$prefix")
+done
+
+build_regex() {
+    local regex="" prefix escaped
+    for prefix in "$@"; do
+        [[ -n "$prefix" ]] || continue
+        escaped="$(printf '%s\n' "$prefix" | sed 's/[][\/.^$*+?{}()|]/\\&/g')"
+        if [[ -z "$regex" ]]; then
+            regex="$escaped"
+        else
+            regex="$regex|$escaped"
+        fi
+    done
+    printf '%s' "$regex"
+}
+
+object_forbidden_regex="$(build_regex "${OBJECT_FORBIDDEN_PREFIXES[@]}")"
+text_forbidden_regex="$(build_regex "${TEXT_FORBIDDEN_PREFIXES[@]}")"
+
+if [[ -z "$object_forbidden_regex" || -z "$text_forbidden_regex" ]]; then
+    echo "ERROR: no forbidden path prefixes configured" >&2
+    exit 1
+fi
+
+allowed_regex="${ALLOWED_PORTABLE_STRINGS:-^$}"
+failed=0
+
+check_text() {
+    local label="$1"
+    local forbidden_regex="$2"
+    local content="$3"
+    local matches
+
+    matches="$(printf '%s\n' "$content" \
+        | grep -E "$forbidden_regex" \
+        | grep -Ev "$allowed_regex" \
+        | sed -n '1,80p' || true)"
+
+    if [[ -n "$matches" ]]; then
+        echo "ERROR: non-portable path(s) in $label" >&2
+        printf '%s\n' "$matches" >&2
+        failed=1
+    fi
+}
+
+object_metadata() {
+    file "$1" | grep -Eq 'Mach-O|ELF'
+}
+
+text_metadata() {
+    file "$1" | grep -Eiq 'text|script'
+}
+
+for file in "${CHECK_FILES[@]}"; do
+    if [[ ! -f "$file" ]]; then
+        echo "ERROR: file not found: $file" >&2
+        failed=1
+        continue
+    fi
+
+    if object_metadata "$file"; then
+        check_text "strings($file)" "$object_forbidden_regex" "$(strings "$file" || true)"
+        case "$(uname -s)" in
+            Darwin)
+                if command -v otool >/dev/null 2>&1; then
+                    check_text "otool -L($file)" "$object_forbidden_regex" "$(otool -L "$file" 2>/dev/null | sed '1d' || true)"
+                    check_text "otool -l($file)" "$object_forbidden_regex" "$(otool -l "$file" 2>/dev/null | grep -vF "$file" || true)"
+                fi
+                ;;
+            Linux)
+                if command -v readelf >/dev/null 2>&1; then
+                    check_text "readelf -d($file)" "$object_forbidden_regex" "$(readelf -d "$file" 2>/dev/null | grep -vF "$file" || true)"
+                fi
+                ;;
+        esac
+    elif text_metadata "$file"; then
+        check_text "text($file)" "$text_forbidden_regex" "$(sed -n '1,260p' "$file" || true)"
+    else
+        check_text "strings($file)" "$object_forbidden_regex" "$(strings "$file" || true)"
+    fi
+done
+
+if [[ "$failed" -ne 0 ]]; then
+    exit 1
+fi
+
+echo "Portable path check passed for $BUNDLE_DIR (${#CHECK_FILES[@]} files)"
