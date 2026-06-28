@@ -151,6 +151,7 @@ run_lein_compile_with_ozz_preload \
     JANK_OPTIMIZATION_LEVEL=3 \
     JANK_RUNTIME=static
 rm -rf "$OUT_DIR/bin/$NAME.dSYM"
+rm -rf "$OUT_DIR/bin/_cache"
 
 # =============================================================================
 # Bundle native deps (mirrors build-engine)
@@ -208,6 +209,11 @@ add_rpath "${RPATH_PREFIX}/../lib/$NAME" "$OUT_DIR/bin/$NAME"
 # Bundle game assets
 # =============================================================================
 for asset in "${ASSETS[@]}"; do
+    if [[ -z "$asset" || "$asset" == /* || "$asset" == *..* ]]; then
+        echo "ERROR: invalid asset path in $EDN: $asset" >&2
+        exit 1
+    fi
+    rm -rf "$OUT_DIR/$asset"
     if [[ -d "$GAME_DIR/$asset" ]]; then
         cp -R "$GAME_DIR/$asset" "$OUT_DIR/$asset"
     else
