@@ -165,6 +165,11 @@ if [[ -z "$JANK_LLVM" || ! -d "$JANK_LLVM/lib" ]]; then
     exit 1
 fi
 
+if [[ -z "${CXX:-}" && -x "$JANK_LLVM/bin/clang++" ]]; then
+    export CXX="$JANK_LLVM/bin/clang++"
+fi
+export PATH="$JANK_LLVM/bin:$PATH"
+
 if [[ "$(uname -s)" == "Darwin" ]]; then
     find_lib_dir() {
         local lib_name="$1"
