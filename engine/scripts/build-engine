@@ -211,11 +211,32 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     fi
 
     mkdir -p "$DIR/lib"
-    ln -sfn "$JANK_LLVM/lib" "$DIR/lib/jank-runtime"
+    rm -rf "$DIR/lib/jank-runtime"
+    mkdir -p "$DIR/lib/jank-runtime"
+    link_runtime_lib() {
+        local lib_name="$1"
+        shift
+        local dir
+        for dir in "$@"; do
+            if [[ -f "$dir/$lib_name" ]]; then
+                ln -sfn "$dir/$lib_name" "$DIR/lib/jank-runtime/$lib_name"
+                return 0
+            fi
+        done
+        echo "ERROR: unable to locate jank runtime library: $lib_name" >&2
+        exit 1
+    }
+
+    link_runtime_lib libLLVM.dylib "$JANK_LLVM/lib" "$JANK_DIR/build/llvm-install/usr/local/lib"
+    link_runtime_lib libclang-cpp.dylib "$JANK_LLVM/lib" "$JANK_DIR/build/llvm-install/usr/local/lib"
+    link_runtime_lib libc++.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/c++" "$JANK_DIR/build/llvm-install/usr/local/lib/c++"
+    link_runtime_lib libc++abi.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/c++" "$JANK_DIR/build/llvm-install/usr/local/lib/c++"
+    link_runtime_lib libunwind.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/unwind" "$JANK_DIR/build/llvm-install/usr/local/lib/unwind"
     ln -sfn "$CRYPTO_DIR" "$DIR/lib/jank-crypto"
     ln -sfn "$ZSTD_DIR" "$DIR/lib/jank-zstd"
     cleanup_runtime_links() {
-        rm -f "$DIR/lib/jank-runtime" "$DIR/lib/jank-crypto" "$DIR/lib/jank-zstd"
+        rm -rf "$DIR/lib/jank-runtime"
+        rm -f "$DIR/lib/jank-crypto" "$DIR/lib/jank-zstd"
     }
     trap cleanup_runtime_links EXIT INT TERM
 
