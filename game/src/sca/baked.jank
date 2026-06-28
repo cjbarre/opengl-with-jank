@@ -1,0 +1,16 @@
+(ns sca.baked
+  "Static-runtime entry point for baked bundles.
+
+   The dev dispatcher in sca.core intentionally requires modes lazily so the
+   dev engine can warm only the requested mode. Static baked binaries cannot
+   load loose source at runtime, so this namespace top-level requires every
+   supported mode and then delegates to sca.core."
+  (:require [sca.client]
+            [sca.server]
+            [sca.editor.core]
+            [sca.viewer]
+            [sca.tests.net]
+            [sca.core :as core]))
+
+(defn -main [& args]
+  (apply core/-main args))

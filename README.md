@@ -114,7 +114,7 @@ Iterate on game source without rebuilding the engine. The launcher checks for `j
 
 ### Shipping a game: `bake`
 
-`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` — engine + a specific game's source, AOT-compiled into one static-runtime binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories.
+`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` — engine + a specific game's source, AOT-compiled into one static-runtime binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories. Static-runtime builds cannot load lazy mode namespaces from loose source, so the sample game's `project.clj` uses `sca.baked`, a bake-only entry that top-level requires every supported mode before delegating to `sca.core`.
 
 ```
 <game-dir>/dist/<name>/

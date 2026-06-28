@@ -226,6 +226,10 @@ Both packaging paths run build-path sanitization after compile. Use `engine/scri
 
 Full design + jank-source citations + failure modes + verification recipe in [`engine/docs/bake-distribution.md`](engine/docs/bake-distribution.md). Read that before changing anything in `bake` or upgrading the jank submodule.
 
+`bake` uses the game's lein-jank `:main` (`sca.baked` in the sample game) so
+all runtime modes are statically reachable even though the dev dispatcher
+requires modes lazily.
+
 `bake` requires the game's `jank-engine.edn` to declare:
 - `:entry` — the namespace whose `-main` to invoke
 - `:name` (optional) — output binary name (defaults to first segment of `:entry`)
