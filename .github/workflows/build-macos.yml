@@ -2,7 +2,7 @@ name: build-macos
 
 on:
   push:
-    branches: [main, runtime-binary]
+    branches: [main, runtime-binary, lein-jank-build-system]
   pull_request:
   workflow_dispatch:
 
