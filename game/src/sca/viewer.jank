@@ -9,6 +9,8 @@
             [engine.io.interface :as io]
             [engine.gl.constants :as gl]))
 
+(require '[engine.gl.interface :as gl-state])
+
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
 #include <cstdio>
@@ -43,7 +45,7 @@
       (cpp/exit 1))
     (cpp/glfwSwapInterval 1)
     (cpp/glfwSetFramebufferSizeCallback window cpp/pskel.framebuffer_size_callback)
-    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    (gl-state/enable {:capability gl/GL_DEPTH_TEST})
     (cpp/box window)))
 
 ;; ============================================================================

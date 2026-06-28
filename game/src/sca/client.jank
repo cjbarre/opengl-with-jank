@@ -265,7 +265,7 @@
       (cpp/exit 1))
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/eclient.framebuffer_size_callback)
-    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    (gl-state/enable {:capability gl/GL_DEPTH_TEST})
     (cpp/box window)))
 
 ;; =============================================================================

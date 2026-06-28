@@ -15,6 +15,8 @@
             [sca.client :as client]
             [sca.strafehelper.interface :as strafehelper]))
 
+(require '[engine.gl.interface :as gl-state])
+
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
 #include <cstdio>")
@@ -47,7 +49,7 @@
       (cpp/exit 1))
     (cpp/glfwSwapInterval 0)
     (cpp/glfwSetFramebufferSizeCallback window cpp/esd.framebuffer_size_callback)
-    (cpp/wrap_glEnable gl/GL_DEPTH_TEST)
+    (gl-state/enable {:capability gl/GL_DEPTH_TEST})
     (cpp/box window)))
 
 ;; ============================================================================
@@ -349,8 +351,8 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         ;; Draw course
         (course/draw-course new-state {:shader shader})
         ;; Draw ghost piece preview (transparent)
-        (cpp/wrap_glEnable gl/GL_BLEND)
-        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+        (gl-state/enable {:capability gl/GL_BLEND})
+        (gl-state/set-blend-func {:src gl/GL_SRC_ALPHA :dest gl/GL_ONE_MINUS_SRC_ALPHA})
         (cpp/wrap_glUniform1i
          (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
          (cpp/int 1))
@@ -361,7 +363,7 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
         (cpp/wrap_glUniform1i
          (cpp/wrap_glGetUniformLocation shader "uEnableLighting")
          (cpp/int 0))
-        (cpp/wrap_glDisable gl/GL_BLEND)
+        (gl-state/disable {:capability gl/GL_BLEND})
         ;; Draw cursor with line shader
         (cpp/wrap_glUseProgram line-shader)
         (cpp/wrap_glUniformMatrix4fv
@@ -385,10 +387,10 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           (cpp/wrap_glUniformMatrix4fv
            (cpp/wrap_glGetUniformLocation line-shader "view")
            (cpp/int 1) gl/GL_FALSE (cpp/glm.value_ptr view-m)))
-        (cpp/wrap_glEnable gl/GL_BLEND)
-        (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+        (gl-state/enable {:capability gl/GL_BLEND})
+        (gl-state/set-blend-func {:src gl/GL_SRC_ALPHA :dest gl/GL_ONE_MINUS_SRC_ALPHA})
         (draw-cursor new-state context)
-        (cpp/wrap_glDisable gl/GL_BLEND)
+        (gl-state/disable {:capability gl/GL_BLEND})
         ;; Draw HUD
         (draw-hud new-state)
         (when (:controls-visible new-state)
@@ -429,11 +431,11 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
           (cpp/wrap_glUniform1f (cpp/wrap_glGetUniformLocation line-shader "lineWidth") 0.025)
           (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor") 0.0 0.8 0.6)
           (cpp/wrap_glUniform3f (cpp/wrap_glGetUniformLocation line-shader "lineColor2") 0.2 1.0 0.9)
-          (cpp/wrap_glEnable gl/GL_BLEND)
-          (cpp/wrap_glBlendFunc gl/GL_SRC_ALPHA #cpp GL_ONE_MINUS_SRC_ALPHA)
+          (gl-state/enable {:capability gl/GL_BLEND})
+          (gl-state/set-blend-func {:src gl/GL_SRC_ALPHA :dest gl/GL_ONE_MINUS_SRC_ALPHA})
           (client/render-skeleton-entity line-shader line-vao line-vbo
                                          @(:player-anim context) [px py pz] yaw input-for-anim)
-          (cpp/wrap_glDisable gl/GL_BLEND))
+          (gl-state/disable {:capability gl/GL_BLEND}))
         ;; Debug overlay (F3 toggles)
         (when (get state :debug-visible true)
           (let [dt-val (float (math/*-> :float (:delta-time context)))
