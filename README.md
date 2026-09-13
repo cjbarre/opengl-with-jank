@@ -1,106 +1,69 @@
 # OpenGL with Jank
 
-A jank+OpenGL game engine and a game built on it ("Strafe Combat Academy"). Written in [Jank](https://jank-lang.org/) (a Clojure-on-LLVM dialect with C++ interop) with networked multiplayer, skeletal animation, and Quake-style movement.
+A jank/OpenGL game engine and Strafe Combat Academy, a game with networked multiplayer, skeletal animation, and Quake-style movement.
 
-> Requires a compatible Jank on `PATH`. CI tracks `jank-lang/jank` `main`, builds against LLVM 23,
-> and caches builds by the upstream commit and toolchain version.
+[Demo video](https://youtu.be/hVQB7G6YVKQ)
 
-Watch the [demo video on YouTube](https://youtu.be/hVQB7G6YVKQ):
+## Development
 
-[![Strafe Combat Academy demo](docs/assets/sca-demo-preview.png)](https://youtu.be/hVQB7G6YVKQ)
-
-
-## Quick start
+Install jank, Leiningen, Babashka, CMake, a C/C++ compiler, pkg-config, GLFW, and OpenGL. Linux also requires GLEW and bubblewrap. On macOS, the additional tools can be installed with `brew install leiningen babashka cmake pkgconf glfw python`.
 
 ```bash
-git clone --recursive <repo-url>
-cd opengl-with-jank/engine
-./scripts/setup           # initialize submodules + install engine source package
-./scripts/build-engine    # build the jank-engine runtime binary with lein-jank
-
-cd ../game
-../engine/dist/jank-engine/jank-engine_run . server   # host on port 7777
-../engine/dist/jank-engine/jank-engine_run . client   # join (in another terminal)
-../engine/dist/jank-engine/jank-engine_run . editor   # open the course editor
-
-# To produce a self-contained game bundle for shipping:
-cd ../engine
-./scripts/bake ../game                    # output: game/dist/sca/
-../game/dist/sca/sca_run server           # runs without XCode CLI tools
-```
-
-## Repo layout
-
-```
-opengl-with-jank/
-├── engine/      # Reusable jank+OpenGL runtime
-│   ├── src/engine/         16 jank namespaces (gfx2d, gfx3d, networking, …)
-│   ├── include/            engine *_impl.h + bundled third-party headers
-│   ├── assets/             shaders/, fonts/ — embedded in the engine binary
-│   ├── scripts/            setup, build-engine, asset pipeline, distribution helpers
-│   ├── third_party/        ozz-animation, tinygltf
-│   ├── libs/               glm source submodule
-│   └── tools/              gla2ozz, ozz2gltf, ozz-retarget
-└── game/        # Strafe Combat Academy
-    ├── src/sca/            game namespaces
-    ├── include/sca/        game-side *_impl.h
-    ├── models/             glTF assets
-    ├── textures/
-    └── jank-engine.edn     entry namespace + classpath config
-```
-
-The two trees are independent — no symlinks between them. The engine knows nothing about the game. Game builds depend on the engine source package; loose-source development uses the reusable `jank-engine` binary.
-
-## How it works
-
-`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages the engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). At run time it reads the game directory's `jank-engine.edn`, adds the game's `:paths` to the module loader, eagerly `(require ...)`s configured loose game source namespaces, and realizes deferred function bodies through the developer's installed jank/clang runtime before invoking `:entry`. This moves dev JIT work to startup instead of the first gameplay frame that touches a code path; `:preload` may be `:all`, `false`, an explicit namespace list, or a mode-keyed map. Game source is loose `.jank` files; the engine binary is reusable across games (similar model to LÖVE/LÖVR).
-
-## How lein-jank fits in
-
-lein-jank owns compilation, native dependency builds, and their caches. Both projects use ordinary `project.clj` configuration and `jank-build.bb` scripts; there are no platform-specific Leiningen config loaders.
-
-- Commons `gl-sys` and `glfw-sys` discover installed OpenGL/GLFW and supply the native flags. macOS links the OpenGL framework directly.
-- The engine is a source package with a native build script. Its CMake build installs ozz, STB, cgltf, ENet, GLM, and engine headers into jank's managed output directory. Linux also discovers GLEW through `pkg-config`.
-- Engine shaders and fonts become a generated header compiled by jank, with no separate asset library.
-- `./scripts/setup` initializes submodules and runs `lein install`. Reinstall after engine changes before compiling a consuming game. `bake` does this automatically.
-- The game depends on `opengl-with-jank/engine`; it does not repeat engine source paths or native flags.
-- `build-engine` and `bake` assemble distributions from persistent `target/` builds. A shared packaging helper follows linked native dependencies, rewrites loader paths, and leaves build caches intact.
-
-Direct development commands:
-
-```bash
+git submodule update --init --recursive
 cd engine
-lein compile                       # target/engine/jank-engine (dynamic runtime)
-lein install                       # install the engine source/native package
+lein install
 cd ../game
-lein run -- server                 # run through jank
-lein with-profile release compile  # target/release/sca (static runtime)
+export JANK_REAL="${JANK_REAL:-$(command -v jank)}"
+export PATH="$PWD/../scripts/eager:$PATH"
+lein run -- server
+# In another terminal, from game/:
+lein run -- client
+lein run -- editor
+lein run -- viewer
 ```
 
-Build prerequisites are jank, Leiningen, Babashka, CMake, a C/C++ compiler, and `pkg-config`, plus installed GLFW/OpenGL (and GLEW on Linux). Distribution scripts additionally use Python 3; Linux needs `patchelf` and `bubblewrap` for packaging and jank build sandboxing respectively. On macOS, `brew install leiningen babashka cmake pkgconf glfw python` supplies the extra tools.
+Set these environment variables in each development terminal before running a mode. `JANK_REAL` records the installed compiler before the wrapper enters `PATH`. The wrapper adds `--eagerness eager`, compiling functions before gameplay to avoid pauses on first use. Remove it once lein-jank supports eagerness in `project.clj`.
 
-If full Xcode's tool shims fail inside jank's native-build sandbox, select the installed Command Line Tools for the build:
+Reinstall the engine package after changing engine sources. Lein-jank manages native dependency builds and caches. The game uses `project.clj` and `jank-build.bb` for source paths, dependencies, and include paths.
+
+If Xcode tool shims fail inside the native-build sandbox, select Command Line Tools:
 
 ```bash
 export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 ```
 
-Native library linkage (`:static?`) is independent of jank's `:runtime`. The engine uses `:runtime :dynamic` for loading loose game source; the game uses `:runtime :static` for shipping. Both currently request shared native libraries, which the distribution scripts bundle.
+## Release
+
+From `game/`:
+
+```bash
+lein with-profile release compile    # target/release/sca
+./scripts/package                    # dist/sca, including runtime libraries and assets
+./dist/sca/sca_run server
+./dist/sca/sca_run client
+```
+
+The package script runs release compilation and assembles `dist/sca`. Packaging needs Python 3 and, on Linux, patchelf. The release uses jank's static runtime and runs without an installed jank compiler or LLVM toolchain. OS graphics drivers are supplied by the target machine.
+
+## Build layout
+
+- `engine/project.clj`: reusable engine source package; commons OpenGL/GLFW dependencies.
+- `engine/jank-build.bb` and `engine/native/CMakeLists.txt`: ozz, STB, cgltf, ENet, GLEW discovery, and installed headers. GLM remains a source submodule.
+- `engine/scripts/embed-assets.clj`: shader/font header generation.
+- `scripts/eager/jank`: temporary development workaround for lein-jank’s missing eagerness setting.
+- `game/project.clj`: development and release settings, with `sca.core` as the common entry point.
+- `game/scripts/package` and `bundle-native.py`: release asset copying, native-library copying, loader paths, and macOS signing.
 
 ## Modes
 
-The bundled game (`game/`) dispatches on its first arg:
-
-| Mode | Description |
-|------|-------------|
-| `client [host]` | Join a server (default `localhost`) |
-| `server` | Host on port 7777 |
-| `editor` | Course designer (build, save `.map`) |
-| `viewer` | Animation viewer for the JKA player skeleton |
-| `net-test {server\|client}` | ENet smoke test |
-
-Run with `jank-engine_run . <mode>` from inside `game/`.
+| Mode | Purpose |
+| --- | --- |
+| `client [host]` | Join a server; defaults to localhost |
+| `server` | Host on UDP/7777 |
+| `editor` | Course designer |
+| `viewer` | Animation viewer |
+| `net-test server` / `net-test client` | Network echo test |
 
 ## Features
 
@@ -112,60 +75,13 @@ Run with `jank-engine_run . <mode>` from inside `game/`.
 - **Course editor** — Place / resize brushes, save/load `.edn` and JKA-compatible `.map`.
 - **Debug overlays** — F3 (FPS, position, velocity), F4 CGaz strafehelper.
 
-## Dependencies
+## Verification
 
-Jank, Leiningen with lein-jank, GLFW, OpenGL 3.3+, GLM (header-only), STB, cgltf, ozz-animation, ENet.
-
-## Distribution
-
-Two paths depending on audience.
-
-### Dev iteration: `jank-engine_run`
-
-`./scripts/build-engine` produces `engine/dist/jank-engine/` — a reusable runtime that JIT-loads any game directory. This is a jank-native developer bundle: it requires a compatible `jank` on `PATH` for LLVM/clang/JIT resources instead of bundling those pieces itself.
-
-```
-dist/jank-engine/
-├── bin/jank-engine          executable
-├── lib/jank-engine/         engine-native dylibs
-├── include/                 third-party headers (glm, GLFW, ozz, engine *_impl.h)
-└── jank-engine_run          launcher
+```bash
+JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" \
+  python3 scripts/smoke-test.py --cwd game -- lein run --
+JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" \
+  python3 scripts/smoke-test.py --graphics --cwd game -- lein run --
 ```
 
-Iterate on game source without rebuilding the engine. The launcher checks for `jank` and uses the installed jank environment for dynamic runtime support. On macOS it maps the installed jank LLVM, OpenSSL, and zstd library directories through bundle-local rpath symlinks; set `JANK_LLVM`, `JANK_CRYPTO_DIR`, or `JANK_ZSTD_DIR` if your jank install uses non-standard locations.
-
-### Shipping a game: `bake`
-
-`./scripts/bake <game-dir>` produces `<game-dir>/dist/<name>/` — engine + a specific game's source, AOT-compiled into one static-runtime binary. The game directory must include a lein-jank `project.clj`; `jank-engine.edn` supplies the baked bundle name and asset directories. Static-runtime builds cannot load lazy mode namespaces from loose source, so the sample game's `project.clj` uses `sca.baked`, a bake-only entry that top-level requires every supported mode before delegating to `sca.core`.
-
-```
-<game-dir>/dist/<name>/
-├── bin/<name>               AOT executable (engine + game baked together)
-├── lib/<name>/              bundled dylibs
-├── models/  textures/       game assets (per :assets in jank-engine.edn)
-└── <name>_run               launcher
-```
-
-**End users need nothing.** No XCode CLI tools, no jank, no clang, no LLVM runtime. Baked bundles use jank's static runtime, so they cannot JIT loose source or runtime `eval`; all game and engine namespaces must be compiled into the binary.
-
-To distribute: ship the `dist/<name>/` directory; users run `./<name>_run`.
-
-Before distributing, run `./scripts/verify-portability dist/jank-engine` and
-`./scripts/verify-portability <game-dist>` from `engine/`. How and why the
-no-prereq baked bundle works is documented in
-[engine/docs/bake-distribution.md](engine/docs/bake-distribution.md).
-
-## Platform support
-
-**macOS (Apple Silicon)** — primary platform, fully supported.
-**Linux (x86_64)** — built and smoke-tested in CI with Xvfb.
-**Windows** — no working build or distribution path yet.
-
-## Points of interest
-
-- **[clet macro](engine/src/engine/macros.jank)** — C-style error handling that flattens nested conditionals.
-- **[C++ interop notes](CPP_INTEROP_DOCUMENTATION.md)** — patterns and gotchas for `cpp/raw` blocks.
-
-## License
-
-For learning purposes. Use as you see fit.
+Graphical tests require a server connection, 120 completed frames, and a clean client exit. CI runs development tests and tests relocated releases with jank absent from `PATH`. Linux graphical tests run under Xvfb; macOS CI uses network tests. See [distribution details](engine/docs/bake-distribution.md).

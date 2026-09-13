@@ -1,6 +1,7 @@
 #pragma once
 #include "cgltf.h"
 #include <cstring>
+#include <memory>
 
 struct Vertex {
   float pos[3];
@@ -21,6 +22,11 @@ struct Vertex {
       uv[0]=uv[1]=0.0f;
   }
 };
+
+#ifdef __GLIBCXX__
+// Emit the allocator deallocation used by Linux JIT vector operations.
+template class std::allocator<Vertex>;
+#endif
 
 inline size_t int_size_fn() { return sizeof(int); }
 #define int_size (int_size_fn())

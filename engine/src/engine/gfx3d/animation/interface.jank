@@ -8,6 +8,11 @@
   []
   (core/create-context))
 
+(defn destroy-context
+  "Release a context returned by create-context. Do not use it afterward."
+  [context]
+  (core/destroy-context context))
+
 (defn load-skeleton
   "Loads a skeleton from an .ozz file.
    Args: {:path \"path/to/skeleton.ozz\" :context context}

@@ -6,7 +6,7 @@
   :middleware [leiningen.jank/middleware]
   :dependencies [[opengl-with-jank/engine "0.1.0-SNAPSHOT"]]
   :source-paths ["src"]
-  :main sca.baked
+  :main sca.core
   :jank {:name "sca"
          :target-dir "target/debug"
          :optimization-level 0

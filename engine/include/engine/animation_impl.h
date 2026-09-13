@@ -22,6 +22,9 @@ namespace eanim {
 inline AnimationContext* create_animation_context() {
   return new AnimationContext();
 }
+inline void destroy_animation_context(AnimationContext* context) {
+  delete context;
+}
 } // namespace eanim
 
 // Mesh archive implementation (from ozz samples framework)

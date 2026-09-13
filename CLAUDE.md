@@ -1,114 +1,38 @@
-# CLAUDE.md
+# Repository guidance
 
-Guidance for Claude Code working in this repository.
+## Build and run
 
-## Layout
-
-```
-opengl-with-jank/
-├── engine/               # Reusable jank+OpenGL runtime
-│   ├── deps.edn          ; {:paths ["src"]}
-│   ├── src/engine/       ; 16 jank namespaces
-│   ├── include/          ; engine *_impl.h + bundled third-party (cgltf, enet, stb_*, gl_*, ozz_mesh, animation_types)
-│   ├── assets/           ; shaders/, fonts/ — embedded into the engine binary
-│   ├── scripts/          ; setup, build-engine, asset pipeline, distribution helpers
-│   ├── third_party/      ; ozz-animation submodule, tinygltf
-│   ├── libs/             ; glm source submodule
-│   ├── tools/            ; gla2ozz, ozz2gltf, ozz-retarget (C++ asset pipeline)
-│   ├── docs/
-│   └── build/  dist/  target/   ; gitignored
-│
-├── game/                 # Strafe Combat Academy
-│   ├── deps.edn          ; {:paths ["src"]}
-│   ├── jank-engine.edn   ; {:entry sca.core :paths ["src"] :includes ["include"]}
-│   ├── src/sca/          ; client, server, editor/, viewer, networking/, …
-│   ├── include/sca/      ; game *_impl.h
-│   └── models/  textures/  course.edn  output.map
-│
-├── CLAUDE.md  README.md  CPP_INTEROP_DOCUMENTATION.md
-└── .gitmodules
-```
-
-The two trees are independent: no symlinks between them. The engine knows nothing about the game. The game builds against the engine source package and uses the reusable `jank-engine` binary for loose-source development.
-
-## Commands
+The engine is a Leiningen source package. The game depends on it through `project.clj`.
 
 ```bash
 cd engine
-./scripts/setup           # initialize submodules + lein install
-./scripts/build-engine    # produces dist/jank-engine/jank-engine_run
-
+lein install
 cd ../game
-../engine/dist/jank-engine/jank-engine_run . server          # host
-../engine/dist/jank-engine/jank-engine_run . client [ip]     # join
-../engine/dist/jank-engine/jank-engine_run . editor          # course designer
-../engine/dist/jank-engine/jank-engine_run . viewer          # animation viewer
-../engine/dist/jank-engine/jank-engine_run . net-test server # ENet smoke
-
-# Ship a standalone game (no end-user prerequisites):
-cd engine
-./scripts/bake ../game                     # default output: <game>/dist/<name>/
-./scripts/bake ../game -o /tmp/sca-dist    # custom output
+export JANK_REAL="${JANK_REAL:-$(command -v jank)}"
+export PATH="$PWD/../scripts/eager:$PATH"
+lein run -- server
+lein run -- client
+lein with-profile release compile
+./scripts/package
 ```
 
-`jank-engine_run` arguments:
-- arg 1: game directory (contains `jank-engine.edn`)
-- arg 2+: passed to the entry namespace's `-main`
+Reinstall the engine after source changes. Use `project.clj` and `jank-build.bb` for build settings. Native dependency compilation belongs to jank-build; release packaging belongs in `game/scripts/package` and `game/scripts/bundle-native.py`.
 
-`bake` arguments:
-- `<game-dir>`: same as `jank-engine_run` arg 1
-- `-o <dir>`: optional output dir (default `<game-dir>/dist/<name>`)
+The engine has no standalone loader. `sca.core` requires all supported modes so the same entry point works with `lein run` and static-runtime release compilation. Keep compiler workarounds documented in `engine/docs/bake-distribution.md` until their isolated repros pass without them.
 
-## Runtime model
+## Layout
 
-`jank-engine` is a single AOT-compiled binary that bakes in every `engine.*` namespace and packages engine-native deps (GLFW, ozz, ENet, STB, cgltf, GLM headers, engine headers). It intentionally uses the developer's installed `jank`/LLVM/clang runtime for loose game-source JIT. At startup it:
+- `engine/src/engine`: engine namespaces, generally with interface/core splits.
+- `engine/include`: engine and third-party C/C++ headers.
+- `engine/native`: native CMake build and implementation translation units.
+- `engine/assets`: embedded shaders and fonts.
+- `engine/libs/glm`, `engine/third_party/ozz-animation`: source submodules.
+- `game/src/sca`, `game/include`: game code and headers.
+- `game/models`, `game/textures`: release assets.
 
-1. Resolves `<bin>/../include` via `_NSGetExecutablePath` and adds it to `Cpp::AddIncludePath` so consumer `cpp/raw` blocks find glm/GLFW/ozz/engine `*_impl.h`.
-2. Reads `<game-dir>/jank-engine.edn` (`:entry`, `:paths`, `:includes`).
-3. `chdir`s into the game directory so asset paths resolve relative to it.
-4. Adds the game's `:paths` to the jank module loader and its `:includes` to clang.
-5. Eagerly `(require ...)`s configured game source namespaces, realizes deferred function bodies (`:preload` supports `:all`, `false`, explicit namespace lists, or a mode-keyed map), and invokes the entry namespace's `-main`.
+## Validation
 
-Engine assets (shaders/fonts) are embedded through a generated `engine_assets.h` at engine-build time and registered into jank's static `aot::resource` registry by a top-level form in `engine.resources.core`. Consumers access them through engine helpers (see "Resource registry" below) — the game CWD does **not** need to contain a `shaders/` or `fonts/` directory.
-
-## Engine modules (`engine.*`)
-
-| Namespace | Purpose |
-|---|---|
-| `engine.macros` | `clet` macro for C-style error handling |
-| `engine.io` | File reads |
-| `engine.math` | GLM wrappers (`gimmie`, `*->`) |
-| `engine.shaders` | Shader/program compilation, VAOs, default-* helpers |
-| `engine.gl` | Low-level OpenGL state + constants |
-| `engine.gc` | BDWGC incremental control for frame budgets |
-| `engine.events` | Atom-based event store |
-| `engine.networking` | ENet UDP client/server, packet send/recv, polling |
-| `engine.resources` | Static resource registry init |
-| `engine.runtime` | The runtime binary's `-main` (binary entry) |
-| `engine.gfx2d.graphics` | 2D primitives (lines, arcs, filled) |
-| `engine.gfx2d.text` | STB TrueType font rendering |
-| `engine.gfx3d.geometry` | Vertex data, VBO/EBO setup |
-| `engine.gfx3d.textures` | STB Image |
-| `engine.gfx3d.gltf` | cgltf parsing (+ `.headless` for server) |
-| `engine.gfx3d.animation` | ozz integration, skinning |
-| `engine.gfx3d.collision` | Raycast ground detection |
-| `engine.gfx3d.lines` | Debug line rendering |
-| `engine.behavior-tree` | Vector DSL for AI/game logic |
-
-Each module uses an interface/core split: `interface.jank` (public API) and `core.jank` (impl).
-
-## Adding a new game
-
-1. Create a new directory next to `game/` with this minimum:
-   ```
-   my-game/
-   ├── jank-engine.edn   ; {:entry my-game.core :paths ["src"] :includes ["include"]}
-   └── src/my-game/core.jank
-   ```
-2. In `core.jank`, define `(ns my-game.core)` and a `-main` function (zero-arity OK).
-3. Run with `<engine-dist>/jank-engine_run /path/to/my-game [args...]`.
-
-The game gets all engine namespaces by `(:require [engine.shaders.interface :as shaders] ...)` etc. — no engine paths or build flags to know about.
+`scripts/smoke-test.py` checks a development command or packaged executable with a server/client pair. `--graphics` checks connection and entry into the game loop; the default checks echoed network messages. `--standalone` removes jank and custom library search paths from the process environment. Release tests move the bundle before running it.
 
 ## C++ interop conventions
 
@@ -165,66 +89,3 @@ To consume engine-shipped shaders/fonts from a game:
 ```
 
 Don't call `(shaders/load-shader-program {:vertex-shader-path "..."})` from a game — it `fopen`s relative to CWD and engine assets aren't on disk in the game's CWD. The named helpers above route through the registry. Each call compiles+links a fresh GL program (not memoized) — call once at init and hold the returned ID.
-
-## Native dependencies
-
-Both projects use `project.clj` and `jank-build.bb`. Lein-jank owns native builds and caches; the game depends on `opengl-with-jank/engine` as a source package.
-
-| Lib | Build source |
-|---|---|
-| OpenGL / GLFW | Commons `gl-sys` / `glfw-sys` packages discover system installations |
-| GLEW (Linux) | `jank-build-pkg-config` discovers the system installation |
-| GLM | Header-only source submodule in `engine/libs/glm/` |
-| STB, cgltf, ENet | `engine/native/CMakeLists.txt` compiles bundled headers |
-| ozz-animation | Same CMake build uses the source submodule |
-| Shaders/fonts | Generated header in jank's managed include directory |
-
-`engine/jank-build.bb` uses `jank-build-cmake` to install libraries and headers into jank's managed output directory. Reinstall the engine package after changing its source (`cd engine && lein install`); `bake` does this automatically.
-
-## Distribution helpers
-
-`engine/scripts/distribution-common.sh` handles packaging paths and build-path sanitization. `bundle-native.py` follows linked native dependencies and rewrites loader paths in staged copies. Compilation and dependency discovery belong in Leiningen and the native build scripts.
-
-Supported packaging targets are macOS and Linux. Windows packaging is not implemented.
-
-## Asset pipeline tools
-
-`engine/tools/`:
-
-- **gla2ozz** — Convert Quake 3 / JKA `.gla` skeletal animations to ozz format.
-- **ozz2gltf** — Export ozz skeletons / animations to glTF for visualization.
-- **ozz-retarget** — Retarget animations between skeleton rigs.
-
-Build with `engine/scripts/build-gla2ozz`, `engine/scripts/build-ozz2gltf`, `engine/scripts/build-ozz-tools.sh`.
-
-## Distribution
-
-There are two artifacts, for two different audiences:
-
-**`scripts/build-engine` → `engine/dist/jank-engine/`** — the dev-iteration runtime. Bakes every `engine.*` namespace, packages engine-native dylibs and headers, and expects a compatible `jank` on `PATH` for LLVM/clang/JIT resources. Reusable across games: `jank-engine_run /path/to/any-game-dir`. On macOS the launcher maps installed jank LLVM/OpenSSL/zstd library dirs through temporary bundle-local rpath symlinks.
-
-**`scripts/bake` → `<game-dir>/dist/<name>/`** — the shipping artifact. AOT-compiles engine + a specific game's source into one static-runtime binary. No JIT happens at runtime, so end users need **nothing** — no XCode CLI tools, no jank, no clang, no LLVM runtime. It bundles only the runtime support dylibs/shared objects needed by the executable and native engine libraries.
-
-Both packaging paths run build-path sanitization after compile. Use `engine/scripts/verify-portability <dist-dir>` to check binaries, dylibs/shared objects, dynamic loader metadata, and executable launchers for local checkout/temp/package-manager path leaks. CI runs `verify-portability --self-test` first so the checker proves it catches known-bad launcher and binary fixtures.
-
-Full design + jank-source citations + failure modes + verification recipe in [`engine/docs/bake-distribution.md`](engine/docs/bake-distribution.md). Read that before changing anything in `bake` or upgrading the jank submodule.
-
-`bake` uses the game's lein-jank `:main` (`sca.baked` in the sample game) so
-all runtime modes are statically reachable even though the dev dispatcher
-requires modes lazily.
-
-`bake` requires the game's `jank-engine.edn` to declare:
-- `:entry` — the namespace whose `-main` to invoke
-- `:name` (optional) — output binary name (defaults to first segment of `:entry`)
-- `:paths`, `:includes` — source and header dirs (relative to game dir)
-- `:assets` (optional) — dirs to copy into the bundle (e.g. `["models" "textures"]`)
-
-Linux x86_64 builds are covered by CI. The Linux workflow builds the dev engine, verifies portability, bakes the sample game, verifies the baked bundle, and smoke-tests both dev and baked server/client paths under Xvfb. Windows packaging is not implemented.
-
-## Common gotchas
-
-- **Untyped float literals in `cpp/...` calls fail JIT compile.** Wrap each literal: `(cpp/glm.vec3 (cpp/float 3.0) (cpp/float 2.0) (cpp/float 3.0))`.
-- **`try`/`catch` in jank takes a C++ exception type, not `:default`.** No catch-all keyword exists.
-- **JVM-isms aren't available.** No `.startsWith` etc. — use `(subs s 0 n)` and friends.
-- **Module-not-found from JIT.** Either the namespace isn't on `:paths` in `jank-engine.edn`, or its file path doesn't match the namespace (hyphens → underscores in path segments).
-- **Header not found in consumer `cpp/raw`.** The game's `:includes` should list directories containing the headers; engine third-party (glm, GLFW, ozz, engine `*_impl.h`) is auto-added by the binary at startup.

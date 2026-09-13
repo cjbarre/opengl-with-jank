@@ -28,7 +28,8 @@
 
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>
-#include <cstdio>")
+#include <cstdio>
+#include <cstdlib>")
 (cpp/raw "#include \"sca/client_impl.h\"")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
@@ -392,6 +393,8 @@
   "Handle player disconnect event."
   [client-state msg]
   (println "Player disconnected:" (:player-id msg))
+  (when-let [context (:animation/context (get (:remote-players client-state) (:player-id msg)))]
+    (anim/destroy-context context))
   (update client-state :remote-players dissoc (:player-id msg)))
 
 (defn handle-network-message
@@ -685,7 +688,11 @@
           (strafehelper/render-strafehelper gfx2d velocity yaw grounded 1280 720)))
 
       (cpp/glfwSwapBuffers (cpp/unbox (:* GLFWwindow) window))
-      (cpp/glfwPollEvents))))
+      (cpp/glfwPollEvents)
+      (when-let [frames (:smoke/frames context)]
+        (when (= 120 (swap! frames inc))
+          (println "Completed 120 client frames.")
+          (cpp/glfwSetWindowShouldClose (cpp/unbox (:* GLFWwindow) window) 1))))))
 
 ;; =============================================================================
 ;; Entry Point
@@ -777,6 +784,7 @@
                :line-vbo line-vbo
                :level-model level-loaded
                :player-anim-data (atom player-anim-data)
+               :smoke/frames (when (cpp/bool (cpp/std.getenv "SCA_SMOKE_TEST")) (atom 0))
                :gfx2d gfx2d
                :delta-time (math/gimmie :boxed :float 0.0)
                :last-frame (math/gimmie :boxed :float 0.0)
@@ -793,5 +801,8 @@
              (println "ERROR: Connection timed out")
              (net/stop network)))))
 
+     (anim/destroy-context (:animation/context player-anim-data))
+     (doseq [[_ remote] (:remote-players @client-state)]
+       (anim/destroy-context (:animation/context remote)))
      (cpp/glfwTerminate)
      (println "Client finished.")))))

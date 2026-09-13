@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+exec "${JANK_REAL:?Set JANK_REAL to the installed jank executable before adding this directory to PATH}" --eagerness eager "$@"

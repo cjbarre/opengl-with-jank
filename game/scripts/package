@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+lein with-profile release compile
+out=dist/sca
+rm -rf "$out"
+mkdir -p "$out"
+python3 scripts/bundle-native.py target/release/sca "$out"
+for asset in models textures; do
+    mkdir -p "$out/$asset"
+    cp -R "$asset/." "$out/$asset/"
+done
+cat > "$out/sca_run" <<'LAUNCHER'
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+exec ./bin/sca "$@"
+LAUNCHER
+chmod +x "$out/sca_run"
+echo "Packaged: $out"

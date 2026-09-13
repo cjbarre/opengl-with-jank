@@ -30,6 +30,11 @@
   (let [ctx (cpp/eanim.create_animation_context)]
     (cpp/box ctx)))
 
+(defn destroy-context
+  "Release an animation context and its skeleton, animations, and buffers."
+  [context]
+  (cpp/eanim.destroy_animation_context (cpp/unbox (:* AnimationContext) context)))
+
 ;; Load skeleton from file
 (defn load-skeleton
   "Loads a skeleton from an .ozz file"

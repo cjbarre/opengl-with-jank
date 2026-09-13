@@ -1,5 +1,5 @@
 (defproject opengl-with-jank/engine "0.1.0-SNAPSHOT"
-  :description "Reusable jank/OpenGL runtime for loading loose game source."
+  :description "Reusable jank/OpenGL engine library."
   :license {:name "MPL 2.0"
             :url "https://www.mozilla.org/en-US/MPL/2.0/"}
   :plugins [[org.jank-lang/lein-jank "2026.09-7"]]
@@ -17,11 +17,4 @@
                    "third_party/ozz-animation/CHANGES.md"
                    "third_party/ozz-animation/LICENSE.md"
                    "third_party/ozz-animation/README.md"]
-  :source-paths ["src"]
-  :auto-clean false
-  :main engine.runtime.core
-  :jank {:name "jank-engine"
-         :target-dir "target/engine"
-         :optimization-level 3
-         :runtime :dynamic
-         :static? false})
+  :source-paths ["src"])

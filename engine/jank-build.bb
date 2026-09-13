@@ -7,9 +7,7 @@
 (let [{:keys [src-dir out-dir static?] :as input} *input*
       include-dir (str (fs/path out-dir "include"))
       lib-dir (str (fs/path out-dir "lib"))]
-  (cmake/build (assoc input :src-dir (str (fs/path src-dir "native")))
-               {:defines {"CMAKE_C_FLAGS" (str (System/getenv "CFLAGS") " -ffile-prefix-map=" src-dir "=/engine")
-                          "CMAKE_CXX_FLAGS" (str (System/getenv "CXXFLAGS") " -ffile-prefix-map=" src-dir "=/engine")}})
+  (cmake/build (assoc input :src-dir (str (fs/path src-dir "native"))) {})
   (proc/shell "bb" (str (fs/path src-dir "scripts/embed-assets.clj"))
               (str (fs/path include-dir "engine_assets.h"))
               (str "shaders:" (fs/path src-dir "assets/shaders"))

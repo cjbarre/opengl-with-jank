@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Publish the engine source/native package for local game projects.
-# Native dependencies are built and cached by lein-jank when compiling/running.
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
-git submodule update --init --recursive
-lein install

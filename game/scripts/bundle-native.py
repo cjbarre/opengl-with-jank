@@ -36,7 +36,6 @@ def main():
     parser.add_argument('executable', type=Path)
     parser.add_argument('destination', type=Path)
     parser.add_argument('--name')
-    parser.add_argument('--dev', action='store_true')
     args = parser.parse_args()
     source = args.executable.resolve()
     name = args.name or source.name
@@ -47,8 +46,6 @@ def main():
     binary.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, binary)
     mac = sys.platform == 'darwin'
-    # The dev launcher supplies these from the installed jank toolchain.
-    runtime = ('libLLVM', 'libclang-cpp', 'libc++', 'libunwind', 'libcrypto', 'libzstd')
     queue = [(source, binary)]
     copied = {}
     exe_rpaths = mac_rpaths(source) if mac else []
@@ -63,10 +60,6 @@ def main():
             deps = re.findall(r'^\s*\S+ => (/\S+)', listing, re.M)
         for dep in deps:
             leaf = Path(dep).name
-            if args.dev and leaf.startswith(runtime):
-                if mac:
-                    run('install_name_tool', '-change', dep, '@rpath/' + leaf, str(staged))
-                continue
             if mac:
                 if dep.startswith(('/usr/lib/', '/System/Library/')):
                     continue
@@ -102,11 +95,11 @@ def main():
             run('install_name_tool', '-add_rpath', relative, str(staged))
             if staged != binary:
                 run('install_name_tool', '-id', '@rpath/' + staged.name, str(staged))
-            elif args.dev:
-                for folder in ('jank-runtime', 'jank-crypto', 'jank-zstd'):
-                    run('install_name_tool', '-add_rpath', '@executable_path/../lib/' + folder, str(staged))
         else:
             run('patchelf', '--set-rpath', f'$ORIGIN/../lib/{name}' if staged == binary else '$ORIGIN', str(staged))
+    if mac:
+        for _, staged in queue:
+            run('codesign', '--force', '--sign', '-', str(staged))
     print(f'Staged {name} and {len(copied)} native libraries in {dest}')
 
 

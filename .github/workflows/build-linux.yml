@@ -116,219 +116,40 @@ jobs:
       - name: jank check-health
         run: jank check-health
 
-      - name: Verify portability checker self-test
-        working-directory: engine
-        run: ./scripts/verify-portability --self-test
-
-      # ---------------------------------------------------------------------
-      # Build the engine
-      # ---------------------------------------------------------------------
       - name: Install engine source package
         working-directory: engine
-        run: ./scripts/setup
+        run: lein install
 
-      - name: Build engine binary
-        working-directory: engine
-        run: ./scripts/build-engine
+      - name: Test development networking
+        run: JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" python3 scripts/smoke-test.py --cwd game --logs /tmp/sca-dev-net -- lein run --
 
-      - name: Verify dev engine portability
-        working-directory: engine
-        run: ./scripts/verify-portability dist/jank-engine
+      - name: Test development client
+        run: JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" xvfb-run -a python3 scripts/smoke-test.py --graphics --cwd game --logs /tmp/sca-dev-graphics -- lein run --
 
-      - name: Bake game distribution
-        working-directory: engine
-        run: ./scripts/bake ../game -o /tmp/sca-bake
-
-      - name: Verify baked distribution portability
-        working-directory: engine
-        run: ./scripts/verify-portability /tmp/sca-bake
-
-      - name: Smoke test baked distribution (server + client)
-        run: |
-          set -eo pipefail
-
-          /tmp/sca-bake/sca_run server > /tmp/baked-server.log 2>&1 &
-          SERVER_PID=$!
-          cleanup_pid_tree() {
-            local pid="$1"
-            while IFS= read -r child_pid; do
-              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
-            done < <(pgrep -P "$pid" 2>/dev/null || true)
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-          }
-          cleanup_smoke() {
-            [[ -n "${CLIENT_PID:-}" ]] && cleanup_pid_tree "$CLIENT_PID"
-            [[ -n "${SERVER_PID:-}" ]] && cleanup_pid_tree "$SERVER_PID"
-            [[ -n "${XVFB_PID:-}" ]] && cleanup_pid_tree "$XVFB_PID"
-          }
-          trap cleanup_smoke EXIT
-
-          bound=0
-          for i in $(seq 1 40); do
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "::error::baked server exited before binding UDP/7777"
-              break
-            fi
-            if ss -ulnp 2>/dev/null | grep -q ':7777'; then
-              bound=1
-              echo "✓ baked server bound UDP/7777 (after ~$((i*1))s)"
-              break
-            fi
-            sleep 1
-          done
-
-          if [[ "$bound" -ne 1 ]]; then
-            echo "::error::baked server failed to bind UDP/7777"
-            cat /tmp/baked-server.log
-            exit 1
-          fi
-
-          Xvfb :98 -screen 0 1280x720x24 -ac > /tmp/baked-xvfb.log 2>&1 &
-          XVFB_PID=$!
-          sleep 1
-
-          DISPLAY=:98 stdbuf -oL -eL /tmp/sca-bake/sca_run client > /tmp/baked-client.log 2>&1 &
-          CLIENT_PID=$!
-          ready=0
-          for i in $(seq 1 600); do
-            if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-              break
-            fi
-            if grep -q 'Entering client loop' /tmp/baked-client.log; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$ready" -ne 1 ]]; then
-            echo "::error::client failed to enter the game loop"
-            cat /tmp/baked-client.log
-            exit 1
-          fi
-          sleep 8
-
-          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-            echo "::error::baked client died before timeout"
-            cat /tmp/baked-client.log
-            exit 1
-          fi
-          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            echo "::error::baked server died while client was running"
-            cat /tmp/baked-server.log
-            exit 1
-          fi
-          echo "✓ baked server + client co-ran for 8s"
-
-          cleanup_smoke
-          trap - EXIT
-
-      # ---------------------------------------------------------------------
-      # Smoke test: server binds, client renders under Xvfb, both stay up
-      # ---------------------------------------------------------------------
-      - name: Smoke test (server + client over loopback)
+      - name: Compile and package release
         working-directory: game
-        run: |
-          set -eo pipefail
-          ENGINE=../engine/dist/jank-engine/jank-engine_run
+        run: ./scripts/package
 
-          # Server (headless, ENet UDP on 7777)
-          "$ENGINE" . server > /tmp/server.log 2>&1 &
-          SERVER_PID=$!
-          cleanup_pid_tree() {
-            local pid="$1"
-            while IFS= read -r child_pid; do
-              [[ -n "$child_pid" ]] && kill "$child_pid" 2>/dev/null || true
-            done < <(pgrep -P "$pid" 2>/dev/null || true)
-            kill "$pid" 2>/dev/null || true
-            wait "$pid" 2>/dev/null || true
-          }
-          cleanup_smoke() {
-            [[ -n "${CLIENT_PID:-}" ]] && cleanup_pid_tree "$CLIENT_PID"
-            [[ -n "${SERVER_PID:-}" ]] && cleanup_pid_tree "$SERVER_PID"
-            [[ -n "${XVFB_PID:-}" ]] && cleanup_pid_tree "$XVFB_PID"
-          }
-          trap cleanup_smoke EXIT
+      - name: Relocate release
+        run: mv game/dist/sca /tmp/sca-release
 
-          bound=0
-          for i in $(seq 1 40); do
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "::error::server exited before binding UDP/7777"
-              break
-            fi
-            if ss -ulnp 2>/dev/null | grep -q ':7777'; then
-              bound=1
-              echo "✓ server bound UDP/7777 (after ~$((i*1))s)"
-              break
-            fi
-            sleep 1
-          done
+      - name: Test release without jank on PATH
+        run: python3 scripts/smoke-test.py --standalone --cwd /tmp --logs /tmp/sca-release-net -- /tmp/sca-release/sca_run
 
-          if [[ "$bound" -ne 1 ]]; then
-            echo "::error::server failed to bind UDP/7777"
-            cat /tmp/server.log
-            exit 1
-          fi
+      - name: Test release client
+        run: xvfb-run -a python3 scripts/smoke-test.py --standalone --graphics --cwd /tmp --logs /tmp/sca-release-graphics -- /tmp/sca-release/sca_run
 
-          # Xvfb for client GL context
-          Xvfb :99 -screen 0 1280x720x24 -ac > /tmp/xvfb.log 2>&1 &
-          XVFB_PID=$!
-          sleep 1
-
-          # Client connects to loopback under software-rendered GL
-          DISPLAY=:99 stdbuf -oL -eL "$ENGINE" . client > /tmp/client.log 2>&1 &
-          CLIENT_PID=$!
-          ready=0
-          for i in $(seq 1 600); do
-            if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-              break
-            fi
-            if grep -q 'Entering client loop' /tmp/client.log; then
-              ready=1
-              break
-            fi
-            sleep 1
-          done
-          if [[ "$ready" -ne 1 ]]; then
-            echo "::error::client failed to enter the game loop"
-            cat /tmp/client.log
-            exit 1
-          fi
-          sleep 8
-
-          if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
-            echo "::error::client died before timeout"
-            cat /tmp/client.log
-            exit 1
-          fi
-          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-            echo "::error::server died while client was running"
-            cat /tmp/server.log
-            exit 1
-          fi
-          echo "✓ server + client co-ran for 8s"
-
-          # Clean teardown
-          cleanup_smoke
-          trap - EXIT
-
-      - name: Upload server / client logs on failure
+      - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: smoke-logs-linux-x86_64
-          path: |
-            /tmp/server.log
-            /tmp/client.log
-            /tmp/xvfb.log
-            /tmp/baked-server.log
-            /tmp/baked-client.log
-            /tmp/baked-xvfb.log
+          path: /tmp/sca-*/*.log
           if-no-files-found: ignore
 
-      - name: Upload jank-engine binary
+      - name: Upload release
         uses: actions/upload-artifact@v4
         with:
-          name: jank-engine-linux-x86_64
-          path: engine/dist/jank-engine/
+          name: sca-linux-x86_64
+          path: /tmp/sca-release/
           retention-days: 14
