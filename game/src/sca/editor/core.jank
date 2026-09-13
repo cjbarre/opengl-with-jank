@@ -7,6 +7,7 @@
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.lines.interface :as lines]
+            [engine.gfx3d.animation.interface :as anim]
             [engine.gl.constants :as gl])
   (:require
             [sca.camera :as camera]
@@ -626,5 +627,6 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
     (println "Build mode ready. IJKL/UO to move cursor, Shift+same to resize, 1-5 for pieces, Space to place, Tab to test.")
     (run-loop context state-atom)
 
+    (anim/destroy-context (:animation/context @player-anim))
     (cpp/glfwTerminate)
     (println "Done.")))
