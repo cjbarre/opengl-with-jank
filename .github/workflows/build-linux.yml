@@ -56,6 +56,12 @@ jobs:
             xvfb mesa-utils libgl1-mesa-dri \
             python3
 
+      - name: Enable native-build sandbox namespaces
+        run: |
+          # Ubuntu 24.04 restricts the namespaces used by jank-build's bubblewrap sandbox.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-all --ro-bind / / --proc /proc --dev /dev /usr/bin/true
+
       - name: Install Babashka
         uses: DeLaGuardo/setup-clojure@12.5
         with:

@@ -6,7 +6,7 @@ A jank/OpenGL game engine and Strafe Combat Academy, a game with networked multi
 
 ## Development
 
-Install jank, Leiningen, Babashka, CMake, a C/C++ compiler, pkg-config, GLFW, and OpenGL. Linux also requires GLEW and bubblewrap. On macOS, the additional tools can be installed with `brew install leiningen babashka cmake pkgconf glfw python`.
+Install jank, Leiningen, Babashka, CMake, a C/C++ compiler, pkg-config, GLFW, and OpenGL. Linux also requires GLEW and bubblewrap. On macOS, the additional tools can be installed with `brew install leiningen borkdude/brew/babashka cmake pkgconf glfw python`.
 
 ```bash
 git submodule update --init --recursive

@@ -33,7 +33,7 @@ jobs:
         id: brew-deps
         run: |
           # Skip `brew update` — slowest step, runners stay fairly current.
-          brew install llvm cmake ninja boost openssl@3 zstd doctest leiningen babashka pkgconf glfw python
+          brew install llvm cmake ninja boost openssl@3 zstd doctest leiningen borkdude/brew/babashka pkgconf glfw python
           echo "llvm=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           installed_major=$(/opt/homebrew/opt/llvm/bin/clang --version \
             | head -1 | grep -oE 'version [0-9]+' | awk '{print $2}')
