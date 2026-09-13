@@ -49,7 +49,7 @@ cleanup_self_test() {
 }
 
 self_test() {
-    local temp_dir good_dir bad_text_dir bad_object_dir
+    local temp_dir good_dir bad_text_dir bad_object_dir bad_home_dir
     temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/verify-portability.XXXXXX")"
     SELF_TEST_TEMP="$temp_dir"
     trap cleanup_self_test EXIT
@@ -57,10 +57,13 @@ self_test() {
     good_dir="$temp_dir/good"
     bad_text_dir="$temp_dir/bad-text"
     bad_object_dir="$temp_dir/bad-object"
-    mkdir -p "$good_dir" "$bad_text_dir" "$bad_object_dir/bin"
+    bad_home_dir="$temp_dir/bad-home"
+    mkdir -p "$good_dir" "$bad_text_dir" "$bad_object_dir/bin" "$bad_home_dir"
 
     printf '%s\n' \
         '#!/usr/bin/env bash' \
+        '# /usr/include/boost/math/tools/roots.hpp' \
+        '# icudt74l/root.res' \
         'DIR="$(cd "$(dirname "$0")" && pwd)"' \
         'exec "$DIR/bin/game" "$@"' \
         > "$good_dir/game_run"
@@ -73,6 +76,10 @@ self_test() {
         > "$bad_text_dir/bad_run"
     chmod +x "$bad_text_dir/bad_run"
     run_expect_failure "$temp_dir/bad-text" "$SCRIPT_PATH" "$bad_text_dir"
+
+    printf '#!/usr/bin/env bash\nexec "%s/not-portable/bin/game"\n' "$HOME" > "$bad_home_dir/bad_run"
+    chmod +x "$bad_home_dir/bad_run"
+    run_expect_failure "$temp_dir/bad-home" "$SCRIPT_PATH" "$bad_home_dir"
 
     if command -v cc >/dev/null 2>&1; then
         cat > "$bad_object_dir/bad.c" <<'C_SOURCE'
@@ -156,6 +163,8 @@ if [[ -z "$JANK_LLVM" && -n "$JANK_DIR" && -d "$JANK_DIR/build/llvm-install/usr/
     JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
 elif [[ -z "$JANK_LLVM" && -n "${CLANG_VERSION:-}" && -d "/usr/lib/llvm-$CLANG_VERSION" ]]; then
     JANK_LLVM="/usr/lib/llvm-$CLANG_VERSION"
+elif [[ -z "$JANK_LLVM" && -d "/usr/lib/llvm-23" ]]; then
+    JANK_LLVM="/usr/lib/llvm-23"
 elif [[ -z "$JANK_LLVM" && -d "/usr/lib/llvm-22" ]]; then
     JANK_LLVM="/usr/lib/llvm-22"
 fi
@@ -166,7 +175,7 @@ declare -a OBJECT_FORBIDDEN_PREFIXES=(
     "$BUNDLE_DIR"
     "$JANK_DIR"
     "$JANK_LLVM"
-    "$RUNNER_HOME"
+    "${RUNNER_HOME:+${RUNNER_HOME%/}/}"
     "/Users/"
     "/home/runner/"
     "/private/tmp/"
@@ -178,13 +187,14 @@ declare -a OBJECT_FORBIDDEN_PREFIXES=(
     "/usr/local/opt/openssl@3"
     "/usr/local/opt/zstd"
     "/usr/lib/llvm-22"
+    "/usr/lib/llvm-23"
 )
 
 declare -a TEXT_FORBIDDEN_PREFIXES=(
     "$REPO_ROOT"
     "$ENGINE_DIR"
     "$BUNDLE_DIR"
-    "$RUNNER_HOME"
+    "${RUNNER_HOME:+${RUNNER_HOME%/}/}"
     "/Users/"
     "/home/runner/"
     "/private/tmp/"

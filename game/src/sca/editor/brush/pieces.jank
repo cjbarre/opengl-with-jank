@@ -82,7 +82,7 @@
           center [(/ (+ x1 x2) 2.0) (/ (+ y1 y2) 2.0) (/ (+ z1 z2) 2.0)]
           ;; Rotation axis: north/south face Z so tilt around X; east/west face X so tilt around Z
           axis (case (or facing :north) (:north :south) :x (:east :west) :z)
-          sign (case (or facing :north) (:north :east) 1.0 (:south :west) -1.0)
+          sign (case (or facing :north) (:north :east) (identity 1.0) (:south :west) (identity -1.0))
           angle (* (double sign) (* (double tilt-deg) (/ 3.14159265 180.0)))
           ;; Corners go SW->NW->NE->SE around the bottom (matches make-box-brush winding)
           b0 [x1 y1 z1] b1 [x1 y1 z2] b2 [x2 y1 z2] b3 [x2 y1 z1]

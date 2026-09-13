@@ -100,6 +100,10 @@
 
 
 
+;; Keep throws behind a function call while jank's cond-> scoping issue is open.
+(defn- unsupported-node-transform [transform]
+  (throw (ex-info (str "Node " transform " not implemented") {})))
+
 (defn parse-node
   [node]
   (clet [node (cpp/unbox (:* cgltf_node) node)
@@ -126,10 +130,10 @@
                     (cpp/aget scale (cpp/int 2))]))
 
           (cpp/!= cpp/false (cpp/.-has_rotation node))
-          (assoc :rotation (throw (ex-info "Node rotation not implemented" {})))
+          (assoc :rotation (unsupported-node-transform "rotation"))
 
           (cpp/!= cpp/false (cpp/.-has_matrix node))
-          (assoc :matrix (throw (ex-info "Node matrix not implemented" {}))))))
+          (assoc :matrix (unsupported-node-transform "matrix")))))
 
 (defn parse-scene
   [scene]

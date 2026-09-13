@@ -14,116 +14,34 @@ while [[ -L "$SCRIPT_PATH" ]]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 
-source "$SCRIPT_DIR/platform/common.sh"
-require_platform_support
+source "$SCRIPT_DIR/distribution-common.sh"
 load_jank_paths
 
-LIBS_DIR="$(get_libs_dir)"
-LIB_EXT="$(get_lib_extension)"
-BREW_PREFIX="$(get_homebrew_prefix)"
-
-if [[ "$PLATFORM_OS" == "linux" ]]; then
-    RPATH_PREFIX='$ORIGIN'
-else
-    RPATH_PREFIX="@executable_path"
-fi
-
 OUTPUT="jank-engine"
+COMPILE_DIR="$PROJECT_DIR/target/engine"
 BUILD_DIR="$PROJECT_DIR/dist/jank-engine"
-BUNDLE_DIR="$BUILD_DIR/lib/$OUTPUT"
-BUNDLE_INC="$BUILD_DIR/include"
 
-if [[ ! -f "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" ]]; then
-    echo "ERROR: libengine_assets.$LIB_EXT not found." >&2
-    echo "       Run ./scripts/setup first." >&2
-    exit 1
-fi
+run_lein_compile "$PROJECT_DIR" compile
 
+# Assemble a fresh distribution without deleting lein-jank's build cache.
 chmod -R u+w "$BUILD_DIR" 2>/dev/null || true
 rm -rf "$BUILD_DIR"
-mkdir -p "$BUILD_DIR"
-
-run_lein_compile_with_ozz_preload "$PROJECT_DIR"
-
-mkdir -p "$BUILD_DIR/bin" "$BUNDLE_DIR" "$BUNDLE_INC"
-mv "$BUILD_DIR/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
-rm -rf "$BUILD_DIR/_cache" "$BUILD_DIR/$OUTPUT.dSYM" "$BUILD_DIR/bin/$OUTPUT.dSYM"
-
-# Engine-native dylibs. Jank/LLVM/clang dylibs are provided by the installed
-# jank environment at runtime via the generated launcher.
-if [[ "$PLATFORM_OS" == "linux" ]]; then
-    cp "$LIBS_DIR/glfw/lib/libglfw.so.3" "$BUNDLE_DIR/"
-else
-    cp "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "$BUNDLE_DIR/"
-fi
-cp "$LIBS_DIR/ozz-animation/lib/libozz_animation_r.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/ozz-animation/lib/libozz_base_r.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/ozz-animation/lib/libozz_geometry_r.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/stb/lib/libstb_all.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/enet/lib/libenet.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/cgltf/lib/libcgltf.$LIB_EXT" "$BUNDLE_DIR/"
-cp "$LIBS_DIR/engine-assets/lib/libengine_assets.$LIB_EXT" "$BUNDLE_DIR/"
-if [[ "$PLATFORM_OS" == "macos" ]]; then
-    cp "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "$BUNDLE_DIR/"
-fi
-
-if [[ "$PLATFORM_OS" == "macos" ]]; then
-    install_name_tool -change "$BREW_PREFIX/opt/openssl@3/lib/libcrypto.3.$LIB_EXT" "@rpath/libcrypto.3.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$BREW_PREFIX/opt/zstd/lib/libzstd.1.$LIB_EXT" "@rpath/libzstd.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$JANK_LLVM/lib/libLLVM.$LIB_EXT" "@rpath/libLLVM.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$JANK_LLVM/lib/libclang-cpp.$LIB_EXT" "@rpath/libclang-cpp.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$JANK_LLVM/lib/c++/libc++.1.$LIB_EXT" "@rpath/libc++.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$JANK_LLVM/lib/unwind/libunwind.1.$LIB_EXT" "@rpath/libunwind.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    install_name_tool -change "$JANK_LLVM/lib/c++/libc++abi.1.$LIB_EXT" "@rpath/libc++abi.1.$LIB_EXT" "$BUILD_DIR/bin/$OUTPUT" 2>/dev/null || true
-    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$BREW_PREFIX/opt/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
-    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$LIBS_DIR/glfw/lib/libglfw.3.$LIB_EXT" "@rpath/libglfw.3.$LIB_EXT"
-    change_lib_path "$BUILD_DIR/bin/$OUTPUT" "$LIBS_DIR/opengl/lib/libOpenGL.$LIB_EXT" "@rpath/libOpenGL.$LIB_EXT"
-    for dylib in "$BUNDLE_DIR"/*.dylib; do
-        [[ -f "$dylib" ]] || continue
-        install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib" 2>/dev/null || true
-    done
-fi
-
-delete_rpath "$JANK_LLVM/bin/../lib" "$BUILD_DIR/bin/$OUTPUT"
-delete_rpath "$JANK_LLVM/lib" "$BUILD_DIR/bin/$OUTPUT"
-for lib_dir in glfw ozz-animation stb enet cgltf opengl engine-assets; do
-    delete_rpath "$LIBS_DIR/$lib_dir/lib" "$BUILD_DIR/bin/$OUTPUT"
-    delete_rpath "libs/$PLATFORM/$lib_dir/lib" "$BUILD_DIR/bin/$OUTPUT"
-done
-add_rpath "${RPATH_PREFIX}/../lib/$OUTPUT" "$BUILD_DIR/bin/$OUTPUT"
-if [[ "$PLATFORM_OS" == "macos" ]]; then
-    add_rpath "${RPATH_PREFIX}/../lib/jank-runtime" "$BUILD_DIR/bin/$OUTPUT"
-    add_rpath "${RPATH_PREFIX}/../lib/jank-crypto" "$BUILD_DIR/bin/$OUTPUT"
-    add_rpath "${RPATH_PREFIX}/../lib/jank-zstd" "$BUILD_DIR/bin/$OUTPUT"
-fi
-
-sanitize_embedded_build_paths "$BUILD_DIR/bin/$OUTPUT" "$PROJECT_DIR"
-for native_lib in "$BUNDLE_DIR"/*; do
-    [[ -f "$native_lib" ]] || continue
-    if [[ "$PLATFORM_OS" == "linux" ]]; then
-        fix_lib_install_name "$native_lib"
-    fi
-    sanitize_embedded_build_paths "$native_lib" "$PROJECT_DIR"
-done
-
-if [[ "$PLATFORM_OS" == "macos" ]]; then
-    find "$BUILD_DIR" -type f \( -name '*.dylib' -o -name "$OUTPUT" \) \
-      -print0 | xargs -0 codesign --force --sign - 2>/dev/null || true
-fi
+python3 "$SCRIPT_DIR/bundle-native.py" "$COMPILE_DIR/$OUTPUT" "$BUILD_DIR" --dev
 
 # Headers consumed by loose game source at JIT time.
-cp -R "$PROJECT_DIR/include/"* "$BUNDLE_INC/"
-cp -R "$PROJECT_DIR/libs/glm/glm" "$BUNDLE_INC/"
-if [[ -d "$LIBS_DIR/glfw/include/GLFW" ]]; then
-    cp -R "$LIBS_DIR/glfw/include/GLFW" "$BUNDLE_INC/"
+mkdir -p "$BUILD_DIR/include"
+cp -R "$COMPILE_DIR/_cache/engine-out-XXX/include/." "$BUILD_DIR/include/"
+cp -R "$(pkg-config --variable=includedir glfw3)/GLFW" "$BUILD_DIR/include/"
+if [[ "$PLATFORM_OS" == "linux" ]]; then
+    cp -R "$(pkg-config --variable=includedir glew)/GL" "$BUILD_DIR/include/"
 fi
-if [[ -d "$LIBS_DIR/ozz-animation/include/ozz" ]]; then
-    cp -R "$LIBS_DIR/ozz-animation/include/ozz" "$BUNDLE_INC/"
-fi
-if [[ "$PLATFORM_OS" == "linux" && -d /usr/include/GL ]]; then
-    mkdir -p "$BUNDLE_INC/GL"
-    cp -R /usr/include/GL/. "$BUNDLE_INC/GL/"
-fi
+
+for artifact in "$BUILD_DIR/bin/$OUTPUT" "$BUILD_DIR/lib/$OUTPUT/"*; do
+    sanitize_embedded_build_paths "$artifact" "$PROJECT_DIR"
+    if [[ "$PLATFORM_OS" == "macos" ]]; then
+        codesign --force --sign - "$artifact"
+    fi
+done
 
 cat > "$BUILD_DIR/${OUTPUT}_run" <<'LAUNCHER'
 #!/usr/bin/env bash
@@ -150,12 +68,20 @@ else
 fi
 
 JANK_LLVM="${JANK_LLVM:-}"
+if [[ -z "$JANK_LLVM" && "$(uname -s)" == "Darwin" ]]; then
+    LLVM_LIBRARY="$(otool -L "$JANK_BIN" | awk '/libLLVM/ {print $1; exit}')"
+    if [[ "$LLVM_LIBRARY" == /* ]]; then
+        JANK_LLVM="$(dirname "$(dirname "$LLVM_LIBRARY")")"
+    fi
+fi
 if [[ -z "$JANK_LLVM" && -d "$JANK_DIR/build/llvm-install/usr/local" ]]; then
     JANK_LLVM="$JANK_DIR/build/llvm-install/usr/local"
 elif [[ -z "$JANK_LLVM" && -d /opt/homebrew/opt/llvm ]]; then
     JANK_LLVM="/opt/homebrew/opt/llvm"
 elif [[ -z "$JANK_LLVM" && -d /usr/local/opt/llvm ]]; then
     JANK_LLVM="/usr/local/opt/llvm"
+elif [[ -z "$JANK_LLVM" && -d /usr/lib/llvm-23 ]]; then
+    JANK_LLVM="/usr/lib/llvm-23"
 elif [[ -z "$JANK_LLVM" && -d /usr/lib/llvm-22 ]]; then
     JANK_LLVM="/usr/lib/llvm-22"
 fi
@@ -213,25 +139,14 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
     mkdir -p "$DIR/lib"
     rm -rf "$DIR/lib/jank-runtime"
     mkdir -p "$DIR/lib/jank-runtime"
-    link_runtime_lib() {
-        local lib_name="$1"
-        shift
-        local dir
-        for dir in "$@"; do
-            if [[ -f "$dir/$lib_name" ]]; then
-                ln -sfn "$dir/$lib_name" "$DIR/lib/jank-runtime/$lib_name"
-                return 0
-            fi
+    # Preserve the library names required by this jank version, including
+    # versioned LLVM/clang names. C++ support libraries may live in subdirs.
+    for dir in "$JANK_LLVM/lib" "$JANK_LLVM/lib/c++" "$JANK_LLVM/lib/unwind"; do
+        for lib in "$dir/"*.dylib; do
+            [[ -f "$lib" ]] || continue
+            ln -sfn "$lib" "$DIR/lib/jank-runtime/$(basename "$lib")"
         done
-        echo "ERROR: unable to locate jank runtime library: $lib_name" >&2
-        exit 1
-    }
-
-    link_runtime_lib libLLVM.dylib "$JANK_LLVM/lib" "$JANK_DIR/build/llvm-install/usr/local/lib"
-    link_runtime_lib libclang-cpp.dylib "$JANK_LLVM/lib" "$JANK_DIR/build/llvm-install/usr/local/lib"
-    link_runtime_lib libc++.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/c++" "$JANK_DIR/build/llvm-install/usr/local/lib/c++"
-    link_runtime_lib libc++abi.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/c++" "$JANK_DIR/build/llvm-install/usr/local/lib/c++"
-    link_runtime_lib libunwind.1.dylib "$JANK_LLVM/lib" "$JANK_LLVM/lib/unwind" "$JANK_DIR/build/llvm-install/usr/local/lib/unwind"
+    done
     ln -sfn "$CRYPTO_DIR" "$DIR/lib/jank-crypto"
     ln -sfn "$ZSTD_DIR" "$DIR/lib/jank-zstd"
     cleanup_runtime_links() {

@@ -202,7 +202,7 @@
                 :flip flip-timer
                 :wallrun wallrun-timer
                 (:wallrunflip :wallflipback) wallflip-timer
-                0.0)]
+                (identity 0.0))]
     (and (#{:roll :flip :wallrun :wallrunflip :wallflipback} movement-state)
          (> timer 0.0))))
 

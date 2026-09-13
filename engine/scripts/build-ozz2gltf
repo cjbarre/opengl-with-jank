@@ -11,9 +11,6 @@ done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# Source platform abstraction
-source "$SCRIPT_DIR/platform/common.sh"
-
 OZZ_DIR="$PROJECT_DIR/third_party/ozz-animation"
 TOOL_DIR="$PROJECT_DIR/tools/ozz2gltf"
 BUILD_DIR="$TOOL_DIR/build"

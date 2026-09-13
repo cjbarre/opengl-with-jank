@@ -234,16 +234,16 @@ inline void upload_cursor_lines(GLuint vbo, float x1, float y1, float z1,
       (:platform :wall) (str "tilt:" (or (:tilt-deg p) 0) "deg")
       :curve (str "arc:" (or (:arc-deg p) 90) "deg segs:" (or (:segments p) 12))
       :stairs (str "steps:" (or (:steps p) 4))
-      "")))
+      (identity ""))))
 
 (defn- piece-hint
   "Hint line for piece-specific [ ] keys."
   [piece-type]
   (case piece-type
-    (:platform :wall) "[ ]:tilt"
-    :curve "[ ]:arc Sh+[]:segs"
-    :stairs "[ ]:steps"
-    ""))
+    (:platform :wall) (identity "[ ]:tilt")
+    :curve (identity "[ ]:arc Sh+[]:segs")
+    :stairs (identity "[ ]:steps")
+    (identity "")))
 
 (def build-bindings
   [["IJKL"          "Move cursor (XZ, camera-relative)"]

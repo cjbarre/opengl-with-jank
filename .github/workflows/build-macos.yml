@@ -18,6 +18,7 @@ jobs:
       CACHE_REV: "v1"
       # Homebrew on Apple silicon
       HOMEBREW_PREFIX: /opt/homebrew
+      DEVELOPER_DIR: /Library/Developer/CommandLineTools
 
     steps:
       - name: Checkout opengl-with-jank
@@ -26,43 +27,25 @@ jobs:
           submodules: recursive
 
       # ---------------------------------------------------------------------
-      # System dependencies via Homebrew (LLVM 22 binary, no from-source build)
+      # System dependencies via Homebrew
       # ---------------------------------------------------------------------
       - name: Install brew deps
+        id: brew-deps
         run: |
           # Skip `brew update` — slowest step, runners stay fairly current.
-          brew install llvm cmake ninja boost openssl@3 zstd doctest leiningen
+          brew install llvm cmake ninja boost openssl@3 zstd doctest leiningen babashka pkgconf glfw python
+          echo "llvm=$(brew list --versions llvm | awk '{print $2}')" >> "$GITHUB_OUTPUT"
           installed_major=$(/opt/homebrew/opt/llvm/bin/clang --version \
             | head -1 | grep -oE 'version [0-9]+' | awk '{print $2}')
-          if [[ "$installed_major" != "22" ]]; then
-            echo "::error::brew llvm is version $installed_major; jank $JANK_REF needs 22.x"
+          if [[ "$installed_major" != "23" ]]; then
+            echo "::error::brew llvm is version $installed_major; this build requires LLVM 23"
             exit 1
           fi
-
-      - name: Install Clojure CLI
-        uses: DeLaGuardo/setup-clojure@12.5
-        with:
-          cli: latest
 
       # ---------------------------------------------------------------------
       # Build jank against brew's LLVM (cached)
       # ---------------------------------------------------------------------
-      # The cache key is intentionally independent of `brew list --versions`
-      # output, which churns whenever Homebrew bumps the formula's bottle
-      # (e.g. 22.1.4 → 22.1.5 within a week). Within LLVM 22.x the ABI is
-      # stable enough to keep the cached jank build valid; the version check
-      # above already aborts the job if brew jumps to 23.x. Bump CACHE_REV
-      # to invalidate manually.
-      # Three things together get jank's cppinterop submodule past the
-      # libc++-22 / Apple-SDK header chain that bit us last time:
-      #
-      #   1. SDKROOT exported in the same shell that runs configure+build,
-      #      not via $GITHUB_ENV (which propagates to *next* step but not
-      #      to subprocesses launched within this step).
-      #   2. CMAKE_OSX_SYSROOT so cmake's compile checks use the same SDK.
-      #   3. -stdlib=libc++ in CXXFLAGS so brew's clang explicitly picks
-      #      brew's libc++ (its default driver does this on macOS, but
-      #      cppinterop's CMake can override it).
+      # Invalidate the compiler cache when jank or its linked LLVM changes.
       - name: Resolve jank ref
         id: jank-ref
         run: |
@@ -79,9 +62,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/jank
-          key: jank-mac14-${{ steps.jank-ref.outputs.sha }}-${{ env.CACHE_REV }}
+          key: jank-mac14-${{ steps.jank-ref.outputs.sha }}-llvm-${{ steps.brew-deps.outputs.llvm }}-${{ env.CACHE_REV }}
 
-      - name: Clone & build jank (against brew LLVM 22)
+      - name: Clone & build jank (against brew LLVM)
         if: steps.cache-jank.outputs.cache-hit != 'true'
         run: |
           git clone --recursive https://github.com/jank-lang/jank ~/jank
@@ -92,7 +75,7 @@ jobs:
           export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
           export CC="$HOMEBREW_PREFIX/opt/llvm/bin/clang"
           export CXX="$HOMEBREW_PREFIX/opt/llvm/bin/clang++"
-          export CXXFLAGS="-stdlib=libc++ -isysroot $SDKROOT"
+          export CXXFLAGS="-stdlib=libc++ -isysroot $SDKROOT -include cmath"
           ./bin/configure -G Ninja \
             -Djank_local_clang=OFF \
             -Dllvm_dir="$HOMEBREW_PREFIX/opt/llvm" \
@@ -115,7 +98,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Build the engine
       # ---------------------------------------------------------------------
-      - name: Engine setup (native deps + embedded assets)
+      - name: Install engine source package
         working-directory: engine
         env:
           JANK_LLVM: /opt/homebrew/opt/llvm

@@ -11,12 +11,12 @@
     :connect
     (do
       (println (str "Client " (:connection-id event) " connected"))
-      true)
+      (identity true))
 
     :disconnect
     (do
       (println (str "Client " (:connection-id event) " disconnected"))
-      true)
+      (identity true))
 
     :message
     (let [msg (:message event)
@@ -26,10 +26,10 @@
       (net/send! server {:to conn-id
                          :message {:type :echo
                                    :original msg}})
-      true)
+      (identity true))
 
     ;; Continue on unknown events
-    true))
+    (identity true)))
 
 (defn run-server
   "Run an echo server on port 7777."

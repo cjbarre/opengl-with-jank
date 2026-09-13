@@ -2,8 +2,8 @@
 
 A jank+OpenGL game engine and a game built on it ("Strafe Combat Academy"). Written in [Jank](https://jank-lang.org/) (a Clojure-on-LLVM dialect with C++ interop) with networked multiplayer, skeletal animation, and Quake-style movement.
 
-> Requires a compatible Jank on `PATH`. CI tracks `jank-lang/jank` `main` and
-> caches builds by the resolved upstream commit SHA.
+> Requires a compatible Jank on `PATH`. CI tracks `jank-lang/jank` `main`, builds against LLVM 23,
+> and caches builds by the upstream commit and toolchain version.
 
 Watch the [demo video on YouTube](https://youtu.be/hVQB7G6YVKQ):
 
@@ -15,7 +15,7 @@ Watch the [demo video on YouTube](https://youtu.be/hVQB7G6YVKQ):
 ```bash
 git clone --recursive <repo-url>
 cd opengl-with-jank/engine
-./scripts/setup           # build native deps + libengine_assets
+./scripts/setup           # initialize submodules + install engine source package
 ./scripts/build-engine    # build the jank-engine runtime binary with lein-jank
 
 cd ../game
@@ -37,9 +37,9 @@ opengl-with-jank/
 │   ├── src/engine/         16 jank namespaces (gfx2d, gfx3d, networking, …)
 │   ├── include/            engine *_impl.h + bundled third-party headers
 │   ├── assets/             shaders/, fonts/ — embedded in the engine binary
-│   ├── scripts/            setup, build-engine, asset pipeline, platform/
+│   ├── scripts/            setup, build-engine, asset pipeline, distribution helpers
 │   ├── third_party/        ozz-animation, tinygltf
-│   ├── libs/               glm + per-platform native libs
+│   ├── libs/               glm source submodule
 │   └── tools/              gla2ozz, ozz2gltf, ozz-retarget
 └── game/        # Strafe Combat Academy
     ├── src/sca/            game namespaces
@@ -49,7 +49,7 @@ opengl-with-jank/
     └── jank-engine.edn     entry namespace + classpath config
 ```
 
-The two trees are independent — no symlinks between them. The engine knows nothing about the game; the game references the engine only by invoking the `jank-engine` binary.
+The two trees are independent — no symlinks between them. The engine knows nothing about the game. Game builds depend on the engine source package; loose-source development uses the reusable `jank-engine` binary.
 
 ## How it works
 
@@ -57,14 +57,36 @@ The two trees are independent — no symlinks between them. The engine knows not
 
 ## How lein-jank fits in
 
-lein-jank owns the jank compilation step; the repo's shell scripts still own native dependency setup, dylib bundling, rpaths, asset copying, launchers, and final distribution layout.
+lein-jank owns compilation, native dependency builds, and their caches. Both projects use ordinary `project.clj` configuration and `jank-build.bb` scripts; there are no platform-specific Leiningen config loaders.
 
-- `engine/scripts/build-engine` runs `lein compile` from `engine/`, using `engine/project.clj` and `engine/lein-jank-config.clj`, then packages the reusable `jank-engine_run` runtime.
-- `engine/scripts/bake` runs `lein compile` from the game directory, using the game's `project.clj` and `lein-jank-config.clj`, then packages a standalone baked game bundle.
-- The lein-jank config files define source paths, `:main`, platform-specific include/library/link flags, output names, target directories, and optimization levels. The reusable engine binary also sets `:runtime :dynamic` so it can JIT-load loose game source at runtime.
-- During bake, the script overrides the game config with `JANK_NAME`, `JANK_TARGET_DIR`, and `JANK_OPTIMIZATION_LEVEL` so `jank-engine.edn` remains the source of bundle name/assets while lein-jank still performs the compile.
+- Commons `gl-sys` and `glfw-sys` discover installed OpenGL/GLFW and supply the native flags. macOS links the OpenGL framework directly.
+- The engine is a source package with a native build script. Its CMake build installs ozz, STB, cgltf, ENet, GLM, and engine headers into jank's managed output directory. Linux also discovers GLEW through `pkg-config`.
+- Engine shaders and fonts become a generated header compiled by jank, with no separate asset library.
+- `./scripts/setup` initializes submodules and runs `lein install`. Reinstall after engine changes before compiling a consuming game. `bake` does this automatically.
+- The game depends on `opengl-with-jank/engine`; it does not repeat engine source paths or native flags.
+- `build-engine` and `bake` assemble distributions from persistent `target/` builds. A shared packaging helper follows linked native dependencies, rewrites loader paths, and leaves build caches intact.
 
-On macOS, the build scripts invoke Leiningen through the standalone jar with Java instead of the `lein` shell wrapper. This preserves `DYLD_INSERT_LIBRARIES`, which is needed to preload the ozz libraries while jank compiles namespaces that bind animation symbols.
+Direct development commands:
+
+```bash
+cd engine
+lein compile                       # target/engine/jank-engine (dynamic runtime)
+lein install                       # install the engine source/native package
+cd ../game
+lein run -- server                 # run through jank
+lein with-profile release compile  # target/release/sca (static runtime)
+```
+
+Build prerequisites are jank, Leiningen, Babashka, CMake, a C/C++ compiler, and `pkg-config`, plus installed GLFW/OpenGL (and GLEW on Linux). Distribution scripts additionally use Python 3; Linux needs `patchelf` and `bubblewrap` for packaging and jank build sandboxing respectively. On macOS, `brew install leiningen babashka cmake pkgconf glfw python` supplies the extra tools.
+
+If full Xcode's tool shims fail inside jank's native-build sandbox, select the installed Command Line Tools for the build:
+
+```bash
+export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+```
+
+Native library linkage (`:static?`) is independent of jank's `:runtime`. The engine uses `:runtime :dynamic` for loading loose game source; the game uses `:runtime :static` for shipping. Both currently request shared native libraries, which the distribution scripts bundle.
 
 ## Modes
 
@@ -105,7 +127,7 @@ Two paths depending on audience.
 ```
 dist/jank-engine/
 ├── bin/jank-engine          executable
-├── lib/jank-engine/         engine-native dylibs (incl. libengine_assets)
+├── lib/jank-engine/         engine-native dylibs
 ├── include/                 third-party headers (glm, GLFW, ozz, engine *_impl.h)
 └── jank-engine_run          launcher
 ```
@@ -137,7 +159,7 @@ no-prereq baked bundle works is documented in
 
 **macOS (Apple Silicon)** — primary platform, fully supported.
 **Linux (x86_64)** — built and smoke-tested in CI with Xvfb.
-**Windows** — platform abstraction stubs exist; no working build path yet.
+**Windows** — no working build or distribution path yet.
 
 ## Points of interest
 

@@ -8,6 +8,11 @@
 (cpp/raw "#include \"gl_wrappers.h\"")
 (cpp/raw "#include \"gl_utils.h\"")
 (cpp/raw "#include \"engine/gltf_impl.h\"")
+;; Linux JIT needs this instantiation to emit Vertex's allocator deallocation.
+(cpp/raw "#include <memory>
+          #ifdef __GLIBCXX__
+          template class std::allocator<Vertex>;
+          #endif")
 (cpp/raw "#include <glm/glm.hpp>
           #include <glm/gtc/matrix_transform.hpp>
           #include <glm/gtc/type_ptr.hpp>")

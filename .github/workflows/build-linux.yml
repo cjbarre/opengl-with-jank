@@ -12,10 +12,12 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
+      LANG: C.UTF-8
+      LC_ALL: C.UTF-8
       # Track jank main, but key the cache by the resolved commit SHA so each
       # upstream change gets a fresh build.
       JANK_REF: main
-      CLANG_VERSION: "22"
+      CLANG_VERSION: "23"
       # Bump CACHE_REV when jank's apt.llvm.org or libstdc++ pins shift
       # underneath us and the cached jank build needs invalidating.
       CACHE_REV: "v1"
@@ -44,7 +46,7 @@ jobs:
             llvm-${CLANG_VERSION}-dev libclang-${CLANG_VERSION}-dev \
             libclang-cpp${CLANG_VERSION}-dev libpolly-${CLANG_VERSION}-dev \
             cmake ninja-build pkg-config build-essential \
-            leiningen \
+            leiningen bubblewrap libglfw3-dev \
             libssl-dev libboost-all-dev zlib1g-dev libffi-dev libxml2-dev \
             libtinfo-dev libzstd-dev \
             gcc-14 g++-14 libstdc++-14-dev \
@@ -54,12 +56,10 @@ jobs:
             xvfb mesa-utils libgl1-mesa-dri \
             python3
 
-      - name: Install Clojure CLI
-        run: |
-          curl -L -o /tmp/linux-install.sh \
-            https://github.com/clojure/brew-install/releases/latest/download/linux-install.sh
-          chmod +x /tmp/linux-install.sh
-          sudo /tmp/linux-install.sh
+      - name: Install Babashka
+        uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          bb: latest
 
       # Capture the deb versions we just installed; cache invalidates if any move.
       - name: Capture toolchain versions for cache key
@@ -101,10 +101,12 @@ jobs:
           git submodule update --init --recursive
           cd compiler+runtime
           export CC=clang-${CLANG_VERSION} CXX=clang++-${CLANG_VERSION}
+          # CppInterop uses ceil/log2f without including cmath.
           ./bin/configure -G Ninja \
             -Djank_local_clang=OFF \
             -Dllvm_dir=/usr/lib/llvm-${CLANG_VERSION} \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_FLAGS="-include cmath" \
             -DCMAKE_EXE_LINKER_FLAGS=-lzstd
           cmake --build build -j "$(nproc)"
 
@@ -121,7 +123,7 @@ jobs:
       # ---------------------------------------------------------------------
       # Build the engine
       # ---------------------------------------------------------------------
-      - name: Engine setup (native deps + embedded assets)
+      - name: Install engine source package
         working-directory: engine
         run: ./scripts/setup
 
@@ -186,8 +188,24 @@ jobs:
           XVFB_PID=$!
           sleep 1
 
-          DISPLAY=:98 /tmp/sca-bake/sca_run client > /tmp/baked-client.log 2>&1 &
+          DISPLAY=:98 stdbuf -oL -eL /tmp/sca-bake/sca_run client > /tmp/baked-client.log 2>&1 &
           CLIENT_PID=$!
+          ready=0
+          for i in $(seq 1 600); do
+            if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+              break
+            fi
+            if grep -q 'Entering client loop' /tmp/baked-client.log; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "::error::client failed to enter the game loop"
+            cat /tmp/baked-client.log
+            exit 1
+          fi
           sleep 8
 
           if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
@@ -258,8 +276,24 @@ jobs:
           sleep 1
 
           # Client connects to loopback under software-rendered GL
-          DISPLAY=:99 "$ENGINE" . client > /tmp/client.log 2>&1 &
+          DISPLAY=:99 stdbuf -oL -eL "$ENGINE" . client > /tmp/client.log 2>&1 &
           CLIENT_PID=$!
+          ready=0
+          for i in $(seq 1 600); do
+            if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
+              break
+            fi
+            if grep -q 'Entering client loop' /tmp/client.log; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" -ne 1 ]]; then
+            echo "::error::client failed to enter the game loop"
+            cat /tmp/client.log
+            exit 1
+          fi
           sleep 8
 
           if ! kill -0 "$CLIENT_PID" 2>/dev/null; then
