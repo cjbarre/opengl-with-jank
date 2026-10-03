@@ -85,3 +85,16 @@ JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" \
 ```
 
 Graphical tests require a server connection, 120 completed frames, and a clean client exit. CI runs development tests and tests relocated releases with jank absent from `PATH`. Linux graphical tests run under Xvfb; macOS CI uses network tests. See [distribution details](engine/docs/bake-distribution.md).
+
+## License
+
+Original engine and game code and documentation are licensed under the
+[MIT License](LICENSE). Commercial use and closed-source derivatives are allowed;
+retain the copyright and license notices when redistributing copies or substantial
+portions of the software.
+
+Third-party code and assets retain their respective licenses and are not relicensed
+by this project's MIT license. This includes bundled dependencies, fonts, models,
+animations, and textures. Asset provenance and redistribution permissions have not
+been fully documented; inclusion in this repository does not itself grant permission
+to redistribute third-party assets.
