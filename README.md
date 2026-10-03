@@ -146,4 +146,13 @@ no-prereq baked bundle works is documented in
 
 ## License
 
-For learning purposes. Use as you see fit.
+Original engine and game code and documentation are licensed under the
+[MIT License](LICENSE). Commercial use and closed-source derivatives are allowed;
+retain the copyright and license notices when redistributing copies or substantial
+portions of the software.
+
+Third-party code and assets retain their respective licenses and are not relicensed
+by this project's MIT license. This includes bundled dependencies, fonts, models,
+animations, and textures. Asset provenance and redistribution permissions have not
+been fully documented; inclusion in this repository does not itself grant permission
+to redistribute third-party assets.
