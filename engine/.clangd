@@ -4,5 +4,4 @@ CompileFlags:
     - -Ilibs/glm
     - -Ilibs/macos-arm64/glfw/include
     - -Ilibs/macos-arm64/ozz-animation/include
-    - -Ithird_party/tinygltf
     - -std=c++20

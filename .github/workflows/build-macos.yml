@@ -96,7 +96,7 @@ jobs:
         run: lein install
 
       - name: Test development networking
-        run: JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" python3 scripts/smoke-test.py --cwd game --logs /tmp/sca-dev-net -- lein run --
+        run: python3 scripts/smoke-test.py --cwd game --logs /tmp/sca-dev-net -- lein run --
 
       - name: Compile and package release
         working-directory: game

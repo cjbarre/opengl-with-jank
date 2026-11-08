@@ -2,7 +2,7 @@
   :description "Strafe Combat Academy."
   :license {:name "MIT"
             :url "https://opensource.org/license/mit"}
-  :plugins [[org.jank-lang/lein-jank "2026.09-7"]]
+  :plugins [[org.jank-lang/lein-jank "2026.10-3"]]
   :middleware [leiningen.jank/middleware]
   :dependencies [[opengl-with-jank/engine "0.1.0-SNAPSHOT"]]
   :source-paths ["src"]
@@ -10,6 +10,8 @@
   :jank {:name "sca"
          :target-dir "target/debug"
          :optimization-level 0
+         :eager? true
+         :include-dirs ["include"]
          :runtime :static
          :static? false}
   :profiles {:release {:jank {:target-dir "target/release"

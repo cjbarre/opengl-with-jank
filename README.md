@@ -13,8 +13,6 @@ git submodule update --init --recursive
 cd engine
 lein install
 cd ../game
-export JANK_REAL="${JANK_REAL:-$(command -v jank)}"
-export PATH="$PWD/../scripts/eager:$PATH"
 lein run -- server
 # In another terminal, from game/:
 lein run -- client
@@ -22,9 +20,9 @@ lein run -- editor
 lein run -- viewer
 ```
 
-Set these environment variables in each development terminal before running a mode. `JANK_REAL` records the installed compiler before the wrapper enters `PATH`. The wrapper adds `--eagerness eager`, compiling functions before gameplay to avoid pauses on first use. Remove it once lein-jank supports eagerness in `project.clj`.
+The game sets `:eager? true` in `project.clj`, so lein-jank passes `--eager` to jank and compiles functions before gameplay to avoid pauses on first use. Use a jank version that supports `--eager`.
 
-Reinstall the engine package after changing engine sources. Lein-jank manages native dependency builds and caches. The game uses `project.clj` and `jank-build.bb` for source paths, dependencies, and include paths.
+Reinstall the engine package after changing engine sources. Lein-jank manages native dependency builds and caches. The game declares its source paths, dependencies, and include paths in `project.clj`.
 
 If Xcode tool shims fail inside the native-build sandbox, select Command Line Tools:
 
@@ -51,7 +49,6 @@ The package script runs release compilation and assembles `dist/sca`. Packaging 
 - `engine/project.clj`: reusable engine source package; commons OpenGL/GLFW dependencies.
 - `engine/jank-build.bb` and `engine/native/CMakeLists.txt`: ozz, STB, cgltf, ENet, GLEW discovery, and installed headers. GLM remains a source submodule.
 - `engine/scripts/embed-assets.clj`: shader/font header generation.
-- `scripts/eager/jank`: temporary development workaround for lein-jank’s missing eagerness setting.
 - `game/project.clj`: development and release settings, with `sca.core` as the common entry point.
 - `game/scripts/package` and `bundle-native.py`: release asset copying, native-library copying, loader paths, and macOS signing.
 
@@ -78,10 +75,8 @@ The package script runs release compilation and assembles `dist/sca`. Packaging 
 ## Verification
 
 ```bash
-JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" \
-  python3 scripts/smoke-test.py --cwd game -- lein run --
-JANK_REAL="${JANK_REAL:-$(command -v jank)}" PATH="$PWD/scripts/eager:$PATH" \
-  python3 scripts/smoke-test.py --graphics --cwd game -- lein run --
+python3 scripts/smoke-test.py --cwd game -- lein run --
+python3 scripts/smoke-test.py --graphics --cwd game -- lein run --
 ```
 
 Graphical tests require a server connection, 120 completed frames, and a clean client exit. CI runs development tests and tests relocated releases with jank absent from `PATH`. Linux graphical tests run under Xvfb; macOS CI uses network tests. See [distribution details](engine/docs/bake-distribution.md).

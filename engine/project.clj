@@ -2,7 +2,7 @@
   :description "Reusable jank/OpenGL engine library."
   :license {:name "MIT"
             :url "https://opensource.org/license/mit"}
-  :plugins [[org.jank-lang/lein-jank "2026.09-7"]]
+  :plugins [[org.jank-lang/lein-jank "2026.10-3"]]
   :middleware [leiningen.jank/middleware]
   :dependencies [[org.jank-lang.commons/gl-sys "2026.09-4"]
                  [org.jank-lang.commons/glfw-sys "2026.09-4"]]

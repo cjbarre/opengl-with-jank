@@ -8,8 +8,6 @@ With jank on `PATH`:
 cd engine
 lein install
 cd ../game
-export JANK_REAL="${JANK_REAL:-$(command -v jank)}"
-export PATH="$PWD/../scripts/eager:$PATH"
 lein run -- server
 lein run -- client
 lein with-profile release compile
