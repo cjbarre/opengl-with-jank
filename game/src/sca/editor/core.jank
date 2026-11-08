@@ -8,14 +8,12 @@
             [engine.gfx2d.graphics.interface :as gfx2d]
             [engine.gfx3d.lines.interface :as lines]
             [engine.gfx3d.animation.interface :as anim]
-            [engine.gl.constants :as gl])
-  (:require
+            [engine.gl.constants :as gl]
+            [engine.gl.interface :as gl-state]
             [sca.camera :as camera]
             [sca.physics :as shared]
             [sca.client :as client]
             [sca.strafehelper.interface :as strafehelper]))
-
-(require '[engine.gl.interface :as gl-state])
 
 (cpp/raw "#include \"gl_wrappers.h\"
 #include <GLFW/glfw3.h>

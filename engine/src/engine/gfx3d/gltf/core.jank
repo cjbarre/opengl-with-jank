@@ -361,8 +361,7 @@
     {:draw
      (fn draw-model [context]
        (doseq [pi primitive-instances]
-         (let [draw (:draw pi)]
-           (draw context))))
+         ((:draw pi) context)))
      :collision
      (vec (for [scene (:scenes model)
                 node (:nodes scene)

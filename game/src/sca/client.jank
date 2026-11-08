@@ -13,8 +13,7 @@
             [sca.camera :as camera]
             [engine.shaders.interface :as shaders]
             [engine.math.interface :as math]
-            [engine.gfx3d.gltf.interface :as gltf])
-  (:require
+            [engine.gfx3d.gltf.interface :as gltf]
             [engine.gfx3d.collision.interface :as collision]
             [engine.gfx2d.text.interface :as text]
             [engine.gfx2d.graphics.interface :as gfx2d]
@@ -429,8 +428,7 @@
         _ (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                                       (cpp/glm.value_ptr model-m))]
     (when model
-      (let [draw (:draw model)]
-        (draw {:shader shader :model/local-matrix-uniform "local"})))))
+      ((:draw model) {:shader shader :model/local-matrix-uniform "local"}))))
 
 (defn draw-world
   "Draw the game world."
@@ -477,8 +475,7 @@
             (let [model-m-loc (cpp/wrap_glGetUniformLocation shader "model")
                   _ (cpp/wrap_glUniformMatrix4fv model-m-loc (cpp/int 1) gl/GL_FALSE
                                         (cpp/glm.value_ptr (cpp/identity_matrix)))]
-              (let [draw (:draw level-model)]
-                (draw {:shader shader :model/local-matrix-uniform "local"}))))
+              ((:draw level-model) {:shader shader :model/local-matrix-uniform "local"})))
 
         ;; Switch to line shader for player skeleton rendering
         _ (cpp/wrap_glUseProgram line-shader)
