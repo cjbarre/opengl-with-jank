@@ -1,6 +1,14 @@
 cmake_minimum_required(VERSION 3.24)
 project(engine_native LANGUAGES C CXX)
 
+# lein-jank's macOS sandbox can block sw_vers from reading the system version
+# plist. CMake then omits Darwin's rpath flag, although our supported macOS
+# versions all support it. Keep native builds sandboxed and restore that flag.
+if(APPLE AND NOT CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG)
+  set(CMAKE_SHARED_LIBRARY_RUNTIME_C_FLAG "-Wl,-rpath,")
+  set(CMAKE_SHARED_LIBRARY_RUNTIME_CXX_FLAG "-Wl,-rpath,")
+endif()
+
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INSTALL_NAME_DIR "@rpath")
 set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
